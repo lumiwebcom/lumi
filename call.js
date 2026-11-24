@@ -79,7 +79,16 @@ function createPeer(sid, userId, initiator) {
     try { peer.makingOffer = true; await pc.setLocalDescription(); signal(sid, { description: pc.localDescription }); }
     catch (err) { console.warn('negotiation', err); } finally { peer.makingOffer = false; }
   };
-  pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed') pc.restartIce?.(); renderCallUI(); };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'failed') {
+      if (!peer.restarted) { peer.restarted = true; pc.restartIce?.(); }
+      else if (!Call.warnedRelay) {
+        Call.warnedRelay = true;
+        toast(S.config.iceServers?.some((s) => String(s.urls).includes('turn')) ? 'Couldn’t connect the call. Check your internet and try again.' : 'Couldn’t connect the call: your networks are blocking a direct connection. The site owner needs to add a TURN relay (see README).', true);
+      }
+    }
+    renderCallUI();
+  };
   if (initiator) {
     pc.addTransceiver(c.audioTrack || 'audio', { direction: 'sendrecv' });
     pc.addTransceiver(currentVideoTrack() || 'video', { direction: 'sendrecv' });

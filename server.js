@@ -917,8 +917,22 @@ app.delete('/api/stories/:id', auth, wrap(req => {
   return { ok: true };
 }));
 
+// Simple privacy + terms pages (linked from Google's sign-in screen)
+const legalPage = (title, body) => `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} · lumi</title>
+<style>body{font:16px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;color:#17151C;background:#F7F5F1}h1{letter-spacing:-.03em}a{color:#0E9F8E}</style></head>
+<body><p><a href="/">← back to lumi</a></p><h1>${title}</h1>${body}<p style="color:#6E6977">Last updated ${new Date().getFullYear()}.</p></body></html>`;
+app.get('/privacy', (req, res) => res.send(legalPage('Privacy policy', `
+<p>lumi stores only what it needs to run: your account (email, username, display name, a hashed password or your Google account ID, and profile details you choose to add), your friends list, the spaces you join, and the messages, photos and files you send.</p>
+<p>If you sign in with Google, lumi receives your name, email address and profile photo from Google. It does not access anything else in your Google account.</p>
+<p>Voice and video calls go directly between participants (or through a relay server when a direct connection is not possible) and are not recorded or stored.</p>
+<p>Your data is never sold or shared with advertisers. You can ask the owner of this lumi site to delete your account and data at any time.</p>`)));
+app.get('/terms', (req, res) => res.send(legalPage('Terms of service', `
+<p>lumi is provided as-is, without warranties. Be kind: don't use lumi to harass people, share illegal content, or spam.</p>
+<p>Space owners and moderators can remove content and members from their spaces. The site owner can suspend accounts that break these terms.</p>
+<p>You keep ownership of what you post, and you give lumi permission to store and show it to the people you share it with.</p>`)));
+
 // SPA fallback (for /invite/CODE links etc.)
-app.get(/^\/(?!api|uploads|socket\.io|fonts).*/, (req, res) => res.sendFile(INDEX_FILE));
+app.get(/^\/(?!api|uploads|socket\.io|fonts|privacy|terms).*/, (req, res) => res.sendFile(INDEX_FILE));
 
 // ---------------------------------------------------------------- realtime
 const onlineCounts = new Map(); // userId -> number of sockets

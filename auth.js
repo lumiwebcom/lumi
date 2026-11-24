@@ -57,6 +57,7 @@ function renderAuth(mode = 'login') {
 function setupGoogle() {
   const slot = $('#gbtn');
   if (!slot) return;
+  if (!S.config.googleClientId && !S.config.canSetup) { slot.remove(); $('#gor')?.remove(); return; }
   if (!S.config.googleClientId) {
     // Not configured on server: show a disabled hint button so the feature is discoverable.
     slot.innerHTML = `<button class="btn block" type="button" style="background:var(--bg);border:1px solid var(--border);height:40px">
