@@ -1,0 +1,107 @@
+/* auth screen: email/password + Google */
+'use strict';
+
+function renderAuth(mode = 'login') {
+  const root = $('#root');
+  const signup = mode === 'signup';
+  root.innerHTML = `
+  <div class="auth">
+    <section class="auth-hero" aria-hidden="true">
+      <div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>
+      <div class="hero-copy">
+        <div class="wordmark lg">lumı</div>
+        <h1>Light up<br>your circle.</h1>
+        <p>Chat, call and hang out in spaces made for your people.</p>
+        <div class="hero-chips"><span>✨ Moments</span><span>🎧 Lounges</span><span>💬 Rooms</span></div>
+      </div>
+      <div class="float-card fc1"><div class="fc-av" style="background:#7C5CFF">M</div><div><b>Maya</b><span>pull up to the lounge 🎧</span></div></div>
+      <div class="float-card fc2"><div class="fc-dot"></div><div><b>Chill zone</b><span>4 hanging out</span></div></div>
+    </section>
+    <section class="auth-panel">
+      <div class="auth-card">
+        <div class="wordmark">lumı</div>
+        <h2>${signup ? 'Create your account' : 'Welcome back'}</h2>
+        <p class="muted" style="margin:-4px 0 22px">${signup ? 'It’s free and takes a minute.' : 'Good to see you again.'}</p>
+        <div class="gbtn" id="gbtn"></div><div class="or" id="gor">or</div>
+        <form id="auth-form" autocomplete="on">
+          ${signup ? `
+            <input class="input" name="email" type="email" placeholder="Email" autocomplete="email" required>
+            <input class="input" name="displayName" placeholder="Your name" autocomplete="name">
+            <input class="input" name="username" placeholder="Username" autocomplete="username" required pattern="[A-Za-z0-9_.]{2,24}">
+            <input class="input" name="password" type="password" placeholder="Password (8+ characters)" autocomplete="new-password" required minlength="8">
+          ` : `
+            <input class="input" name="login" placeholder="Username or email" autocomplete="username" required>
+            <input class="input" name="password" type="password" placeholder="Password" autocomplete="current-password" required>
+          `}
+          <button class="btn primary lg block" type="submit">${signup ? 'Create account' : 'Log in'}</button>
+          <div class="err" id="auth-err" style="margin-top:12px"></div>
+        </form>
+        <div class="auth-switch">${signup ? 'Already have an account? <button data-mode="login">Log in</button>' : 'New to lumi? <button data-mode="signup">Create an account</button>'}</div>
+      </div>
+    </section>
+  </div>`;
+  root.querySelector('[data-mode]').onclick = (e) => renderAuth(e.target.dataset.mode);
+  const form = $('#auth-form');
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector('button[type=submit]'); btn.disabled = true; $('#auth-err').textContent = '';
+    try {
+      const data = Object.fromEntries(new FormData(form));
+      const r = await api('POST', signup ? '/api/auth/signup' : '/api/auth/login', data);
+      onSignedIn(r.user);
+    } catch (err) { $('#auth-err').textContent = err.message; btn.disabled = false; }
+  };
+  setupGoogle();
+}
+
+function setupGoogle() {
+  const slot = $('#gbtn');
+  if (!slot) return;
+  if (!S.config.googleClientId) {
+    // Not configured on server: show a disabled hint button so the feature is discoverable.
+    slot.innerHTML = `<button class="btn block" type="button" style="background:var(--bg);border:1px solid var(--border);height:40px">
+      <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+      Continue with Google</button>`;
+    slot.querySelector('button').onclick = () => S.config.canSetup ? openGoogleSetup() : toast('Google sign-in isn’t turned on for this Lumi yet.', true);
+    return;
+  }
+  const go = () => {
+    google.accounts.id.initialize({
+      client_id: S.config.googleClientId,
+      callback: async (resp) => {
+        try { const r = await api('POST', '/api/auth/google', { credential: resp.credential }); onSignedIn(r.user); }
+        catch (e) { $('#auth-err').textContent = e.message; }
+      },
+    });
+    google.accounts.id.renderButton(slot, { theme: document.documentElement.dataset.theme === 'dark' ? 'filled_black' : 'outline', size: 'large', width: 268, text: 'continue_with', shape: 'rectangular' });
+  };
+  if (window.google?.accounts?.id) return go();
+  const s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client'; s.async = true; s.onload = go;
+  document.head.appendChild(s);
+}
+
+function openGoogleSetup() {
+  const origin = location.origin;
+  const m = openModal({ title: 'Turn on Google sign-in', body: `
+    <p style="margin:0 0 12px;line-height:1.5">Google needs a free <b>Client ID</b> for your Lumi. It takes about 5 minutes, one time only:</p>
+    <ol style="margin:0 0 16px;padding-left:20px;line-height:1.7">
+      <li>Open <a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener">Google Cloud → Clients</a> and sign in. Create a project if it asks (name it <b>Lumi</b>).</li>
+      <li>If it asks you to set up the app first, click <b>Get started</b>: app name <b>Lumi</b>, your email, audience <b>External</b>, then finish.</li>
+      <li>Click <b>Create client</b> → type <b>Web application</b>.</li>
+      <li>Under <b>Authorized JavaScript origins</b>, add both:<br><code style="user-select:all">http://localhost</code> and <code style="user-select:all">${esc(origin)}</code></li>
+      <li>Click <b>Create</b>, copy the <b>Client ID</b>, and paste it below.</li>
+    </ol>
+    <div class="field"><label>Client ID</label><input class="input" id="gid" placeholder="1234-abc.apps.googleusercontent.com" autofocus></div>
+    <div class="err" id="gerr" style="text-align:left"></div>`,
+    foot: `<button class="btn" data-no>Cancel</button><button class="btn primary" data-ok>Turn on</button>` });
+  m.el.querySelector('[data-no]').onclick = () => m.close();
+  m.el.querySelector('[data-ok]').onclick = async () => {
+    try {
+      await api('POST', '/api/setup/google', { clientId: m.el.querySelector('#gid').value });
+      S.config = await api('GET', '/api/config');
+      m.close(); toast('Google sign-in is on! 🎉');
+      const mode = $('[data-mode]')?.dataset.mode === 'login' ? 'signup' : 'login';
+      renderAuth(mode);
+    } catch (e) { m.el.querySelector('#gerr').textContent = e.message; }
+  };
+}
