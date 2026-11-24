@@ -183,7 +183,14 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { maxHttpBufferSize: 1e6 });
 app.use(express.json({ limit: '1mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// Front-end files live in ./public (and ./public/js). If they were uploaded flat into the
+// project root instead, serve just those known files from the root, and never anything else.
+const PUBLIC_DIR = fs.existsSync(path.join(__dirname, 'public', 'index.html')) ? path.join(__dirname, 'public') : null;
+const FLAT_FILES = { '/index.html': 'index.html', '/styles.css': 'styles.css', '/favicon.svg': 'favicon.svg' };
+for (const f of ['core', 'auth', 'views', 'modals', 'call', 'main']) FLAT_FILES[`/js/${f}.js`] = `${f}.js`;
+const INDEX_FILE = PUBLIC_DIR ? path.join(PUBLIC_DIR, 'index.html') : path.join(__dirname, 'index.html');
+if (PUBLIC_DIR) app.use(express.static(PUBLIC_DIR));
+else app.get(Object.keys(FLAT_FILES), (req, res) => res.sendFile(path.join(__dirname, FLAT_FILES[req.path])));
 app.use('/fonts', express.static(path.join(__dirname, 'node_modules', '@fontsource-variable', 'outfit', 'files'), { maxAge: '30d' }));
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 
@@ -911,7 +918,7 @@ app.delete('/api/stories/:id', auth, wrap(req => {
 }));
 
 // SPA fallback (for /invite/CODE links etc.)
-app.get(/^\/(?!api|uploads|socket\.io).*/, (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get(/^\/(?!api|uploads|socket\.io|fonts).*/, (req, res) => res.sendFile(INDEX_FILE));
 
 // ---------------------------------------------------------------- realtime
 const onlineCounts = new Map(); // userId -> number of sockets
