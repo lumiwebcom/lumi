@@ -119,15 +119,17 @@ async function openInviteAccept(code) {
 }
 
 // ------------------------------------------------------------------ channels
-function openChannelModal(sid, cid = null, type = 'text') {
+function openChannelModal(sid, cid = null, type = 'text', catId = null) {
   const sd = S.serverData[sid]; const ch = cid ? sd.channels.find((c) => c.id === cid) : null;
-  if (ch) type = ch.type;
+  if (ch) { type = ch.type; catId = ch.categoryId; }
+  const cats = [...(sd.categories || [])].sort((a, b) => a.position - b.position);
   const m = openModal({ title: ch ? (type === 'text' ? 'Edit room' : 'Edit lounge') : 'Create', body: `
     ${ch ? '' : `<div class="field"><label>What are you making?</label><div class="choice-grid">
       <button class="choice ${type === 'text' ? 'sel' : ''}" data-type="text">${icon('room')}<div><div>Room</div><div class="small muted" style="font-weight:400">Messages, photos, files</div></div></button>
       <button class="choice ${type === 'voice' ? 'sel' : ''}" data-type="voice">${icon('waves')}<div><div>Lounge</div><div class="small muted" style="font-weight:400">Drop-in voice & video</div></div></button></div></div>`}
     <div class="field"><label>Name</label><input class="input" id="ch-name" value="${esc(ch?.name || '')}" placeholder="${type === 'text' ? 'e.g. Memes' : 'e.g. Chill zone'}" maxlength="100" autofocus></div>
-    <div class="field" id="topic-field" ${type === 'voice' ? 'style="display:none"' : ''}><label>Topic</label><textarea class="textarea" id="ch-topic" maxlength="300" placeholder="What’s this room for?">${esc(ch?.topic || '')}</textarea></div>`,
+    <div class="field" id="topic-field" ${type === 'voice' ? 'style="display:none"' : ''}><label>Topic</label><textarea class="textarea" id="ch-topic" maxlength="300" placeholder="What’s this room for?">${esc(ch?.topic || '')}</textarea></div>
+    ${cats.length ? `<div class="field"><label>Category</label><select class="select" id="ch-cat"><option value="">No category</option>${cats.map((c) => `<option value="${c.id}" ${c.id === catId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>` : ''}`,
     foot: `${ch ? `<button class="btn danger" data-del style="margin-right:auto">${icon('trash', 'sm')} Delete</button>` : ''}<button class="btn" data-cancel>Cancel</button><button class="btn primary" data-save>${ch ? 'Save' : 'Create'}</button>` });
   const el = m.el;
   el.querySelectorAll('[data-type]').forEach((b) => (b.onclick = () => { type = b.dataset.type; el.querySelectorAll('[data-type]').forEach((x) => x.classList.toggle('sel', x === b)); el.querySelector('#topic-field').style.display = type === 'voice' ? 'none' : ''; el.querySelector('#ch-name').placeholder = type === 'text' ? 'e.g. Memes' : 'e.g. Chill zone'; }));
@@ -135,8 +137,9 @@ function openChannelModal(sid, cid = null, type = 'text') {
   const save = async () => {
     const name = el.querySelector('#ch-name').value.trim() || (type === 'text' ? 'New room' : 'Lounge'); const topic = el.querySelector('#ch-topic').value;
     try {
-      if (ch) await api('PATCH', `/api/channels/${ch.id}`, { name, topic });
-      else await api('POST', `/api/servers/${sid}/channels`, { name, type, topic });
+      const categoryId = el.querySelector('#ch-cat')?.value || null;
+      if (ch) await api('PATCH', `/api/channels/${ch.id}`, { name, topic, categoryId });
+      else await api('POST', `/api/servers/${sid}/channels`, { name, type, topic, categoryId });
       m.close(); await loadServer(sid); renderAll();
     } catch (e) { toast(e.message, true); }
   };
@@ -370,7 +373,7 @@ async function openProfile(uid, serverId) {
   const m = openModal({ title: null, cls: 'profile', body: `
     <div class="pbanner" style="${u.banner ? `background-image:url('${esc(u.banner)}')` : u.accent ? `background:${esc(u.accent)}` : ''}"></div>
     <div class="pav">${avatar(u, 92, { ring: true, dot: true })}</div>
-    <div class="pbody"><div class="pname">${esc(mem?.nickname || u.displayName)}</div><div class="puser">@${esc(u.username)}${mem?.nickname ? ` · ${esc(u.displayName)}` : ''}</div>
+    <div class="pbody"><div class="pname">${esc(mem?.nickname || u.displayName)}${roleBadge(u)}</div><div class="puser">@${esc(u.username)}${mem?.nickname ? ` · ${esc(u.displayName)}` : ''}</div>
       ${u.customStatus ? `<div class="pstatus">💭 ${esc(u.customStatus)}</div>` : ''}
       ${u.bio ? `<div class="psec"><h5>About me</h5><div style="white-space:pre-wrap">${esc(u.bio)}</div></div>` : ''}
       <div class="psec"><h5>Member since</h5><div>${new Date(d.memberSince).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}${mem ? ` · joined ${esc(sd.server.name)} ${new Date(mem.joinedAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}</div></div>
@@ -600,3 +603,83 @@ function openStoryViewer(uid) {
   draw(); timer = requestAnimationFrame(loop);
 }
 function closeStoryViewer() { if (!svState) return; svState.stop(); svState.root.remove(); svState = null; if (S.view.type === 'home') renderHomeBody(); }
+
+// ------------------------------------------------------------------ categories
+function openCategoryModal(sid, catId = null) {
+  const sd = S.serverData[sid];
+  const cats = [...(sd.categories || [])].sort((a, b) => a.position - b.position);
+  const cat = catId ? cats.find((c) => c.id === catId) : null;
+  const idx = cat ? cats.indexOf(cat) : -1;
+  const m = openModal({ title: cat ? 'Edit category' : 'New category', body: `
+    <div class="field"><label>Category name</label><input class="input" id="cat-name" value="${esc(cat?.name || '')}" placeholder="e.g. Gaming" maxlength="60" autofocus></div>
+    ${cat ? `<div class="field"><label>Order</label><div style="display:flex;gap:8px"><button class="btn" data-move="up" ${idx <= 0 ? 'disabled' : ''}>${icon('up', 'sm')} Move up</button><button class="btn" data-move="down" ${idx >= cats.length - 1 ? 'disabled' : ''}>${icon('chevron', 'sm')} Move down</button></div></div>
+      <p class="hint">Deleting a category keeps its rooms and lounges — they move to the top of the list.</p>` : '<p class="hint">After creating it, use the + next to the category to add rooms and lounges, or move existing ones in from their settings.</p>'}`,
+    foot: `${cat ? `<button class="btn danger" data-del style="margin-right:auto">${icon('trash', 'sm')} Delete</button>` : ''}<button class="btn" data-cancel>Cancel</button><button class="btn primary" data-save>${cat ? 'Save' : 'Create category'}</button>` });
+  const el = m.el;
+  const refresh = async () => { await loadServer(sid); renderAll(); };
+  el.querySelector('[data-cancel]').onclick = () => m.close();
+  const save = async () => {
+    const name = el.querySelector('#cat-name').value.trim(); if (!name) return toast('Give it a name', true);
+    try { if (cat) await api('PATCH', `/api/categories/${cat.id}`, { name }); else await api('POST', `/api/servers/${sid}/categories`, { name }); m.close(); refresh(); } catch (e) { toast(e.message, true); }
+  };
+  el.querySelector('[data-save]').onclick = save;
+  el.querySelector('#cat-name').onkeydown = (e) => { if (e.key === 'Enter') save(); };
+  el.querySelectorAll('[data-move]').forEach((b) => (b.onclick = async () => { try { await api('PATCH', `/api/categories/${cat.id}`, { move: b.dataset.move }); m.close(); await refresh(); openCategoryModal(sid, cat.id); } catch (e) { toast(e.message, true); } }));
+  el.querySelector('[data-del]')?.addEventListener('click', async () => {
+    if (!(await confirmDialog('Delete category', `Delete <b>${esc(cat.name)}</b>? Its rooms and lounges are kept.`, 'Delete'))) return;
+    try { await api('DELETE', `/api/categories/${cat.id}`); m.close(); refresh(); } catch (e) { toast(e.message, true); }
+  });
+}
+
+// ------------------------------------------------------------------ site admin panel (owner + admins)
+function openAdminPanel() {
+  if (!isSiteAdmin()) return;
+  const owner = S.me.siteRole === 'owner';
+  let filter = 'all';
+  const m = openModal({ title: 'Admin panel', cls: 'wide admin-modal', body: `<nav class="settings-nav"><div class="lbl">lumi</div>
+      <button data-f="all" class="active">${icon('users', 'sm')} Everyone</button>
+      <button data-f="banned">${icon('hammer', 'sm')} Banned</button>
+      <button data-f="admins">${SHIELD_BLUE.replace('<svg', '<svg class="i sm"')} Admins</button>
+      <div class="lbl" style="margin-top:14px">You are</div><div style="padding:4px 12px;display:flex;align-items:center;gap:6px;font-weight:600">${owner ? POTION.replace('<svg', '<svg style="width:18px;height:18px"') + ' Owner' : SHIELD_BLUE.replace('<svg', '<svg style="width:18px;height:18px"') + ' Admin'}</div></nav>
+    <div class="settings-pane"><h2 id="ap-title">Everyone</h2><input class="input" id="ap-q" placeholder="Search by name or username${owner ? ' or email' : ''}" autocomplete="off" style="margin-bottom:6px"><div class="hint" id="ap-count" style="margin-bottom:10px"></div><div id="ap-list"></div></div>` });
+  const el = m.el;
+  let timer;
+  const load = async () => {
+    const q = el.querySelector('#ap-q').value;
+    let r; try { r = await api('GET', `/api/admin/users?q=${encodeURIComponent(q)}&filter=${filter}`); } catch (e) { return toast(e.message, true); }
+    el.querySelector('#ap-count').textContent = `${r.total} accounts · ${r.bannedCount} banned${r.users.length === 100 ? ' · showing first 100 matches' : ''}`;
+    el.querySelector('#ap-list').innerHTML = r.users.map((u) => {
+      cacheUser(u);
+      const me = u.id === S.me.id;
+      const canBan = !me && u.siteRole !== 'owner' && (owner || u.siteRole !== 'admin');
+      const acts = [];
+      if (u.bannedAt) acts.push(`<button class="btn" data-unban="${u.id}">Unban</button>`);
+      else if (canBan) acts.push(`<button class="btn danger" data-ban="${u.id}">${icon('hammer', 'sm')} Ban</button>`);
+      if (owner && !me && !u.bannedAt) acts.push(u.siteRole === 'admin' ? `<button class="btn" data-unadmin="${u.id}">Remove admin</button>` : `<button class="btn" data-admin="${u.id}">${SHIELD_BLUE.replace('<svg', '<svg style="width:16px;height:16px"')} Make admin</button>`);
+      return `<div class="row-line ${u.bannedAt ? 'is-banned' : ''}">${avatar(u, 42)}<div class="meta">
+        <div class="bold">${esc(u.displayName)}${roleBadge(u)} <span class="muted" style="font-weight:400">@${esc(u.username)}</span>${me ? ' <span class="small muted">(you)</span>' : ''}</div>
+        <div class="small muted">${u.email ? esc(u.email) + ' · ' : ''}joined ${new Date(u.createdAt).toLocaleDateString()}${u.bannedAt ? ` · <span style="color:var(--red)">banned ${new Date(u.bannedAt).toLocaleDateString()}${u.banReason ? ' — ' + esc(u.banReason) : ''}</span>` : ''}</div></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${acts.join('')}</div></div>`;
+    }).join('') || '<div class="empty" style="padding:30px"><p>No one matches.</p></div>';
+    const act = async (fn) => { try { await fn(); load(); } catch (e) { toast(e.message, true); } };
+    el.querySelectorAll('[data-ban]').forEach((b) => (b.onclick = async () => {
+      const u = S.userCache[b.dataset.ban];
+      const reason = await promptDialog(`Ban @${u.username} from lumi?`, 'Reason (optional, they will see it)', '', 'Ban');
+      if (reason === null) return;
+      act(async () => { await api('POST', `/api/admin/users/${u.id}/ban`, { reason }); toast(`@${u.username} was banned`); });
+    }));
+    el.querySelectorAll('[data-unban]').forEach((b) => (b.onclick = () => act(async () => { await api('DELETE', `/api/admin/users/${b.dataset.unban}/ban`); toast('Unbanned'); })));
+    el.querySelectorAll('[data-admin]').forEach((b) => (b.onclick = async () => {
+      const u = S.userCache[b.dataset.admin];
+      if (!(await confirmDialog(`Make @${u.username} an admin?`, 'Admins can open this panel, search everyone, and ban or unban regular users. Only you can add or remove admins.', 'Make admin', false))) return;
+      act(async () => { await api('POST', `/api/admin/users/${u.id}/admin`); toast(`@${u.username} is now an admin`); });
+    }));
+    el.querySelectorAll('[data-unadmin]').forEach((b) => (b.onclick = () => act(async () => { await api('DELETE', `/api/admin/users/${b.dataset.unadmin}/admin`); toast('Admin removed'); })));
+  };
+  el.querySelector('#ap-q').oninput = () => { clearTimeout(timer); timer = setTimeout(load, 220); };
+  el.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => {
+    filter = b.dataset.f; el.querySelectorAll('[data-f]').forEach((x) => x.classList.toggle('active', x === b));
+    el.querySelector('#ap-title').textContent = { all: 'Everyone', banned: 'Banned', admins: 'Admins' }[filter]; load();
+  }));
+  load();
+}

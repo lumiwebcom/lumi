@@ -11,3 +11,12 @@ services:
         value: production
       - key: GOOGLE_CLIENT_ID
         value: 334705978929-grno9ktson362t8gq2cnrjdeva6nlgv5.apps.googleusercontent.com
+      # permanent storage (Cloudflare Workers KV) — the API token is set in the Render dashboard
+      - key: CF_ACCOUNT_ID
+        value: 94aab9c6a2cb48e87a45287338375452
+      - key: CF_KV_NAMESPACE_ID
+        value: 8727012815d244a7a89fdd87e941805b
+      - key: CF_API_TOKEN
+        sync: false
+      - key: OWNER_USERNAME
+        value: cook

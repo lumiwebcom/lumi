@@ -15,6 +15,7 @@ async function joinCall(channelId, { video = false } = {}) {
   if (!window.RTCPeerConnection || !navigator.mediaDevices) return toast('Calls need a modern browser over HTTPS (or localhost).', true);
   if (Call.active) leaveCall(true);
   stopRinging();
+  try { S.config = await api('GET', '/api/config'); } catch {}
   let local;
   try { local = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(), video: video ? videoConstraints() : false }); }
   catch {
@@ -46,7 +47,7 @@ function cleanupCall() {
   for (const p of c.peers.values()) { try { p.pc.close(); } catch {} p.audioEl?.remove(); meterRemove(p.sid); }
   c.local.getTracks().forEach((t) => t.stop()); c.camTrack?.stop(); c.screenTrack?.stop();
   meterRemove('self');
-  Call.tiles.forEach((t) => t.remove()); Call.tiles.clear();
+  Call.tiles.forEach((t) => t.remove()); Call.tiles.clear(); Call.focusSid = null;
   clearInterval(Call.timer);
   Call.active = null;
 }
@@ -248,7 +249,13 @@ function updateStage() {
       <div class="grid" id="call-grid"></div><div class="controls" id="call-controls"></div></div>`;
     stage = slot.querySelector('.stage');
     stage.querySelector('#call-controls').addEventListener('click', onCallControl);
-    stage.querySelector('#call-grid').addEventListener('dblclick', (e) => { const t = e.target.closest('.tile'); if (!t) return; const on = !t.classList.contains('focus'); $$('.tile.focus').forEach((x) => x.classList.remove('focus')); t.classList.toggle('focus', on); });
+    // click a tile (e.g. someone's screen share) to zoom it to fill the stage; click again to zoom back out
+    stage.querySelector('#call-grid').addEventListener('click', (e) => {
+      const t = e.target.closest('.tile'); if (!t) return;
+      const key = [...Call.tiles.entries()].find(([, el]) => el === t)?.[0];
+      Call.focusSid = Call.focusSid === key ? null : key;
+      updateStage();
+    });
   }
   const c = Call.active;
   stage.querySelector('#call-controls').innerHTML = `
@@ -300,6 +307,10 @@ function updateStage() {
   }
   // keep self last
   const selfTile = Call.tiles.get(socket.id); if (selfTile && list.length > 1) grid.appendChild(selfTile);
+  if (Call.focusSid && !Call.tiles.has(Call.focusSid)) Call.focusSid = null;
+  for (const [k, el] of Call.tiles) el.classList.toggle('focus', k === Call.focusSid);
+  grid.classList.toggle('has-focus', !!Call.focusSid && list.length > 1);
+  if (Call.focusSid) { const f = Call.tiles.get(Call.focusSid); if (f && grid.firstChild !== f) grid.prepend(f); }
 }
 function onCallControl(e) {
   const b = e.target.closest('[data-c]'); if (!b) return;

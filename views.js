@@ -84,7 +84,7 @@ function railItem({ active, unread, tip, inner, data, badge }) {
 function renderRail() {
   const v = S.view;
   const pending = S.friends.filter((f) => f.type === 'incoming').length;
-  let html = railItem({ active: v.type !== 'server', tip: 'Chats', inner: `<div class="rail-btn home">${icon('logo')}</div>`, data: 'data-go="home"', badge: pending });
+  let html = railItem({ active: v.type !== 'server', tip: 'Chats', inner: `<div class="rail-btn home">${LOGO_MARK}</div>`, data: 'data-go="home"', badge: pending });
   for (const d of S.dms.filter((d) => d.unread > 0).slice(0, 5))
     html += railItem({ tip: dmName(d), inner: `<div class="rail-btn" style="background:none">${dmAvatar(d, 48)}</div>`, data: `data-dm="${d.id}"`, badge: d.unread });
   html += '<div class="sep"></div>';
@@ -95,6 +95,7 @@ function renderRail() {
   }
   html += railItem({ tip: 'Create a space', inner: `<div class="rail-btn add">${icon('plus')}</div>`, data: 'data-act="create-server"' });
   html += railItem({ tip: 'Join with an invite', inner: `<div class="rail-btn add">${icon('compass')}</div>`, data: 'data-act="join-server"' });
+  if (isSiteAdmin()) html += '<div class="sep"></div>' + railItem({ tip: 'Admin panel', inner: `<div class="rail-btn add admin-btn">${SHIELD_BLUE}</div>`, data: 'data-act="admin-panel"' });
   $('#rail').innerHTML = html;
 }
 function onRailClick(e) {
@@ -104,6 +105,7 @@ function onRailClick(e) {
   if (it.dataset.server) return navigate('/channels/' + it.dataset.server + (S.lastChannel[it.dataset.server] ? '/' + S.lastChannel[it.dataset.server] : ''));
   if (it.dataset.act === 'create-server') return openCreateServer();
   if (it.dataset.act === 'join-server') return openCreateServer('join');
+  if (it.dataset.act === 'admin-panel') return openAdminPanel();
 }
 function onRailContext(e) {
   const it = e.target.closest('[data-server]'); if (!it) return;
@@ -117,6 +119,7 @@ async function serverMenu(sid, anchor) {
     { label: 'Mark as read', icon: 'check', onClick: () => markServerRead(sid) },
     (can(sd, P.MANAGE_SERVER) || can(sd, P.MANAGE_ROLES) || can(sd, P.KICK_MEMBERS) || can(sd, P.BAN_MEMBERS)) && { label: 'Space settings', icon: 'settings', onClick: () => openServerSettings(sid) },
     can(sd, P.MANAGE_CHANNELS) && { label: 'New room', icon: 'plus', onClick: () => openChannelModal(sid) },
+    can(sd, P.MANAGE_CHANNELS) && { label: 'New category', icon: 'menu', onClick: () => openCategoryModal(sid) },
     { label: 'Edit my space profile', icon: 'edit', onClick: () => editNickname(sid, S.me.id) },
     'sep',
     !owner && { label: 'Leave space', icon: 'logout', danger: true, onClick: () => leaveServer(sid) },
@@ -175,7 +178,7 @@ function renderSideBody() {
     else if (d.type === 'dm') { const u = S.userCache[d.recipients[0]?.id] || d.recipients[0]; sub = u ? esc(u.customStatus || (isOnline(u.id) ? 'Active now' : '@' + u.username)) : ''; }
     else sub = `${d.members.length} members`;
     html += `<div class="nav-item ${v.dmId === d.id ? 'active' : ''} ${d.unread ? 'unread' : ''}" data-dm="${d.id}">
-      ${dmAvatar(d, 48)}<div class="meta"><div class="n">${esc(dmName(d))}</div><div class="sub">${sub}</div></div>
+      ${dmAvatar(d, 48)}<div class="meta"><div class="n">${esc(dmName(d))}${d.type === 'dm' ? roleBadge(d.recipients[0]) : ''}</div><div class="sub">${sub}</div></div>
       ${inCall ? `<span style="color:var(--green)">${icon('phone', 'sm')}</span>` : d.unread ? '<span class="unread-dot"></span>' : ''}</div>`;
   }
   el.innerHTML = html;
@@ -183,21 +186,34 @@ function renderSideBody() {
 function renderServerSide(el) {
   const sd = S.serverData[S.view.serverId]; if (!sd) return (el.innerHTML = '');
   const manage = can(sd, P.MANAGE_CHANNELS);
-  const text = sd.channels.filter((c) => c.type === 'text'), voice = sd.channels.filter((c) => c.type === 'voice');
+  const collapsed = S.collapsedCats || (S.collapsedCats = new Set(JSON.parse(localStorage.getItem('lumi.collapsed') || '[]')));
+  const order = (a, b) => (a.type === b.type ? 0 : a.type === 'text' ? -1 : 1) || a.position - b.position;
   const chanRow = (c) => `<div class="nav-item chan ${S.view.channelId === c.id ? 'active' : ''} ${c.unread && S.view.channelId !== c.id ? 'unread' : ''}" data-chan="${c.id}">
       ${icon(c.type === 'text' ? 'room' : 'waves', 'sm')}<span class="n" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span>
-      <span class="tools">${can(sd, P.CREATE_INVITE) ? `<button data-act="invite" data-tip="Create invite">${icon('userPlus', 'xs')}</button>` : ''}${manage ? `<button data-act="edit-chan" data-tip="Edit channel">${icon('settings', 'xs')}</button>` : ''}</span>
+      <span class="tools">${can(sd, P.CREATE_INVITE) ? `<button data-act="invite" data-tip="Create invite">${icon('userPlus', 'xs')}</button>` : ''}${manage ? `<button data-act="edit-chan" data-tip="Edit">${icon('settings', 'xs')}</button>` : ''}</span>
       ${c.unread && S.view.channelId !== c.id ? '<span class="unread-dot"></span>' : ''}</div>`;
-  let html = `<div class="side-section cat"><span>Rooms</span>${manage ? `<button class="icon-btn" data-act="new-chan" data-type="text" data-tip="New room">${icon('plus', 'xs')}</button>` : ''}</div>`;
-  html += text.map(chanRow).join('');
-  html += `<div class="side-section cat"><span>Lounges</span>${manage ? `<button class="icon-btn" data-act="new-chan" data-type="voice" data-tip="New room">${icon('plus', 'xs')}</button>` : ''}</div>`;
-  for (const c of voice) {
-    html += chanRow(c);
+  const voiceUsers = (c) => {
     const parts = S.voice[c.id] || [];
-    if (parts.length) html += `<div class="voice-users">${parts.map((p) => `<div class="voice-user" data-user="${p.userId}">
+    return parts.length ? `<div class="voice-users">${parts.map((p) => `<div class="voice-user" data-user="${p.userId}">
       ${avatar(p.user, 24, { ring: 'seen', speak: true })}<span>${esc(memberInfo(sd, p.userId).name)}</span>
-      <span class="vu-icons">${p.screen ? '<span class="live">LIVE</span>' : ''}${p.video ? icon('video', 'xs') : ''}${p.muted ? icon('micOff', 'xs') : ''}${p.deafened ? icon('headphonesOff', 'xs') : ''}</span></div>`).join('')}</div>`;
+      <span class="vu-icons">${p.screen ? '<span class="live">LIVE</span>' : ''}${p.video ? icon('video', 'xs') : ''}${p.muted ? icon('micOff', 'xs') : ''}${p.deafened ? icon('headphonesOff', 'xs') : ''}</span></div>`).join('')}</div>` : '';
+  };
+  const rows = (list) => list.sort(order).map((c) => chanRow(c) + (c.type === 'voice' ? voiceUsers(c) : '')).join('');
+  const cats = [...(sd.categories || [])].sort((a, b) => a.position - b.position);
+  const catIds = new Set(cats.map((c) => c.id));
+  const loose = sd.channels.filter((c) => !c.categoryId || !catIds.has(c.categoryId));
+  let html = loose.length ? `<div style="height:8px"></div>${rows(loose)}` : '';
+  for (const cat of cats) {
+    const list = sd.channels.filter((c) => c.categoryId === cat.id);
+    const isCol = collapsed.has(cat.id);
+    const hasUnread = list.some((c) => c.unread && c.id !== S.view.channelId);
+    html += `<div class="side-section cat cat-head" data-cat="${cat.id}"><span class="cat-name">${icon('chevron', 'xs').replace('class="i xs"', `class="i xs" style="transition:transform .15s;${isCol ? 'transform:rotate(-90deg)' : ''}"`)} ${esc(cat.name)}${isCol && hasUnread ? ' <span class="unread-dot" style="display:inline-block"></span>' : ''}</span>
+      ${manage ? `<span class="cat-tools"><button class="icon-btn" data-act="new-chan-in" data-tip="Add a room or lounge">${icon('plus', 'xs')}</button><button class="icon-btn" data-act="edit-cat" data-tip="Edit category">${icon('settings', 'xs')}</button></span>` : ''}</div>`;
+    if (isCol) html += rows(list.filter((c) => c.id === S.view.channelId || (S.voice[c.id] || []).length));
+    else html += list.length ? rows(list) : `<div class="muted small" style="padding:4px 14px 6px">${manage ? 'Empty — add a room with +' : 'Nothing here yet'}</div>`;
   }
+  if (!sd.channels.length && !cats.length) html += `<div class="muted small" style="padding:14px">No rooms yet.</div>`;
+  if (manage) html += `<button class="btn ghost" data-act="new-cat" style="margin:14px 6px 0;font-weight:500;color:var(--text2)">${icon('plus', 'sm')} New category</button>`;
   el.innerHTML = html;
 }
 function renderSideFoot() {
@@ -215,18 +231,25 @@ function renderSideFoot() {
   }
   const muted = Call.active ? Call.active.muted : S.selfMute, deaf = Call.active ? Call.active.deafened : S.selfDeaf;
   html += `<div class="me-panel">${avatar(S.me, 36, { dot: true })}
-    <div class="who" data-act="my-profile"><div class="n">${esc(S.me.displayName)}</div><div class="u">${esc(S.me.customStatus || '@' + S.me.username)}</div></div>
+    <div class="who" data-act="my-profile"><div class="n">${esc(S.me.displayName)}${roleBadge(S.me)}</div><div class="u">${esc(S.me.customStatus || '@' + S.me.username)}</div></div>
     <button class="icon-btn ${muted ? 'off' : ''}" data-act="toggle-mute" data-tip="${muted ? 'Unmute' : 'Mute'}">${icon(muted ? 'micOff' : 'mic', 'sm')}</button>
     <button class="icon-btn ${deaf ? 'off' : ''}" data-act="toggle-deafen" data-tip="${deaf ? 'Undeafen' : 'Deafen'}">${icon(deaf ? 'headphonesOff' : 'headphones', 'sm')}</button>
     <button class="icon-btn" data-act="user-settings" data-tip="Settings">${icon('settings', 'sm')}</button></div>`;
   el.innerHTML = html;
 }
 function onSideClick(e) {
-  const t = e.target.closest('[data-act],[data-dm],[data-chan],[data-go],[data-user]'); if (!t) return;
+  const t = e.target.closest('[data-act],[data-dm],[data-chan],[data-go],[data-user],[data-cat]'); if (!t) return;
   const act = t.dataset.act;
+  if (!act && t.dataset.cat) {
+    const set = S.collapsedCats; set.has(t.dataset.cat) ? set.delete(t.dataset.cat) : set.add(t.dataset.cat);
+    localStorage.setItem('lumi.collapsed', JSON.stringify([...set])); return renderSideBody();
+  }
   if (act === 'invite') { e.stopPropagation(); return openInvite(S.view.serverId); }
   if (act === 'edit-chan') { e.stopPropagation(); return openChannelModal(S.view.serverId, t.closest('[data-chan]').dataset.chan); }
   if (act === 'new-chan') return openChannelModal(S.view.serverId, null, t.dataset.type);
+  if (act === 'new-chan-in') { e.stopPropagation(); return openChannelModal(S.view.serverId, null, 'text', t.closest('[data-cat]').dataset.cat); }
+  if (act === 'edit-cat') { e.stopPropagation(); return openCategoryModal(S.view.serverId, t.closest('[data-cat]').dataset.cat); }
+  if (act === 'new-cat') return openCategoryModal(S.view.serverId);
   if (act === 'server-menu') return serverMenu(S.view.serverId, t.querySelector('.row'));
   if (act === 'new-group') return openNewGroup();
   if (act === 'goto-call') return gotoCall();
@@ -343,7 +366,7 @@ function renderHomeBody() {
       if (f.type === 'incoming') acts = `<button class="icon-btn ok" data-act="accept" data-tip="Accept">${icon('check', 'sm')}</button><button class="icon-btn no" data-act="decline" data-tip="Ignore">${icon('x', 'sm')}</button>`;
       if (f.type === 'outgoing') acts = `<button class="icon-btn no" data-act="decline" data-tip="Cancel">${icon('x', 'sm')}</button>`;
       if (f.type === 'blocked') acts = `<button class="btn" data-act="unblock">Unblock</button>`;
-      html += `<div class="friend" data-fid="${u.id}">${avatar(u, 48, { dot: f.type === 'friend' })}<div class="meta"><div class="n">${esc(u.displayName)} <span class="muted" style="font-weight:400">@${esc(u.username)}</span></div><div class="s">${esc(sub)}</div></div><div class="acts">${acts}</div></div>`;
+      html += `<div class="friend" data-fid="${u.id}">${avatar(u, 48, { dot: f.type === 'friend' })}<div class="meta"><div class="n">${esc(u.displayName)}${roleBadge(u)} <span class="muted" style="font-weight:400">@${esc(u.username)}</span></div><div class="s">${esc(sub)}</div></div><div class="acts">${acts}</div></div>`;
     }
     html += '</div>';
   }
@@ -378,7 +401,7 @@ function renderChatView(main) {
     const dm = S.dms.find((d) => d.id === cid);
     const u = dm.type === 'dm' ? S.userCache[dm.recipients[0]?.id] || dm.recipients[0] : null;
     const sub = u ? (isOnline(u.id) ? 'Active now' : '@' + u.username) : `${dm.members.length} members`;
-    head = `<div class="who" data-act="${u ? 'profile' : 'group-settings'}" ${u ? `data-user="${u.id}"` : ''}>${dmAvatar(dm, 40)}<div><div class="t">${esc(dmName(dm))}</div><div class="sub">${esc(sub)}</div></div></div>`;
+    head = `<div class="who" data-act="${u ? 'profile' : 'group-settings'}" ${u ? `data-user="${u.id}"` : ''}>${dmAvatar(dm, 40)}<div><div class="t">${esc(dmName(dm))}${u ? roleBadge(u) : ''}</div><div class="sub">${esc(sub)}</div></div></div>`;
     tools = `<button class="icon-btn" data-act="call-voice" data-tip="Start voice call">${icon('phone')}</button>
       <button class="icon-btn" data-act="call-video-start" data-tip="Start video call">${icon('video')}</button>
       <button class="icon-btn ${S.panel?.type === 'pins' ? 'active' : ''}" data-act="pins" data-tip="Pinned messages">${icon('pin', 'sm')}</button>
@@ -473,7 +496,7 @@ function groupHtml(g) {
   const topRole = mi.roles[0];
   return `<div class="msg-group ${me ? 'me' : ''}">
     ${!me ? `<div class="gav" data-user="${author.id}">${avatar(author, 28)}</div>` : ''}
-    <div class="stack">${showAuthor ? `<div class="author" data-user="${author.id}"><b style="${mi.color ? `color:${mi.color}` : ''}">${esc(mi.name)}</b>${mi.owner ? `<span style="color:var(--yellow)">${icon('crown', 'xs')}</span>` : ''}${topRole ? `<span class="role-tag" style="background:${esc(topRole.color)}">${esc(topRole.name)}</span>` : ''}<span>${fmtTime(g.msgs[0].createdAt)}</span></div>` : ''}
+    <div class="stack">${showAuthor ? `<div class="author" data-user="${author.id}"><b style="${mi.color ? `color:${mi.color}` : ''}">${esc(mi.name)}</b>${roleBadge(author)}${mi.owner ? `<span style="color:var(--yellow)">${icon('crown', 'xs')}</span>` : ''}${topRole ? `<span class="role-tag" style="background:${esc(topRole.color)}">${esc(topRole.name)}</span>` : ''}<span>${fmtTime(g.msgs[0].createdAt)}</span></div>` : ''}
     ${g.msgs.map((m, i) => msgHtml(m, i === 0, i === g.msgs.length - 1)).join('')}</div></div>`;
 }
 function msgHtml(m, first, last) {
@@ -697,7 +720,7 @@ function renderRight() {
 function memberRow(u, sd, owner) {
   const mi = memberInfo(sd, u.id); const on = isOnline(u.id);
   const inVoice = sd && sd.channels.some((c) => c.type === 'voice' && (S.voice[c.id] || []).some((p) => p.userId === u.id));
-  return `<div class="member ${on ? '' : 'off'}" data-user="${u.id}">${avatar(u, 34, { dot: true })}<div style="min-width:0"><div class="n"><span style="${mi.color ? `color:${mi.color}` : ''};overflow:hidden;text-overflow:ellipsis">${esc(mi.name)}</span>${owner ? `<span class="crown" data-tip="Owner">${icon('crown', 'xs')}</span>` : ''}</div>
+  return `<div class="member ${on ? '' : 'off'}" data-user="${u.id}">${avatar(u, 34, { dot: true })}<div style="min-width:0"><div class="n"><span style="${mi.color ? `color:${mi.color}` : ''};overflow:hidden;text-overflow:ellipsis">${esc(mi.name)}</span>${roleBadge(u)}${owner ? `<span class="crown" data-tip="Owner">${icon('crown', 'xs')}</span>` : ''}</div>
     <div class="s">${inVoice ? `<span style="color:var(--green)">${icon('waves', 'xs')} In a lounge</span>` : esc(u.customStatus || '')}</div></div></div>`;
 }
 async function openPins() {

@@ -9,7 +9,7 @@ function renderAuth(mode = 'login') {
     <section class="auth-hero" aria-hidden="true">
       <div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>
       <div class="hero-copy">
-        <div class="wordmark lg">lumı</div>
+        ${wordmark('lg')}
         <h1>Light up<br>your circle.</h1>
         <p>Chat, call and hang out in spaces made for your people.</p>
         <div class="hero-chips"><span>✨ Moments</span><span>🎧 Lounges</span><span>💬 Rooms</span></div>
@@ -19,7 +19,7 @@ function renderAuth(mode = 'login') {
     </section>
     <section class="auth-panel">
       <div class="auth-card">
-        <div class="wordmark">lumı</div>
+        ${wordmark()}
         <h2>${signup ? 'Create your account' : 'Welcome back'}</h2>
         <p class="muted" style="margin:-4px 0 22px">${signup ? 'It’s free and takes a minute.' : 'Good to see you again.'}</p>
         <div class="gbtn" id="gbtn"></div><div class="or" id="gor">or</div>

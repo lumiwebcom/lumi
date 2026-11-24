@@ -16,7 +16,7 @@ async function boot() {
 async function onSignedIn(user) {
   S.me = user; cacheUser(user);
   if (!S.me.email) try { S.me = { ...S.me, ...(await api('GET', '/api/me')).user }; } catch {}
-  $('#root').innerHTML = '<div class="splash"><div class="wordmark lg">lumı</div></div>';
+  $('#root').innerHTML = `<div class="splash">${wordmark('lg')}</div>`;
   await Promise.all([refreshServers(), refreshDMs(), refreshFriends(), refreshStories()]);
   connectSocket();
   renderShell();
@@ -67,7 +67,7 @@ function connectSocket() {
     if (S.view.type === 'dm') { const d = S.dms.find((x) => x.id === S.view.dmId); if (d?.recipients[0]?.id === userId) { const sub = $('.main-head .who .sub'); if (sub) sub.textContent = online ? 'Active now' : '@' + d.recipients[0].username; } }
   });
   socket.on('user:update', ({ user }) => {
-    cacheUser(user); if (user.id === S.me.id) S.me = { ...S.me, ...user };
+    cacheUser(user); if (user.id === S.me.id) { const was = S.me.siteRole; S.me = { ...S.me, ...user }; if (was !== S.me.siteRole) { const t = S.me.siteRole === 'admin' ? 'You are now a lumi admin' : !S.me.siteRole ? 'Your admin access was removed' : ''; if (t) toast(t); } renderRail(); }
     for (const d of S.dms) d.members = d.members.map((m) => (m.id === user.id ? { ...m, ...user } : m)), d.recipients = d.recipients.map((m) => (m.id === user.id ? { ...m, ...user } : m));
     for (const sd of Object.values(S.serverData)) sd.members.forEach((m) => { if (m.user.id === user.id) Object.assign(m.user, user); });
     renderRail(); renderSideBody(); renderSideFoot();
@@ -113,6 +113,11 @@ function connectSocket() {
     if (S.view.type !== 'home') renderRight();
   });
   socket.on('voice:force-leave', () => { cleanupCall(); renderCallUI(); toast('You joined a call on another device'); });
+  socket.on('account:banned', ({ reason } = {}) => {
+    if (Call.active) cleanupCall();
+    S.me = null;
+    $('#root').innerHTML = `<div class="auth" style="display:grid;place-items:center"><div class="auth-card" style="text-align:center;max-width:420px">${wordmark()}<h2>Your account has been banned</h2><p class="muted">${reason ? esc(reason) : 'An admin banned this account from lumi.'}</p></div></div>`;
+  });
   socket.on('rtc:signal', onSignal);
   socket.on('rtc:peer-left', onPeerLeft);
   socket.on('call:ring', onRing);

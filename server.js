@@ -48,7 +48,13 @@ const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // ---------------------------------------------------------------- database
-const db = new DatabaseSync(path.join(DATA_DIR, 'lumi.db'));
+const storage = require('./storage');
+const zlib = require('zlib');
+const DB_FILE = path.join(DATA_DIR, 'lumi.db');
+// Restore the saved database before opening it (blocks startup until done; a failure stops the server
+// so an empty database never overwrites the saved one).
+if (storage.enabled) require('child_process').execFileSync(process.execPath, ['--no-warnings', path.join(__dirname, 'storage.js'), 'restore', DB_FILE], { stdio: 'inherit', env: process.env });
+const db = new DatabaseSync(DB_FILE);
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -101,6 +107,46 @@ CREATE TABLE IF NOT EXISTS stories (
 CREATE TABLE IF NOT EXISTS story_views (story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE, user_id TEXT NOT NULL, PRIMARY KEY (story_id, user_id));
 `);
 
+// migrations for databases created by older versions
+const colsOf = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+for (const [c, t] of [['site_role', 'TEXT'], ['banned_at', 'INTEGER'], ['ban_reason', 'TEXT']]) if (!colsOf('users').includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`);
+if (!colsOf('channels').includes('category_id')) db.exec('ALTER TABLE channels ADD COLUMN category_id TEXT');
+db.exec(`CREATE TABLE IF NOT EXISTS categories (id TEXT PRIMARY KEY, server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, position INTEGER DEFAULT 0, created_at INTEGER NOT NULL)`);
+
+// The site owner is the account with this username (default "cook"). Once set, ownership stays with that account.
+const OWNER_USERNAME = (process.env.OWNER_USERNAME || 'cook').toLowerCase();
+function ensureOwner() {
+  if (db.prepare("SELECT 1 FROM users WHERE site_role='owner'").get()) return;
+  const u = db.prepare('SELECT id FROM users WHERE username=?').get(OWNER_USERNAME);
+  if (u) db.prepare("UPDATE users SET site_role='owner' WHERE id=?").run(u.id);
+}
+ensureOwner();
+const isSiteAdmin = (u) => u && (u.site_role === 'owner' || u.site_role === 'admin');
+
+// ---- backups to permanent storage
+let lastBackupChanges = -1, lastBackupAt = 0, backingUp = false;
+const dbChanges = () => db.prepare('SELECT total_changes() n').get().n;
+async function backup(force) {
+  if (!storage.enabled || backingUp) return;
+  const n = dbChanges();
+  if (n === lastBackupChanges) return;
+  if (!force && Date.now() - lastBackupAt < 150_000) return; // stay inside KV's free write limits
+  backingUp = true;
+  try {
+    const tmp = DB_FILE + '.snap';
+    try { fs.unlinkSync(tmp); } catch {}
+    db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+    const gz = zlib.gzipSync(fs.readFileSync(tmp));
+    fs.unlinkSync(tmp);
+    await storage.put('lumi-db', gz);
+    lastBackupChanges = n; lastBackupAt = Date.now();
+  } catch (e) { console.error('  Backup failed:', e.message); }
+  finally { backingUp = false; }
+}
+if (storage.enabled) { lastBackupChanges = dbChanges(); setInterval(() => backup(false), 30_000); }
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, async () => { await backup(true); process.exit(0); });
+
 const id = () => crypto.randomBytes(9).toString('base64url');
 const now = () => Date.now();
 
@@ -137,7 +183,8 @@ const has = (perms, flag) => (perms & flag) === flag;
 function publicUser(u) {
   if (!u) return null;
   return { id: u.id, username: u.username, displayName: u.display_name || u.username, avatar: u.avatar,
-    banner: u.banner, bio: u.bio, customStatus: u.custom_status, accent: u.accent, online: isOnline(u.id) };
+    banner: u.banner, bio: u.bio, customStatus: u.custom_status, accent: u.accent, online: isOnline(u.id),
+    siteRole: u.site_role || null, banned: !!u.banned_at };
 }
 const getUser = (uid) => db.prepare('SELECT * FROM users WHERE id=?').get(uid);
 
@@ -192,7 +239,16 @@ const INDEX_FILE = PUBLIC_DIR ? path.join(PUBLIC_DIR, 'index.html') : path.join(
 if (PUBLIC_DIR) app.use(express.static(PUBLIC_DIR));
 else app.get(Object.keys(FLAT_FILES), (req, res) => res.sendFile(path.join(__dirname, FLAT_FILES[req.path])));
 app.use('/fonts', express.static(path.join(__dirname, 'node_modules', '@fontsource-variable', 'outfit', 'files'), { maxAge: '30d' }));
-app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
+app.get('/uploads/:name', async (req, res) => {
+  const name = req.params.name;
+  if (!/^[\w-]+(\.[a-z0-9]{1,10})?$/.test(name)) return res.status(404).end();
+  const file = path.join(UPLOAD_DIR, name);
+  if (!fs.existsSync(file) && storage.enabled) {
+    try { const buf = await storage.get('up:' + name); if (buf) fs.writeFileSync(file, buf); } catch (e) { console.error(e.message); }
+  }
+  if (!fs.existsSync(file)) return res.status(404).end();
+  res.sendFile(file, { maxAge: '7d' });
+});
 
 function createSession(res, userId) {
   const token = crypto.randomBytes(32).toString('hex');
@@ -210,6 +266,7 @@ function userFromCookieHeader(header) {
 function auth(req, res, next) {
   const u = userFromCookieHeader(req.headers.cookie);
   if (!u) return res.status(401).json({ error: 'Not signed in' });
+  if (u.banned_at) return res.status(403).json({ error: 'This account has been banned.', banned: true });
   req.user = u; next();
 }
 const wrap = (fn) => (req, res) => {
@@ -230,7 +287,25 @@ function rateLimit(key, max = 10, windowMs = 60_000) {
 const ICE_SERVERS = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
 if (process.env.TURN_URL) ICE_SERVERS.push({ urls: process.env.TURN_URL.split(','), username: process.env.TURN_USERNAME, credential: process.env.TURN_CREDENTIAL });
 const isLocalRequest = (req) => /^(::1|127\.0\.0\.1|::ffff:127\.0\.0\.1)$/.test(req.socket.remoteAddress || '') && !req.headers['x-forwarded-for'];
-app.get('/api/config', (req, res) => res.json({ googleClientId: GOOGLE_CLIENT_ID || null, iceServers: ICE_SERVERS, canSetup: isLocalRequest(req) }));
+// Cloudflare TURN relay (optional): short-lived credentials generated on demand and cached.
+const CF_TURN_KEY_ID = process.env.CF_TURN_KEY_ID, CF_TURN_API_TOKEN = process.env.CF_TURN_API_TOKEN;
+let turnCache = { at: 0, servers: null };
+async function iceServers() {
+  if (!CF_TURN_KEY_ID || !CF_TURN_API_TOKEN) return ICE_SERVERS;
+  if (turnCache.servers && Date.now() - turnCache.at < 6 * 3600_000) return turnCache.servers;
+  try {
+    const call = (p) => fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/${p}`, {
+      method: 'POST', headers: { Authorization: `Bearer ${CF_TURN_API_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ ttl: 86400 }) });
+    let r = await call('generate-ice-servers');
+    if (r.status === 404) r = await call('generate');
+    if (!r.ok) throw new Error(`TURN credentials failed (${r.status})`);
+    const j = await r.json();
+    const list = (Array.isArray(j.iceServers) ? j.iceServers : [j.iceServers]).filter(Boolean);
+    turnCache = { at: Date.now(), servers: [...ICE_SERVERS, ...list] };
+    return turnCache.servers;
+  } catch (e) { console.error('  ' + e.message); return ICE_SERVERS; }
+}
+app.get('/api/config', async (req, res) => res.json({ googleClientId: GOOGLE_CLIENT_ID || null, iceServers: await iceServers(), canSetup: isLocalRequest(req) }));
 // One-click Google setup: only from the computer running Lumi.
 app.post('/api/setup/google', (req, res) => {
   if (!isLocalRequest(req)) return res.status(403).json({ error: 'Google sign-in can only be set up on the computer running Lumi.' });
@@ -266,6 +341,7 @@ app.post('/api/auth/signup', wrap((req, res) => {
   const uid = id();
   db.prepare(`INSERT INTO users (id,email,username,display_name,password_hash,created_at) VALUES (?,?,?,?,?,?)`)
     .run(uid, email, username, displayName, bcrypt.hashSync(password, 10), now());
+  ensureOwner();
   createSession(res, uid);
   return { user: publicUser(getUser(uid)) };
 }));
@@ -276,6 +352,7 @@ app.post('/api/auth/login', wrap((req, res) => {
   const u = db.prepare('SELECT * FROM users WHERE email=? OR username=?').get(login, login);
   if (!u || !u.password_hash || !bcrypt.compareSync(String(req.body.password || ''), u.password_hash))
     throw fail(401, u && !u.password_hash ? 'This account uses Google sign-in.' : 'Incorrect email/username or password.');
+  if (u.banned_at) throw fail(403, `This account has been banned${u.ban_reason ? ': ' + u.ban_reason : '.'}`);
   createSession(res, u.id);
   return { user: publicUser(u) };
 }));
@@ -296,8 +373,11 @@ app.post('/api/auth/google', async (req, res) => {
         .run(uid, p.email.toLowerCase(), uniqueUsername(p.email.split('@')[0]), p.name || p.email, p.sub, p.picture || null, now());
       u = getUser(uid);
     }
+    ensureOwner();
+    u = getUser(u.id);
+    if (u.banned_at) return res.status(403).json({ error: `This account has been banned${u.ban_reason ? ': ' + u.ban_reason : '.'}` });
     createSession(res, u.id);
-    res.json({ user: publicUser(getUser(u.id)) });
+    res.json({ user: publicUser(u) });
   } catch (e) { console.error(e); res.status(401).json({ error: 'Google sign-in failed.' }); }
 });
 
@@ -320,7 +400,9 @@ app.post('/api/upload', auth, upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
   const mt = req.file.mimetype || '';
   const type = mt.startsWith('image/') ? 'image' : mt.startsWith('video/') ? 'video' : mt.startsWith('audio/') ? 'audio' : 'file';
-  res.json({ url: '/uploads/' + req.file.filename, type, name: req.file.originalname.slice(0, 200) });
+  const done = () => res.json({ url: '/uploads/' + req.file.filename, type, name: req.file.originalname.slice(0, 200) });
+  if (!storage.enabled) return done();
+  storage.put('up:' + req.file.filename, fs.readFileSync(req.file.path)).then(done, (e) => { console.error(e.message); res.status(500).json({ error: 'Upload could not be saved. Try again.' }); });
 });
 
 // ---------------------------------------------------------------- me / users
@@ -345,6 +427,7 @@ app.patch('/api/me', auth, wrap(req => {
   }
   db.prepare(`UPDATE users SET display_name=@display_name, bio=@bio, custom_status=@custom_status, avatar=@avatar,
     banner=@banner, accent=@accent, username=@username WHERE id=@id`).run({ ...fields, id: u.id });
+  ensureOwner();
   const pub = publicUser(getUser(u.id));
   broadcastUserUpdate(u.id, pub);
   return { user: pub };
@@ -616,7 +699,9 @@ function serverDetail(sid, uid) {
   if (!s || !perms) throw fail(404, 'Space not found');
   const channels = db.prepare('SELECT * FROM channels WHERE server_id=? ORDER BY position, created_at').all(sid)
     .map(c => ({ id: c.id, type: c.type, name: c.name, topic: c.topic, position: c.position,
-      unread: c.type === 'text' ? unreadCount(uid, c.id) : 0 }));
+      categoryId: c.category_id || null, unread: c.type === 'text' ? unreadCount(uid, c.id) : 0 }));
+  const categories = db.prepare('SELECT * FROM categories WHERE server_id=? ORDER BY position, created_at').all(sid)
+    .map((c) => ({ id: c.id, name: c.name, position: c.position }));
   const roles = db.prepare('SELECT * FROM roles WHERE server_id=? ORDER BY position DESC').all(sid)
     .map(r => ({ id: r.id, name: r.name, color: r.color, permissions: r.permissions, position: r.position, hoist: !!r.hoist, isDefault: !!r.is_default }));
   const mr = db.prepare('SELECT user_id, role_id FROM member_roles WHERE server_id=?').all(sid);
@@ -624,7 +709,7 @@ function serverDetail(sid, uid) {
     user: publicUser(getUser(m.user_id)), nickname: m.nickname, joinedAt: m.joined_at,
     roleIds: mr.filter(x => x.user_id === m.user_id).map(x => x.role_id) })).filter(m => m.user);
   return { server: { id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, ownerId: s.owner_id, createdAt: s.created_at },
-    channels, roles, members, myPermissions: perms, myTopPosition: Math.min(topRolePosition(sid, uid), 1e9), voice: voiceStatesForServer(sid) };
+    channels, categories, roles, members, myPermissions: perms, myTopPosition: Math.min(topRolePosition(sid, uid), 1e9), voice: voiceStatesForServer(sid) };
 }
 app.get('/api/servers/:id', auth, wrap(req => serverDetail(req.params.id, req.user.id)));
 
@@ -648,8 +733,11 @@ app.post('/api/servers', auth, wrap(req => {
     .run(id(), sid, '@everyone', '#8e8e8e', DEFAULT_PERMS, 0);
   const t = req.body.template || 'default';
   const textChans = t === 'gaming' ? ['General', 'Highlights', 'Looking for group'] : t === 'study' ? ['General', 'Homework help', 'Resources'] : ['General', 'Say hi 👋', 'Photos & clips'];
-  textChans.forEach((n, i) => db.prepare('INSERT INTO channels (id,server_id,type,name,position,created_at) VALUES (?,?,?,?,?,?)').run(id(), sid, 'text', n, i, now()));
-  ['The Lounge', t === 'gaming' ? 'Squad up' : 'Chill zone'].forEach((n, i) => db.prepare('INSERT INTO channels (id,server_id,type,name,position,created_at) VALUES (?,?,?,?,?,?)').run(id(), sid, 'voice', n, 100 + i, now()));
+  const roomsCat = id(), loungesCat = id();
+  db.prepare('INSERT INTO categories (id,server_id,name,position,created_at) VALUES (?,?,?,?,?)').run(roomsCat, sid, 'Rooms', 0, now());
+  db.prepare('INSERT INTO categories (id,server_id,name,position,created_at) VALUES (?,?,?,?,?)').run(loungesCat, sid, 'Lounges', 1, now());
+  textChans.forEach((n, i) => db.prepare('INSERT INTO channels (id,server_id,type,name,position,category_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id(), sid, 'text', n, i, roomsCat, now()));
+  ['The Lounge', t === 'gaming' ? 'Squad up' : 'Chill zone'].forEach((n, i) => db.prepare('INSERT INTO channels (id,server_id,type,name,position,category_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id(), sid, 'voice', n, 100 + i, loungesCat, now()));
   addMember(sid, req.user.id);
   return serverDetail(sid, req.user.id);
 }));
@@ -692,8 +780,9 @@ app.post('/api/servers/:id/channels', auth, wrap(req => {
   const type = req.body.type === 'voice' ? 'voice' : 'text';
   const name = sanitizeName(req.body.name, 100) || (type === 'text' ? 'New room' : 'Lounge');
   const pos = (db.prepare('SELECT MAX(position) p FROM channels WHERE server_id=? AND type=?').get(sid, type).p ?? (type === 'voice' ? 99 : -1)) + 1;
-  db.prepare('INSERT INTO channels (id,server_id,type,name,topic,position,created_at) VALUES (?,?,?,?,?,?,?)')
-    .run(id(), sid, type, name, String(req.body.topic || '').slice(0, 300), pos, now());
+  const cat = req.body.categoryId && db.prepare('SELECT id FROM categories WHERE id=? AND server_id=?').get(req.body.categoryId, sid);
+  db.prepare('INSERT INTO channels (id,server_id,type,name,topic,position,category_id,created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(id(), sid, type, name, String(req.body.topic || '').slice(0, 300), pos, cat ? cat.id : null, now());
   io.to(`server:${sid}`).emit('server:update', { serverId: sid });
   return { ok: true };
 }));
@@ -703,7 +792,12 @@ app.patch('/api/channels/:id', auth, wrap(req => {
   const name = req.body.name !== undefined ? (sanitizeName(req.body.name, 100) || c.name) : c.name;
   const topic = req.body.topic !== undefined ? String(req.body.topic).slice(0, 300) : c.topic;
   const position = Number.isFinite(req.body.position) ? req.body.position : c.position;
-  db.prepare('UPDATE channels SET name=?, topic=?, position=? WHERE id=?').run(name, topic, position, c.id);
+  let categoryId = c.category_id;
+  if (req.body.categoryId !== undefined) {
+    const cat = req.body.categoryId && db.prepare('SELECT id FROM categories WHERE id=? AND server_id=?').get(req.body.categoryId, c.server_id);
+    categoryId = cat ? cat.id : null;
+  }
+  db.prepare('UPDATE channels SET name=?, topic=?, position=?, category_id=? WHERE id=?').run(name, topic, position, categoryId, c.id);
   io.to(`server:${c.server_id}`).emit('server:update', { serverId: c.server_id });
   return { ok: true };
 }));
@@ -712,6 +806,100 @@ app.delete('/api/channels/:id', auth, wrap(req => {
   if (!c || !c.server_id || !has(memberPerms(c.server_id, req.user.id), P.MANAGE_CHANNELS)) throw fail(403, 'Not allowed');
   db.prepare('DELETE FROM channels WHERE id=?').run(c.id);
   io.to(`server:${c.server_id}`).emit('server:update', { serverId: c.server_id, deletedChannel: c.id });
+  return { ok: true };
+}));
+
+// categories
+app.post('/api/servers/:id/categories', auth, wrap(req => {
+  const sid = req.params.id;
+  if (!has(memberPerms(sid, req.user.id), P.MANAGE_CHANNELS)) throw fail(403, 'You need the Manage Rooms permission.');
+  const name = sanitizeName(req.body.name, 60);
+  if (!name) throw fail(400, 'Give the category a name.');
+  const pos = (db.prepare('SELECT MAX(position) p FROM categories WHERE server_id=?').get(sid).p ?? -1) + 1;
+  const cid = id();
+  db.prepare('INSERT INTO categories (id,server_id,name,position,created_at) VALUES (?,?,?,?,?)').run(cid, sid, name, pos, now());
+  io.to(`server:${sid}`).emit('server:update', { serverId: sid });
+  return { id: cid };
+}));
+function loadCategory(cid, uid) {
+  const c = db.prepare('SELECT * FROM categories WHERE id=?').get(cid);
+  if (!c || !has(memberPerms(c.server_id, uid), P.MANAGE_CHANNELS)) throw fail(403, 'Not allowed');
+  return c;
+}
+app.patch('/api/categories/:id', auth, wrap(req => {
+  const c = loadCategory(req.params.id, req.user.id);
+  if (req.body.name !== undefined) db.prepare('UPDATE categories SET name=? WHERE id=?').run(sanitizeName(req.body.name, 60) || c.name, c.id);
+  if (req.body.move === 'up' || req.body.move === 'down') {
+    const list = db.prepare('SELECT id FROM categories WHERE server_id=? ORDER BY position, created_at').all(c.server_id).map((x) => x.id);
+    const i = list.indexOf(c.id), j = req.body.move === 'up' ? i - 1 : i + 1;
+    if (j >= 0 && j < list.length) [list[i], list[j]] = [list[j], list[i]];
+    list.forEach((cid, k) => db.prepare('UPDATE categories SET position=? WHERE id=?').run(k, cid));
+  }
+  io.to(`server:${c.server_id}`).emit('server:update', { serverId: c.server_id });
+  return { ok: true };
+}));
+app.delete('/api/categories/:id', auth, wrap(req => {
+  const c = loadCategory(req.params.id, req.user.id);
+  db.prepare('UPDATE channels SET category_id=NULL WHERE category_id=?').run(c.id);
+  db.prepare('DELETE FROM categories WHERE id=?').run(c.id);
+  io.to(`server:${c.server_id}`).emit('server:update', { serverId: c.server_id });
+  return { ok: true };
+}));
+
+// ---------------------------------------------------------------- site admin panel
+function adminOnly(req, res, next) { if (!isSiteAdmin(req.user)) return res.status(403).json({ error: 'Admins only' }); next(); }
+app.get('/api/admin/users', auth, adminOnly, wrap(req => {
+  const owner = req.user.site_role === 'owner';
+  const q = `%${String(req.query.q || '').trim().toLowerCase()}%`;
+  let where = owner ? '(username LIKE ? OR lower(display_name) LIKE ? OR lower(email) LIKE ?)' : '(username LIKE ? OR lower(display_name) LIKE ?)';
+  const params = owner ? [q, q, q] : [q, q];
+  if (req.query.filter === 'banned') where += ' AND banned_at IS NOT NULL';
+  if (req.query.filter === 'admins') where += " AND site_role IN ('owner','admin')";
+  const rows = db.prepare(`SELECT * FROM users WHERE ${where} ORDER BY (site_role='owner') DESC, (site_role='admin') DESC, created_at DESC LIMIT 100`).all(...params);
+  return {
+    users: rows.map((u) => ({ ...publicUser(u), email: owner ? u.email : undefined, createdAt: u.created_at, bannedAt: u.banned_at, banReason: u.ban_reason })),
+    total: db.prepare('SELECT COUNT(*) n FROM users').get().n,
+    bannedCount: db.prepare('SELECT COUNT(*) n FROM users WHERE banned_at IS NOT NULL').get().n,
+  };
+}));
+function assertCanModerateSite(actor, target) {
+  if (!target) throw fail(404, 'User not found');
+  if (target.id === actor.id) throw fail(400, "You can't do that to yourself.");
+  if (target.site_role === 'owner') throw fail(403, "The owner can't be banned.");
+  if (target.site_role === 'admin' && actor.site_role !== 'owner') throw fail(403, 'Only the owner can ban admins.');
+}
+app.post('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
+  const t = getUser(req.params.id);
+  assertCanModerateSite(req.user, t);
+  const reason = String(req.body.reason || '').trim().slice(0, 200) || null;
+  db.prepare('UPDATE users SET banned_at=?, ban_reason=?, site_role=NULL WHERE id=?').run(now(), reason, t.id);
+  db.prepare('DELETE FROM sessions WHERE user_id=?').run(t.id);
+  io.to(`user:${t.id}`).emit('account:banned', { reason });
+  setTimeout(() => io.in(`user:${t.id}`).disconnectSockets(true), 300);
+  broadcastUserUpdate(t.id, publicUser(getUser(t.id)));
+  return { ok: true };
+}));
+app.delete('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
+  const t = getUser(req.params.id);
+  if (!t) throw fail(404, 'User not found');
+  db.prepare('UPDATE users SET banned_at=NULL, ban_reason=NULL WHERE id=?').run(t.id);
+  return { ok: true };
+}));
+app.post('/api/admin/users/:id/admin', auth, wrap(req => {
+  if (req.user.site_role !== 'owner') throw fail(403, 'Only the owner can add admins.');
+  const t = getUser(req.params.id);
+  if (!t || t.id === req.user.id) throw fail(400, 'Pick someone else.');
+  if (t.banned_at) throw fail(400, 'Unban them first.');
+  db.prepare("UPDATE users SET site_role='admin' WHERE id=?").run(t.id);
+  broadcastUserUpdate(t.id, publicUser(getUser(t.id)));
+  return { ok: true };
+}));
+app.delete('/api/admin/users/:id/admin', auth, wrap(req => {
+  if (req.user.site_role !== 'owner') throw fail(403, 'Only the owner can remove admins.');
+  const t = getUser(req.params.id);
+  if (!t || t.site_role !== 'admin') throw fail(400, 'That person is not an admin.');
+  db.prepare('UPDATE users SET site_role=NULL WHERE id=?').run(t.id);
+  broadcastUserUpdate(t.id, publicUser(getUser(t.id)));
   return { ok: true };
 }));
 
@@ -993,7 +1181,7 @@ function leaveVoice(socket, opts = {}) {
 
 io.use((socket, next) => {
   const u = userFromCookieHeader(socket.handshake.headers.cookie);
-  if (!u) return next(new Error('unauthorized'));
+  if (!u || u.banned_at) return next(new Error('unauthorized'));
   socket.data.userId = u.id; next();
 });
 
@@ -1095,4 +1283,6 @@ server.listen(PORT, () => {
     require('child_process').exec(cmd, () => {});
   }
   console.log(GOOGLE_CLIENT_ID ? '  Google sign-in: enabled' : '  Google sign-in: disabled (set GOOGLE_CLIENT_ID in .env to enable)');
+  console.log(storage.enabled ? '  Permanent storage: Cloudflare KV' : '  Permanent storage: off (data lives on this disk only)');
+  console.log(CF_TURN_KEY_ID ? '  Call relay: Cloudflare TURN' : '  Call relay: off (STUN only)');
 });
