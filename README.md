@@ -36,7 +36,15 @@ Open **http://localhost:3000**, sign up, then open a second browser (or a privat
 3. Copy `.env.example` to `.env` and paste the Client ID into `GOOGLE_CLIENT_ID=`.
 4. Restart the server. The "Continue with Google" button turns on automatically.
 
-## Going live (so friends on other networks can join)
+## Putting it online with Render (free)
+
+1. Sign up at [render.com](https://render.com) with GitHub.
+2. Click **New + → Blueprint** and pick this repository.
+3. Click **Deploy Blueprint**. `render.yaml` sets everything up, and you get a link like `lumi-xxxx.onrender.com`.
+
+GitHub Pages can't run lumi, because lumi needs its Node.js server.
+
+## Going live elsewhere
 
 - **HTTPS is required** for microphone and camera access anywhere other than `localhost`. Put the app behind a reverse proxy with TLS (Caddy, nginx + Let's Encrypt), or deploy to a host that provides HTTPS (Render, Railway, Fly.io, a VPS…). Set `NODE_ENV=production`.
 - **Add a TURN server** for reliable calls. Peer-to-peer WebRTC works for most home networks using the built-in STUN servers, but strict NATs need a relay. Run [coturn](https://github.com/coturn/coturn) or use a hosted TURN service, then set `TURN_URL`, `TURN_USERNAME` and `TURN_CREDENTIAL` in `.env`.
