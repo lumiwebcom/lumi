@@ -22,15 +22,15 @@ async function onSignedIn(user) {
   renderShell();
   const pending = sessionStorage.getItem('lumi.pendingInvite');
   if (pending) { sessionStorage.removeItem('lumi.pendingInvite'); history.replaceState({}, '', '/invite/' + pending); }
-  else if (location.pathname === '/' || /^\/channels\/@me\/?$/.test(location.pathname)) history.replaceState({}, '', '/home');
+  else if (!/^\/(channels|invite|feed|activity)/.test(location.pathname)) history.replaceState({}, '', '/channels/@me');
   route();
 }
 
 function connectSocket() {
   socket = io({ transports: ['websocket', 'polling'] });
+  socialSocket(socket);
   socket.on('connect_error', (e) => { if (e.message === 'unauthorized') location.reload(); });
   socket.on('connect', () => { if (S._wasConnected) resync(); S._wasConnected = true; });
-  socialSocket(socket);
   socket.on('disconnect', () => { if (Call.active) { cleanupCall(); renderCallUI(); toast('Connection lost — you left the call', true); } });
 
   socket.on('message:new', ({ message: m, serverId }) => {
@@ -50,7 +50,7 @@ function connectSocket() {
       const sd = S.serverData[serverId];
       const ch = sd?.channels.find((c) => c.id === m.channelId);
       if (!mine && !viewing) { if (ch) ch.unread = (ch.unread || 0) + 1; const s = S.servers.find((s) => s.id === serverId); if (s) s.unread++; }
-      if (mention && (!viewing || !document.hasFocus())) { playSound('message'); notify(`${m.author.displayName} in ${sd?.server.name || 'an orbit'}`, m.content, () => navigate(`/channels/${serverId}/${m.channelId}`)); }
+      if (mention && (!viewing || !document.hasFocus())) { playSound('message'); notify(`${m.author.displayName} in ${sd?.server.name || 'a space'}`, m.content, () => navigate(`/channels/${serverId}/${m.channelId}`)); }
     }
     renderRail(); if (!viewing || !serverId) renderSideBody(); updateTitle();
   });
@@ -64,7 +64,7 @@ function connectSocket() {
   });
   socket.on('presence', ({ userId, online }) => {
     S.presence[userId] = online; if (S.userCache[userId]) S.userCache[userId].online = online;
-    renderSideBody(); if (S.view.type === 'home') { renderHomeBody(); renderActiveNow(); } else if (S.view.type === 'feed') { renderFeedSide(); } else { renderRight(); }
+    renderSideBody(); if (S.view.type === 'home') { renderHomeBody(); renderActiveNow(); } else { renderRight(); }
     if (S.view.type === 'dm') { const d = S.dms.find((x) => x.id === S.view.dmId); if (d?.recipients[0]?.id === userId) { const sub = $('.main-head .who .sub'); if (sub) sub.textContent = online ? 'Active now' : '@' + d.recipients[0].username; } }
   });
   socket.on('user:update', ({ user }) => {
@@ -79,8 +79,6 @@ function connectSocket() {
     if (ev.kind === 'accepted' && ev.to === S.me.id && ev.from) toast(`${ev.from.displayName} accepted your friend request 🎉`);
     renderRail(); renderSideBody();
     if (S.view.type === 'home' && S.homeTab !== 'add') renderMain();
-    if (S.view.type === 'activity') renderActivity($('#main'));
-    if (S.view.type === 'feed') { renderFeedSide(); S.feed.loaded = false; loadFeed(); }
     refreshStories().then(() => { if (S.view.type === 'home' && S.homeTab !== 'add' && !svState) renderHomeBody(); });
   });
   socket.on('dms:update', async () => { await refreshDMs(); renderRail(); if (S.view.type !== 'server') renderSideBody(); if (S.view.type === 'dm') { if (!S.dms.find((d) => d.id === S.view.dmId)) navigate('/channels/@me'); else renderMain(); } });
@@ -99,7 +97,7 @@ function connectSocket() {
     if (S.openServerSettings?.sid === serverId) S.openServerSettings.refresh?.();
   });
   socket.on('server:removed', ({ serverId, reason }) => {
-    const name = S.servers.find((s) => s.id === serverId)?.name || 'an orbit';
+    const name = S.servers.find((s) => s.id === serverId)?.name || 'a space';
     removeServerLocal(serverId);
     if (S.openServerSettings?.sid === serverId) S.openServerSettings.close();
     if (reason === 'kicked') toast(`You were removed from ${name}`, true);
