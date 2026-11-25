@@ -1,0 +1,65 @@
+name: Build lumi for Windows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          mkdir build && cd build
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund electron@45.5.0 @electron/packager@18 sharp png2icons
+
+      - name: Make the app icon
+        shell: bash
+        working-directory: build
+        run: |
+          node -e "
+            const sharp = require('sharp'), p = require('png2icons'), fs = require('fs');
+            sharp('../desktop/icon.svg').resize(512, 512).png().toBuffer().then((png) => {
+              fs.writeFileSync('../desktop/icon.png', png);
+              fs.writeFileSync('../desktop/icon.ico', p.createICO(png, p.BICUBIC2, 0, false, true));
+            });"
+
+      - name: Package lumi.exe
+        shell: bash
+        working-directory: build
+        run: |
+          npx electron-packager ../desktop lumi --platform=win32 --arch=x64 --out=dist --asar --overwrite \
+            --electron-version=45.5.0 --app-version=1.0.${{ github.run_number }} --icon=../desktop/icon.ico \
+            --win32metadata.ProductName=lumi --win32metadata.FileDescription=lumi --win32metadata.CompanyName=lumi \
+            --ignore="icon\.svg$" --ignore="README\.txt$"
+          mv dist/lumi-win32-x64 dist/lumi
+          cp ../desktop/README.txt dist/lumi/README.txt
+
+      - name: Zip it
+        shell: pwsh
+        working-directory: build/dist
+        run: Compress-Archive -Path lumi -DestinationPath ../../lumi-windows.zip -CompressionLevel Optimal
+
+      - name: Publish the download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-v1.0.${{ github.run_number }}
+          name: lumi for Windows 1.0.${{ github.run_number }}
+          body: Download lumi-windows.zip, unzip it and open lumi.exe. The app updates itself from the website, so you only need this once.
+          files: lumi-windows.zip
+          make_latest: true
