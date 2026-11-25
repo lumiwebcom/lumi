@@ -228,7 +228,7 @@ function renderSideFoot() {
     const dm = S.dms.find((d) => d.id === cid);
     if (dm) where = dmName(dm);
     else for (const sd of Object.values(S.serverData)) { const c = sd.channels.find((c) => c.id === cid); if (c) where = `${c.name} / ${sd.server.name}`; }
-    html += `<div class="vc-panel"><div style="flex:1;min-width:0"><div class="st">${icon('waves', 'xs')} Connected</div><div class="where" data-act="goto-call">${esc(where)}</div></div>
+    html += `<div class="vc-panel"><div style="flex:1;min-width:0"><div class="st ${Call.active?.reconnecting ? 'recon' : ''}">${icon('waves', 'xs')} ${Call.active?.reconnecting ? 'Reconnecting…' : 'Connected'}</div><div class="where" data-act="goto-call">${esc(where)}</div></div>
       <button class="icon-btn ${Call.active.video ? 'active' : ''}" data-act="call-video" data-tip="${Call.active.video ? 'Turn off camera' : 'Turn on camera'}">${icon(Call.active.video ? 'video' : 'videoOff', 'sm')}</button>
       <button class="icon-btn ${Call.active.screen ? 'active' : ''}" data-act="call-screen" data-tip="Share screen">${icon('screen', 'sm')}</button>
       <button class="icon-btn danger" data-act="leave-call" data-tip="Disconnect">${icon('hangup', 'sm')}</button></div>`;

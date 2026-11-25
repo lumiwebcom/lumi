@@ -1027,3 +1027,4 @@ html { -webkit-text-size-adjust: 100%; }
 .sg-top span { font-size: 13px; color: var(--text3); }
 .sg-note { margin: 0 2px 16px; font-size: 13px; color: var(--text2); }
 .sg-feat { background: rgba(0,0,0,.6); font-weight: 600; }
+.vc-panel .st.recon { color: var(--yellow, #E5A400); }

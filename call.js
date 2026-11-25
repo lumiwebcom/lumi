@@ -42,8 +42,32 @@ async function joinCall(channelId, { video = false } = {}) {
   Call.timer = setInterval(() => { const el = $('#call-timer'); if (el && Call.active) { const s = Math.floor((Date.now() - Call.active.startedAt) / 1000); el.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; } }, 1000);
   renderCallUI();
 }
+function callConnectionLost() {
+  const c = Call.active; if (!c || c.reconnecting) return;
+  c.reconnecting = true; renderCallUI();
+  toast('Connection hiccup, reconnecting your call…');
+  clearTimeout(c.giveUpT);
+  c.giveUpT = setTimeout(() => { if (Call.active === c && c.reconnecting) { cleanupCall(); renderCallUI(); toast('Connection lost. You left the call.', true); } }, 30000);
+}
+function rejoinCall() {
+  const c = Call.active; if (!c) return;
+  // our old socket is gone, so every peer connection tied to it is dead: rebuild them on the new socket
+  for (const [sid, p] of c.peers) { try { p.pc.close(); } catch {} p.audioEl?.remove(); meterRemove(sid); Call.tiles.get(sid)?.remove(); Call.tiles.delete(sid); }
+  c.peers.clear();
+  Call.tiles.forEach((t) => t.remove()); Call.tiles.clear(); Call.focusSid = null;
+  socket.emit('voice:join', { channelId: c.channelId, rejoin: true }, (res) => {
+    if (Call.active !== c) return;
+    if (!res || res.error) { clearTimeout(c.giveUpT); cleanupCall(); renderCallUI(); return toast(res?.error || 'Could not rejoin the call', true); }
+    c.reconnecting = false; clearTimeout(c.giveUpT);
+    socket.emit('voice:update', { muted: c.muted, deafened: c.deafened, video: c.video, screen: c.screen });
+    for (const p of res.peers) createPeer(p.socketId, p.userId, true);
+    toast('Reconnected');
+    renderCallUI();
+  });
+}
 function cleanupCall() {
   const c = Call.active; if (!c) return;
+  clearTimeout(c.giveUpT);
   for (const p of c.peers.values()) { try { p.pc.close(); } catch {} p.audioEl?.remove(); meterRemove(p.sid); }
   c.local.getTracks().forEach((t) => t.stop()); c.camTrack?.stop(); c.screenTrack?.stop();
   meterRemove('self');

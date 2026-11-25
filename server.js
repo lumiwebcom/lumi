@@ -247,7 +247,7 @@ function slugChannel(s) {
 // ---------------------------------------------------------------- app
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { maxHttpBufferSize: 1e6 });
+const io = new Server(server, { maxHttpBufferSize: 1e6, pingInterval: 20000, pingTimeout: 40000 });
 app.use(express.json({ limit: '1mb' }));
 // Front-end files live in ./public (and ./public/js). If they were uploaded flat into the
 // project root instead, serve just those known files from the root, and never anything else.
@@ -1387,7 +1387,7 @@ function voiceStatesForServer(sid) {
   const out = {};
   for (const c of db.prepare(`SELECT id FROM channels WHERE server_id=? AND type='voice'`).all(sid)) {
     const room = voiceRooms.get(c.id);
-    if (room && room.size) out[c.id] = [...room.values()].map(p => ({ ...p, user: publicUser(getUser(p.userId)) }));
+    if (room && room.size) out[c.id] = [...room.entries()].map(([socketId, p]) => ({ socketId, ...p, user: publicUser(getUser(p.userId)) }));
   }
   return out;
 }
@@ -1446,7 +1446,7 @@ io.on('connection', (socket) => {
     for (const r of channelAudience(c)) socket.to(r).emit('typing', { channelId, userId: uid, serverId: c.server_id });
   });
 
-  socket.on('voice:join', ({ channelId } = {}, ack) => {
+  socket.on('voice:join', ({ channelId, rejoin } = {}, ack) => {
     const c = db.prepare('SELECT * FROM channels WHERE id=?').get(channelId);
     if (!c || !canAccessChannel(uid, c)) return ack?.({ error: 'No access' });
     if (c.server_id && !has(memberPerms(c.server_id, uid), P.CONNECT)) return ack?.({ error: 'You can’t join this lounge.' });
@@ -1466,7 +1466,7 @@ io.on('connection', (socket) => {
     ack?.({ ok: true, peers: peers.map(sid => ({ socketId: sid, ...room.get(sid), user: publicUser(getUser(room.get(sid).userId)) })) });
     emitVoiceState(c.id);
     // ring the other members when a DM/group call starts
-    if (!c.server_id && wasEmpty) {
+    if (!c.server_id && wasEmpty && !rejoin) {
       const caller = publicUser(getUser(uid));
       for (const m of db.prepare('SELECT user_id FROM channel_members WHERE channel_id=? AND user_id<>?').all(c.id, uid)) {
         if (isBlocked(uid, m.user_id)) continue;

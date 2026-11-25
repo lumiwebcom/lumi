@@ -30,8 +30,9 @@ function connectSocket() {
   socket = io({ transports: ['websocket', 'polling'] });
   socialSocket(socket);
   socket.on('connect_error', (e) => { if (e.message === 'unauthorized') location.reload(); });
-  socket.on('connect', () => { if (S._wasConnected) resync(); S._wasConnected = true; });
-  socket.on('disconnect', () => { if (Call.active) { cleanupCall(); renderCallUI(); toast('Connection lost — you left the call', true); } });
+  socket.on('connect', () => { if (S._wasConnected) { resync(); if (Call.active) rejoinCall(); } S._wasConnected = true; });
+  // a dropped server connection doesn't end the call: audio/video are peer-to-peer. Rejoin when it comes back.
+  socket.on('disconnect', () => { if (Call.active) callConnectionLost(); });
 
   socket.on('message:new', ({ message: m, serverId }) => {
     cacheUser(m.author);
