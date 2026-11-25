@@ -427,13 +427,11 @@ function usProfile(pane) {
     <div class="field"><label>Username</label><input class="input" id="p-user" value="${esc(u.username)}" maxlength="24"><div class="hint">Letters, numbers, underscores and periods. Friends add you with this.</div></div>
     <div class="field"><label>Status</label><input class="input" id="p-status" value="${esc(u.customStatus || '')}" maxlength="80" placeholder="What's happening? 💭"></div>
     <div class="field"><label>Bio</label><textarea class="textarea" id="p-bio" maxlength="190" placeholder="Tell people a bit about yourself">${esc(u.bio || '')}</textarea><div class="hint" id="bio-count">${(u.bio || '').length} / 190</div></div>
-    <div class="field"><label>Profile color</label><div class="swatches">${ROLE_COLORS.map((c) => `<span class="swatch ${c === u.accent ? 'sel' : ''}" data-c="${c}" style="background:${c}"></span>`).join('')}</div></div>
     <div class="save-bar"><span></span><button class="btn primary" data-save>Save</button></div>`;
   pane.querySelector('#p-bio').oninput = (e) => (pane.querySelector('#bio-count').textContent = `${e.target.value.length} / 190`);
   pane.querySelector('[data-av]').onclick = async () => { const f = await pickFile(); if (!f) return; try { u.avatar = (await uploadFile(f)).url; pane.querySelector('#up-av').innerHTML = avatar(u, 88, { ring: true }); } catch (e) { toast(e.message, true); } };
   pane.querySelector('[data-rmav]')?.addEventListener('click', () => { u.avatar = null; pane.querySelector('#up-av').innerHTML = avatar(u, 88, { ring: true }); });
   pane.querySelector('#up-banner').onclick = async () => { const f = await pickFile(); if (!f) return; try { u.banner = (await uploadFile(f)).url; pane.querySelector('#up-banner').style.background = `url('${u.banner}') center/cover`; } catch (e) { toast(e.message, true); } };
-  pane.querySelectorAll('.swatch').forEach((s) => (s.onclick = () => { u.accent = s.dataset.c; pane.querySelectorAll('.swatch').forEach((x) => x.classList.toggle('sel', x === s)); if (!u.banner) pane.querySelector('#up-banner').style.background = u.accent; }));
   pane.querySelector('[data-save]').onclick = async () => {
     try {
       const r = await api('PATCH', '/api/me', { displayName: pane.querySelector('#p-name').value, username: pane.querySelector('#p-user').value, customStatus: pane.querySelector('#p-status').value,
