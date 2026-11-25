@@ -152,7 +152,7 @@ function openChannelModal(sid, cid = null, type = 'text', catId = null) {
 }
 async function editNickname(sid, uid) {
   const sd = S.serverData[sid]; const mem = sd.members.find((m) => m.user.id === uid);
-  const v = await promptDialog(uid === S.me.id ? 'Edit my space profile' : 'Change nickname', 'Nickname (leave blank to reset)', mem?.nickname || '');
+  const v = await promptDialog(uid === S.me.id ? 'Edit my community profile' : 'Change nickname', 'Nickname (leave blank to reset)', mem?.nickname || '');
   if (v === null) return;
   try { await api('PATCH', `/api/servers/${sid}/members/${uid === S.me.id ? '@me' : uid}`, { nickname: v }); } catch (e) { toast(e.message, true); }
 }

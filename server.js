@@ -1002,13 +1002,12 @@ app.post('/api/invites/:code', auth, wrap(req => {
 
 // ---- Stargaze (server discovery)
 const DISCOVER_MIN = 1000;
-const DISCOVER_CATEGORIES = ['Gaming', 'Music', 'Study', 'Art & Design', 'Tech', 'Anime', 'Sports', 'Hangout'];
 const memberCountOf = (sid) => db.prepare('SELECT COUNT(*) n FROM members WHERE server_id=?').get(sid).n;
 // a lumi owner's servers skip the member minimum
 const discoverExempt = (s) => db.prepare('SELECT site_role FROM users WHERE id=?').get(s.owner_id)?.site_role === 'owner';
 function discoverStatus(s) {
   const count = memberCountOf(s.id), exempt = discoverExempt(s);
-  return { enabled: !!s.discoverable, eligible: exempt || count >= DISCOVER_MIN, exempt, memberCount: count, minimum: DISCOVER_MIN, category: s.discover_category || null, categories: DISCOVER_CATEGORIES };
+  return { enabled: !!s.discoverable, eligible: exempt || count >= DISCOVER_MIN, exempt, memberCount: count, minimum: DISCOVER_MIN, category: s.discover_category || null };
 }
 app.get('/api/servers/:id/discovery', auth, wrap(req => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
@@ -1019,29 +1018,29 @@ app.put('/api/servers/:id/discovery', auth, wrap(req => {
   const sid = req.params.id;
   if (!has(memberPerms(sid, req.user.id), P.MANAGE_SERVER)) throw fail(403, 'You need the Manage Space permission.');
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid);
-  const on = !!req.body.enabled, st = discoverStatus(s);
+  const on = req.body.enabled === undefined ? !!s.discoverable : !!req.body.enabled, st = discoverStatus(s);
   if (on && !st.eligible) throw fail(403, `Spaces need at least ${DISCOVER_MIN.toLocaleString('en-US')} members to be listed on Stargaze.`);
-  const cat = req.body.category !== undefined ? (DISCOVER_CATEGORIES.includes(req.body.category) ? req.body.category : null) : s.discover_category;
+  // owners write their own genre (short free text)
+  const cat = req.body.category !== undefined ? (String(req.body.category || '').replace(/\s+/g, ' ').trim().slice(0, 24) || null) : s.discover_category;
   if (on && !String(s.description || '').trim()) throw fail(400, 'Add a description in Overview first, so people know what your space is about.');
   db.prepare('UPDATE servers SET discoverable=?, discover_category=? WHERE id=?').run(on ? 1 : 0, cat, sid);
   io.to(`server:${sid}`).emit('server:update', { serverId: sid });
   return discoverStatus(db.prepare('SELECT * FROM servers WHERE id=?').get(sid));
 }));
 app.get('/api/discover', auth, wrap(req => {
-  const q = String(req.query.q || '').trim().toLowerCase(), cat = String(req.query.category || '');
+  const q = String(req.query.q || '').trim().toLowerCase();
   const rows = db.prepare('SELECT * FROM servers WHERE discoverable=1').all();
   const out = [];
   for (const s of rows) {
     const st = discoverStatus(s);
     if (!st.eligible) continue; // dropped under the minimum: hidden until it grows back
-    if (cat && s.discover_category !== cat) continue;
-    if (q && !(s.name.toLowerCase().includes(q) || String(s.description || '').toLowerCase().includes(q))) continue;
+    if (q && !(s.name.toLowerCase().includes(q) || String(s.description || '').toLowerCase().includes(q) || String(s.discover_category || '').toLowerCase().includes(q))) continue;
     const online = db.prepare('SELECT user_id FROM members WHERE server_id=?').all(s.id).filter((m) => isOnline(m.user_id)).length;
     out.push({ id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, category: s.discover_category || null,
       memberCount: st.memberCount, onlineCount: online, featured: st.exempt, joined: !!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(s.id, req.user.id) });
   }
   out.sort((a, b) => (b.featured - a.featured) || (b.onlineCount - a.onlineCount) || (b.memberCount - a.memberCount));
-  return { servers: out.slice(0, 120), categories: DISCOVER_CATEGORIES };
+  return { servers: out.slice(0, 120) };
 }));
 app.post('/api/discover/:id/join', auth, wrap(req => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);

@@ -1020,3 +1020,4 @@ html { -webkit-text-size-adjust: 100%; }
 .role-pill { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px; border-radius: 9px; font-size: 12.5px; font-weight: 700; background: var(--bg3); color: var(--text2); }
 .role-pill.owner { background: color-mix(in srgb, var(--lime) 16%, var(--bg3)); color: var(--text); }
 .role-pill.admin { background: color-mix(in srgb, #3B82F6 14%, var(--bg3)); color: var(--text); }
+.acc-genre { display: flex; gap: 8px; max-width: 460px; } .acc-genre .input { flex: 1; }

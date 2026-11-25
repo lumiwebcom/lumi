@@ -94,7 +94,7 @@ function renderRail() {
       inner: `<div class="rail-ring"><div class="rail-btn srv ${s.icon ? 'has-img' : ''}" style="--c:${colorFor(s.id)}">${serverIcon(s)}</div></div>`, data: `data-server="${s.id}"` });
   }
   html += railItem({ tip: 'Create a space', inner: `<div class="rail-btn add">${icon('plus')}</div>`, data: 'data-act="create-server"' });
-  html += railItem({ active: v.type === 'stargaze', tip: 'Stargaze: discover spaces', inner: `<div class="rail-btn add sg-rail">${icon('compass')}</div>`, data: 'data-act="stargaze"' });
+  html += railItem({ active: v.type === 'stargaze', tip: 'Stargaze', inner: `<div class="rail-btn add sg-rail">${icon('compass')}</div>`, data: 'data-act="stargaze"' });
   if (isSiteAdmin()) html += '<div class="rail-spacer"></div>' + railItem({ tip: 'Admin panel', inner: `<div class="rail-btn add admin-btn">${SHIELD_BLUE}</div>`, data: 'data-act="admin-panel"' });
   $('#rail').innerHTML = html;
 }
@@ -118,10 +118,10 @@ async function serverMenu(sid, anchor) {
   openMenu(anchor, [
     can(sd, P.CREATE_INVITE) && { label: 'Invite people', icon: 'userPlus', onClick: () => openInvite(sid) },
     { label: 'Mark as read', icon: 'check', onClick: () => markServerRead(sid) },
-    (can(sd, P.MANAGE_SERVER) || can(sd, P.MANAGE_ROLES) || can(sd, P.KICK_MEMBERS) || can(sd, P.BAN_MEMBERS)) && { label: 'Space settings', icon: 'settings', onClick: () => openServerSettings(sid) },
+    (can(sd, P.MANAGE_SERVER) || can(sd, P.MANAGE_ROLES) || can(sd, P.KICK_MEMBERS) || can(sd, P.BAN_MEMBERS)) && { label: 'Community settings', icon: 'settings', onClick: () => openServerSettings(sid) },
     can(sd, P.MANAGE_CHANNELS) && { label: 'New room', icon: 'plus', onClick: () => openChannelModal(sid) },
     can(sd, P.MANAGE_CHANNELS) && { label: 'New category', icon: 'menu', onClick: () => openCategoryModal(sid) },
-    { label: 'Edit my space profile', icon: 'edit', onClick: () => editNickname(sid, S.me.id) },
+    { label: 'Edit my community profile', icon: 'edit', onClick: () => editNickname(sid, S.me.id) },
     'sep',
     !owner && { label: 'Leave space', icon: 'logout', danger: true, onClick: () => leaveServer(sid) },
     owner && can(sd, P.MANAGE_SERVER) && { label: 'Delete space', icon: 'trash', danger: true, onClick: () => openServerSettings(sid, 'delete') },
