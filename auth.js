@@ -1,6 +1,22 @@
 /* auth screen: email/password + Google */
 'use strict';
 
+// Windows app: built and published as a GitHub release; the link only shows once it exists
+const PC_DOWNLOAD = 'https://github.com/lumiwebcom/lumi/releases/latest/download/lumi-windows.zip';
+let pcRelease;
+async function showPcDownload() {
+  if (window.lumiDesktop) return; // already in the app
+  if (pcRelease === undefined) {
+    try {
+      const r = await fetch('https://api.github.com/repos/lumiwebcom/lumi/releases/latest', { credentials: 'omit' });
+      const rel = r.ok ? await r.json() : null;
+      pcRelease = rel && (rel.assets || []).find((a) => a.name === 'lumi-windows.zip') || null;
+    } catch { pcRelease = null; }
+  }
+  const el = $('#pc-dl'); if (!el || !pcRelease) return;
+  el.hidden = false;
+  $('#pc-dl-meta').textContent = `Windows app · ${Math.round(pcRelease.size / 1048576)} MB · updates itself`;
+}
 function renderAuth(mode = 'login') {
   const root = $('#root');
   const signup = mode === 'signup';
@@ -27,9 +43,15 @@ function renderAuth(mode = 'login') {
         </form>
         <div class="auth-switch">${signup ? 'Already have an account? <button data-mode="login">Log in</button>' : 'New to lumi? <button data-mode="signup">Create an account</button>'}</div>
       </div>
+      <a class="pc-dl" id="pc-dl" hidden href="${PC_DOWNLOAD}" rel="noopener">
+        <svg viewBox="0 0 24 24" class="i sm"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+        <span><b>Download lumi for PC</b><small id="pc-dl-meta">Windows app</small></span>
+        <svg viewBox="0 0 24 24" class="i sm"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+      </a>
     </section>
   </div>`;
   root.querySelector('[data-mode]').onclick = (e) => renderAuth(e.target.dataset.mode);
+  showPcDownload();
   const form = $('#auth-form');
   form.onsubmit = async (e) => {
     e.preventDefault();
