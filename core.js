@@ -113,8 +113,35 @@ function ago(ts) {
 async function api(method, url, body) {
   const r = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin' });
   let data = {}; try { data = await r.json(); } catch {}
-  if (!r.ok) { const e = new Error(data.error || 'Something went wrong'); e.status = r.status; throw e; }
+  if (!r.ok) { const e = new Error(data.error || 'Something went wrong'); e.status = r.status; e.data = data; if (data.banned && !url.startsWith('/api/admin')) showBannedScreen({ reason: data.banReason, until: data.bannedUntil }); throw e; }
   return data;
+}
+// ---- ban length helpers (site bans)
+function fmtBanLeft(ms) {
+  const m = Math.max(1, Math.ceil(ms / 60000)), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+  if (d) return `${d} day${d > 1 ? 's' : ''}${h ? `, ${h} hour${h > 1 ? 's' : ''}` : ''}`;
+  if (h) return `${h} hour${h > 1 ? 's' : ''}${mm ? `, ${mm} min` : ''}`;
+  return `${mm} minute${mm > 1 ? 's' : ''}`;
+}
+const fmtBanEnd = (t) => new Date(t).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+let _banTimer = null;
+function showBannedScreen({ reason, until } = {}) {
+  if (typeof Call !== 'undefined' && Call.active) try { cleanupCall(); } catch {}
+  try { if (typeof socket !== 'undefined' && socket) { socket.removeAllListeners?.(); socket.disconnect(); } } catch {}
+  S.me = null; clearInterval(_banTimer); document.querySelectorAll('.overlay, .sv, .incoming').forEach((o) => o.remove());
+  const paint = () => {
+    const left = until ? until - Date.now() : null;
+    if (left !== null && left <= 0) { clearInterval(_banTimer); location.reload(); return; }
+    $('#root').innerHTML = `<div class="auth" style="display:grid;place-items:center"><div class="auth-card ban-card">${wordmark()}
+      <div class="ban-ic">${icon('hammer')}</div>
+      <h2>Your account is banned</h2>
+      <p class="muted">${reason ? `Reason: ${esc(reason)}` : 'An admin banned this account from lumi.'}</p>
+      ${until ? `<div class="ban-time"><span>Time left</span><b>${fmtBanLeft(left)}</b><small>Ends ${esc(fmtBanEnd(until))}</small></div>`
+        : `<div class="ban-time perm"><b>This ban is permanent</b></div>`}
+      ${until ? '<p class="hint">You can sign in again once the ban ends. This page will reload on its own.</p>' : ''}
+    </div></div>`;
+  };
+  paint(); if (until) _banTimer = setInterval(paint, 30000);
 }
 async function uploadFile(file) {
   if (file.size > 25 * 1024 * 1024) throw new Error('Files can be up to 25 MB.');

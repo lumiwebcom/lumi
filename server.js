@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS story_views (story_id TEXT NOT NULL REFERENCES storie
 
 // migrations for databases created by older versions
 const colsOf = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
-for (const [c, t] of [['site_role', 'TEXT'], ['banned_at', 'INTEGER'], ['ban_reason', 'TEXT']]) if (!colsOf('users').includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`);
+for (const [c, t] of [['site_role', 'TEXT'], ['banned_at', 'INTEGER'], ['ban_reason', 'TEXT'], ['ban_until', 'INTEGER']]) if (!colsOf('users').includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`);
 if (!colsOf('channels').includes('category_id')) db.exec('ALTER TABLE channels ADD COLUMN category_id TEXT');
 db.exec(`CREATE TABLE IF NOT EXISTS categories (id TEXT PRIMARY KEY, server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
   name TEXT NOT NULL, position INTEGER DEFAULT 0, created_at INTEGER NOT NULL)`);
@@ -190,7 +190,7 @@ function publicUser(u) {
   if (!u) return null;
   return { id: u.id, username: u.username, displayName: u.display_name || u.username, avatar: u.avatar,
     banner: u.banner, bio: u.bio, customStatus: u.custom_status, accent: u.accent, online: isOnline(u.id),
-    siteRole: u.site_role || null, banned: !!u.banned_at };
+    siteRole: u.site_role || null, banned: !!u.banned_at && (!u.ban_until || u.ban_until > now()) };
 }
 const getUser = (uid) => db.prepare('SELECT * FROM users WHERE id=?').get(uid);
 
@@ -272,14 +272,26 @@ function userFromCookieHeader(header) {
 function auth(req, res, next) {
   const u = userFromCookieHeader(req.headers.cookie);
   if (!u) return res.status(401).json({ error: 'Not signed in' });
-  if (u.banned_at) return res.status(403).json({ error: 'This account has been banned.', banned: true });
+  if (activeBan(u)) return res.status(403).json({ error: banMessage(u), ...banInfo(u) });
   req.user = u; next();
 }
 const wrap = (fn) => (req, res) => {
   try { const out = fn(req, res); if (out !== undefined && !res.headersSent) res.json(out); }
-  catch (e) { if (!e.status) console.error(e); if (!res.headersSent) res.status(e.status || 500).json({ error: e.status ? e.message : 'Server error' }); }
+  catch (e) { if (!e.status) console.error(e); if (!res.headersSent) res.status(e.status || 500).json({ error: e.status ? e.message : 'Server error', ...(e.status && e.extra ? e.extra : {}) }); }
 };
-const fail = (status, message) => Object.assign(new Error(message), { status });
+const fail = (status, message, extra) => Object.assign(new Error(message), { status, extra });
+// site bans: banned_at set + optional ban_until (ms). Expired bans are lifted on first check.
+function activeBan(u) {
+  if (!u || !u.banned_at) return false;
+  if (u.ban_until && u.ban_until <= now()) { db.prepare('UPDATE users SET banned_at=NULL, ban_reason=NULL, ban_until=NULL WHERE id=?').run(u.id); u.banned_at = null; return false; }
+  return true;
+}
+function banLeft(ms) {
+  const m = Math.max(1, Math.ceil(ms / 60000)), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+  return d ? `${d} day${d > 1 ? 's' : ''}${h ? ` ${h} hour${h > 1 ? 's' : ''}` : ''}` : h ? `${h} hour${h > 1 ? 's' : ''}${mm ? ` ${mm} min` : ''}` : `${mm} minute${mm > 1 ? 's' : ''}`;
+}
+const banInfo = (u) => ({ banned: true, banReason: u.ban_reason || null, bannedUntil: u.ban_until || null });
+const banMessage = (u) => `This account is banned ${u.ban_until ? `for ${banLeft(u.ban_until - now())} more` : 'permanently'}${u.ban_reason ? ': ' + u.ban_reason : '.'}`;
 
 // rate-limit auth attempts (simple in-memory)
 const attempts = new Map();
@@ -358,7 +370,7 @@ app.post('/api/auth/login', wrap((req, res) => {
   const u = db.prepare('SELECT * FROM users WHERE email=? OR username=?').get(login, login);
   if (!u || !u.password_hash || !bcrypt.compareSync(String(req.body.password || ''), u.password_hash))
     throw fail(401, u && !u.password_hash ? 'This account uses Google sign-in.' : 'Incorrect email/username or password.');
-  if (u.banned_at) throw fail(403, `This account has been banned${u.ban_reason ? ': ' + u.ban_reason : '.'}`);
+  if (activeBan(u)) throw fail(403, banMessage(u), banInfo(u));
   createSession(res, u.id);
   return { user: publicUser(u) };
 }));
@@ -381,7 +393,7 @@ app.post('/api/auth/google', async (req, res) => {
     }
     ensureOwner();
     u = getUser(u.id);
-    if (u.banned_at) return res.status(403).json({ error: `This account has been banned${u.ban_reason ? ': ' + u.ban_reason : '.'}` });
+    if (activeBan(u)) return res.status(403).json({ error: banMessage(u), ...banInfo(u) });
     createSession(res, u.id);
     res.json({ user: publicUser(u) });
   } catch (e) { console.error(e); res.status(401).json({ error: 'Google sign-in failed.' }); }
@@ -860,11 +872,12 @@ app.get('/api/admin/users', auth, adminOnly, wrap(req => {
   const q = `%${String(req.query.q || '').trim().toLowerCase()}%`;
   let where = owner ? '(username LIKE ? OR lower(display_name) LIKE ? OR lower(email) LIKE ?)' : '(username LIKE ? OR lower(display_name) LIKE ?)';
   const params = owner ? [q, q, q] : [q, q];
+  const t0 = now(); db.prepare('UPDATE users SET banned_at=NULL, ban_reason=NULL, ban_until=NULL WHERE ban_until IS NOT NULL AND ban_until<=?').run(t0);
   if (req.query.filter === 'banned') where += ' AND banned_at IS NOT NULL';
   if (req.query.filter === 'admins') where += " AND site_role IN ('owner','admin')";
   const rows = db.prepare(`SELECT * FROM users WHERE ${where} ORDER BY (site_role='owner') DESC, (site_role='admin') DESC, created_at DESC LIMIT 100`).all(...params);
   return {
-    users: rows.map((u) => ({ ...publicUser(u), email: owner ? u.email : undefined, createdAt: u.created_at, bannedAt: u.banned_at, banReason: u.ban_reason })),
+    users: rows.map((u) => ({ ...publicUser(u), email: owner ? u.email : undefined, createdAt: u.created_at, bannedAt: u.banned_at, banReason: u.ban_reason, bannedUntil: u.ban_until || null })),
     total: db.prepare('SELECT COUNT(*) n FROM users').get().n,
     bannedCount: db.prepare('SELECT COUNT(*) n FROM users WHERE banned_at IS NOT NULL').get().n,
   };
@@ -879,9 +892,12 @@ app.post('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
   const t = getUser(req.params.id);
   assertCanModerateSite(req.user, t);
   const reason = String(req.body.reason || '').trim().slice(0, 200) || null;
-  db.prepare('UPDATE users SET banned_at=?, ban_reason=?, site_role=NULL WHERE id=?').run(now(), reason, t.id);
+  const mins = Number(req.body.minutes); // empty / 0 = permanent
+  if (req.body.minutes != null && req.body.minutes !== '' && (!Number.isFinite(mins) || mins < 0 || mins > 60 * 24 * 3650)) throw fail(400, 'Pick a ban length between 1 minute and 10 years.');
+  const until = mins > 0 ? now() + Math.round(mins * 60000) : null;
+  db.prepare('UPDATE users SET banned_at=?, ban_reason=?, ban_until=?, site_role=NULL WHERE id=?').run(now(), reason, until, t.id);
   db.prepare('DELETE FROM sessions WHERE user_id=?').run(t.id);
-  io.to(`user:${t.id}`).emit('account:banned', { reason });
+  io.to(`user:${t.id}`).emit('account:banned', { reason, until });
   setTimeout(() => io.in(`user:${t.id}`).disconnectSockets(true), 300);
   broadcastUserUpdate(t.id, publicUser(getUser(t.id)));
   return { ok: true };
@@ -889,14 +905,14 @@ app.post('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
 app.delete('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
   const t = getUser(req.params.id);
   if (!t) throw fail(404, 'User not found');
-  db.prepare('UPDATE users SET banned_at=NULL, ban_reason=NULL WHERE id=?').run(t.id);
+  db.prepare('UPDATE users SET banned_at=NULL, ban_reason=NULL, ban_until=NULL WHERE id=?').run(t.id);
   return { ok: true };
 }));
 app.post('/api/admin/users/:id/admin', auth, wrap(req => {
   if (req.user.site_role !== 'owner') throw fail(403, 'Only the owner can add admins.');
   const t = getUser(req.params.id);
   if (!t || t.id === req.user.id) throw fail(400, 'Pick someone else.');
-  if (t.banned_at) throw fail(400, 'Unban them first.');
+  if (activeBan(t)) throw fail(400, 'Unban them first.');
   db.prepare("UPDATE users SET site_role='admin' WHERE id=?").run(t.id);
   broadcastUserUpdate(t.id, publicUser(getUser(t.id)));
   return { ok: true };
@@ -1327,7 +1343,7 @@ function leaveVoice(socket, opts = {}) {
 
 io.use((socket, next) => {
   const u = userFromCookieHeader(socket.handshake.headers.cookie);
-  if (!u || u.banned_at) return next(new Error('unauthorized'));
+  if (!u || activeBan(u)) return next(new Error('unauthorized'));
   socket.data.userId = u.id; next();
 });
 

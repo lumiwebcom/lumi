@@ -114,11 +114,7 @@ function connectSocket() {
     if (S.view.type !== 'home') renderRight();
   });
   socket.on('voice:force-leave', () => { cleanupCall(); renderCallUI(); toast('You joined a call on another device'); });
-  socket.on('account:banned', ({ reason } = {}) => {
-    if (Call.active) cleanupCall();
-    S.me = null;
-    $('#root').innerHTML = `<div class="auth" style="display:grid;place-items:center"><div class="auth-card" style="text-align:center;max-width:420px">${wordmark()}<h2>Your account has been banned</h2><p class="muted">${reason ? esc(reason) : 'An admin banned this account from lumi.'}</p></div></div>`;
-  });
+  socket.on('account:banned', ({ reason, until } = {}) => showBannedScreen({ reason, until }));
   socket.on('rtc:signal', onSignal);
   socket.on('rtc:peer-left', onPeerLeft);
   socket.on('call:ring', onRing);

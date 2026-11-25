@@ -640,6 +640,26 @@ function openCategoryModal(sid, catId = null) {
 }
 
 // ------------------------------------------------------------------ site admin panel (owner + admins)
+const BAN_LENGTHS = [[60, '1 hour'], [1440, '1 day'], [4320, '3 days'], [10080, '1 week'], [43200, '30 days'], [0, 'Permanent'], ['custom', 'Custom']];
+function banDialog(u) {
+  return new Promise((resolve) => {
+    let pick = 1440, done = false;
+    const m = openModal({ title: `Ban @${u.username}`, cls: 'ban-modal', body: `
+      <div class="field"><label>How long?</label><div class="ban-lens">${BAN_LENGTHS.map(([v, l]) => `<button type="button" data-len="${v}" class="${v === pick ? 'sel' : ''}">${l}</button>`).join('')}</div>
+        <div class="ban-custom" hidden><input class="input" type="number" min="1" step="1" value="2" id="bn-n"><select class="input" id="bn-u"><option value="60">hours</option><option value="1440" selected>days</option><option value="10080">weeks</option><option value="1">minutes</option></select></div>
+        <div class="hint" id="bn-end"></div></div>
+      <div class="field"><label>Reason <span class="muted" style="font-weight:400">(optional, they will see it)</span></label><input class="input" id="bn-r" maxlength="200" placeholder="e.g. Spamming invites"></div>`,
+      foot: `<button class="btn" data-x>Cancel</button><button class="btn danger" data-ok>${icon('hammer', 'sm')} Ban</button>`,
+      onClose: () => { if (!done) resolve(null); } });
+    const el = m.el;
+    const minutes = () => pick === 'custom' ? Math.round(Number(el.querySelector('#bn-n').value) * Number(el.querySelector('#bn-u').value)) : pick;
+    const upd = () => { const n = minutes(); el.querySelector('#bn-end').textContent = pick === 0 ? 'They stay banned until someone unbans them.' : n > 0 ? `Ban ends ${fmtBanEnd(Date.now() + n * 60000)} (in ${fmtBanLeft(n * 60000)}).` : 'Enter a length.'; el.querySelector('[data-ok]').disabled = pick !== 0 && !(n > 0); };
+    el.querySelectorAll('[data-len]').forEach((b) => (b.onclick = () => { pick = b.dataset.len === 'custom' ? 'custom' : Number(b.dataset.len); el.querySelectorAll('[data-len]').forEach((x) => x.classList.toggle('sel', x === b)); el.querySelector('.ban-custom').hidden = pick !== 'custom'; upd(); }));
+    el.querySelector('#bn-n').oninput = upd; el.querySelector('#bn-u').onchange = upd; upd();
+    el.querySelector('[data-x]').onclick = () => m.close();
+    el.querySelector('[data-ok]').onclick = () => { done = true; resolve({ minutes: minutes() || null, reason: el.querySelector('#bn-r').value.trim() }); m.close(); };
+  });
+}
 function openAdminPanel() {
   if (!isSiteAdmin()) return;
   const owner = S.me.siteRole === 'owner';
@@ -666,15 +686,14 @@ function openAdminPanel() {
       if (owner && !me && !u.bannedAt) acts.push(u.siteRole === 'admin' ? `<button class="btn" data-unadmin="${u.id}">Remove admin</button>` : `<button class="btn" data-admin="${u.id}">${SHIELD_BLUE.replace('<svg', '<svg style="width:16px;height:16px"')} Make admin</button>`);
       return `<div class="row-line ${u.bannedAt ? 'is-banned' : ''}">${avatar(u, 42)}<div class="meta">
         <div class="bold">${esc(u.displayName)}${roleBadge(u)} <span class="muted" style="font-weight:400">@${esc(u.username)}</span>${me ? ' <span class="small muted">(you)</span>' : ''}</div>
-        <div class="small muted">${u.email ? esc(u.email) + ' · ' : ''}joined ${new Date(u.createdAt).toLocaleDateString()}${u.bannedAt ? ` · <span style="color:var(--red)">banned ${new Date(u.bannedAt).toLocaleDateString()}${u.banReason ? ' — ' + esc(u.banReason) : ''}</span>` : ''}</div></div>
+        <div class="small muted">${u.email ? esc(u.email) + ' · ' : ''}joined ${new Date(u.createdAt).toLocaleDateString()}${u.bannedAt ? ` · <span class="ban-tag">${u.bannedUntil ? `banned · ${fmtBanLeft(u.bannedUntil - Date.now())} left (ends ${esc(fmtBanEnd(u.bannedUntil))})` : 'banned permanently'}${u.banReason ? ' — ' + esc(u.banReason) : ''}</span>` : ''}</div></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${acts.join('')}</div></div>`;
     }).join('') || '<div class="empty" style="padding:30px"><p>No one matches.</p></div>';
     const act = async (fn) => { try { await fn(); load(); } catch (e) { toast(e.message, true); } };
     el.querySelectorAll('[data-ban]').forEach((b) => (b.onclick = async () => {
       const u = S.userCache[b.dataset.ban];
-      const reason = await promptDialog(`Ban @${u.username} from lumi?`, 'Reason (optional, they will see it)', '', 'Ban');
-      if (reason === null) return;
-      act(async () => { await api('POST', `/api/admin/users/${u.id}/ban`, { reason }); toast(`@${u.username} was banned`); });
+      const r = await banDialog(u); if (!r) return;
+      act(async () => { await api('POST', `/api/admin/users/${u.id}/ban`, r); toast(`@${u.username} was banned ${r.minutes ? 'for ' + fmtBanLeft(r.minutes * 60000) : 'permanently'}`); });
     }));
     el.querySelectorAll('[data-unban]').forEach((b) => (b.onclick = () => act(async () => { await api('DELETE', `/api/admin/users/${b.dataset.unban}/ban`); toast('Unbanned'); })));
     el.querySelectorAll('[data-admin]').forEach((b) => (b.onclick = async () => {

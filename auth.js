@@ -38,7 +38,7 @@ function renderAuth(mode = 'login') {
       const data = Object.fromEntries(new FormData(form));
       const r = await api('POST', signup ? '/api/auth/signup' : '/api/auth/login', data);
       onSignedIn(r.user);
-    } catch (err) { $('#auth-err').textContent = err.message; btn.disabled = false; }
+    } catch (err) { if ($('#auth-err')) $('#auth-err').textContent = err.message; btn.disabled = false; }
   };
   setupGoogle();
 }
@@ -60,7 +60,7 @@ function setupGoogle() {
       client_id: S.config.googleClientId,
       callback: async (resp) => {
         try { const r = await api('POST', '/api/auth/google', { credential: resp.credential }); onSignedIn(r.user); }
-        catch (e) { $('#auth-err').textContent = e.message; }
+        catch (e) { if ($('#auth-err')) $('#auth-err').textContent = e.message; }
       },
     });
     google.accounts.id.renderButton(slot, { theme: document.documentElement.dataset.theme === 'dark' ? 'filled_black' : 'outline', size: 'large', width: 268, text: 'continue_with', shape: 'rectangular' });

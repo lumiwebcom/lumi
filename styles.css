@@ -957,3 +957,21 @@ html { -webkit-text-size-adjust: 100%; }
 .story-compose .preview.bg-ink { color: #F3F1EC; } .story-compose .preview.bg-paper, .story-compose .preview.bg-candy { color: #221E18; }
 .story-compose .preview.bg-violet, .story-compose .preview.bg-clay, .story-compose .preview.bg-moss, .story-compose .preview.bg-sea { color: #fff; }
 .sv .card.bg-paper, .sv .card.bg-candy { color: #221E18; }
+
+/* ---------- timed bans ---------- */
+.ban-lens { display: flex; flex-wrap: wrap; gap: 6px; }
+.ban-lens button { height: 34px; padding: 0 14px; border-radius: 10px; background: var(--bg3); color: var(--text2); font-weight: 600; font-size: 13.5px; box-shadow: inset 0 0 0 1px var(--border); }
+.ban-lens button:hover { color: var(--text); }
+.ban-lens button.sel { background: color-mix(in srgb, var(--red) 16%, var(--bg)); color: var(--red); box-shadow: inset 0 0 0 1.5px var(--red); }
+.ban-custom { display: flex; gap: 8px; margin-top: 10px; } .ban-custom[hidden] { display: none; }
+.ban-custom input { width: 110px; } .ban-custom select { width: 130px; }
+#bn-end { margin-top: 10px; }
+.ban-tag { color: var(--red); }
+.ban-card { text-align: center; max-width: 420px; }
+.ban-card .ban-ic { width: 56px; height: 56px; margin: 18px auto 6px; border-radius: 16px; display: grid; place-items: center; background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
+.ban-card h2 { margin: 8px 0 4px; }
+.ban-time { margin: 18px 0 6px; padding: 16px; border-radius: 14px; background: var(--bg3); display: flex; flex-direction: column; gap: 2px; }
+.ban-time span { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); }
+.ban-time b { font-size: 24px; font-weight: 800; letter-spacing: -.02em; }
+.ban-time small { color: var(--text2); font-size: 13px; }
+.ban-time.perm b { font-size: 17px; color: var(--red); }
