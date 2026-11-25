@@ -255,6 +255,16 @@ const PUBLIC_DIR = fs.existsSync(path.join(__dirname, 'public', 'index.html')) ?
 const FLAT_FILES = { '/index.html': 'index.html', '/styles.css': 'styles.css', '/favicon.svg': 'favicon.svg' };
 for (const f of ['core', 'auth', 'views', 'social', 'modals', 'call', 'main']) FLAT_FILES[`/js/${f}.js`] = `${f}.js`;
 const INDEX_FILE = PUBLIC_DIR ? path.join(PUBLIC_DIR, 'index.html') : path.join(__dirname, 'index.html');
+// fingerprint of the front-end: changes whenever a new version is deployed (drives the in-app "Update" button)
+const BUILD_ID = (() => {
+  const h = crypto.createHash('sha256');
+  for (const [url, rel] of Object.entries(FLAT_FILES)) {
+    const f = PUBLIC_DIR ? path.join(PUBLIC_DIR, url.slice(1)) : path.join(__dirname, rel);
+    try { h.update(url); h.update(fs.readFileSync(f)); } catch {}
+  }
+  return h.digest('hex').slice(0, 12);
+})();
+app.get('/api/version', (req, res) => { res.set('Cache-Control', 'no-store'); res.json({ build: BUILD_ID }); });
 if (PUBLIC_DIR) app.use(express.static(PUBLIC_DIR));
 else app.get(Object.keys(FLAT_FILES), (req, res) => res.sendFile(path.join(__dirname, FLAT_FILES[req.path])));
 app.use('/fonts', express.static(path.join(__dirname, 'node_modules', '@fontsource-variable', 'manrope', 'files'), { maxAge: '30d' }));

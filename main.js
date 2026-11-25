@@ -3,8 +3,32 @@
 
 let socket = null;
 
+// ---- live updates: when a new version of lumi is deployed, show an Update button (top right)
+const ASSETS = ['/', '/styles.css', ...['core', 'auth', 'views', 'social', 'modals', 'call', 'main'].map((f) => `/js/${f}.js`)];
+async function checkForUpdate() {
+  try {
+    const { build } = await fetch('/api/version', { cache: 'no-store' }).then((r) => r.json());
+    if (!build) return;
+    if (!S.build) { S.build = build; return; }
+    if (build !== S.build && !$('#update-pill')) {
+      const el = h(`<div id="update-pill" class="update-pill" role="status"><span>A new version of lumi is ready</span><button class="btn primary sm" data-update>Update</button></div>`);
+      document.body.appendChild(el);
+      el.querySelector('[data-update]').onclick = applyUpdate;
+    }
+  } catch {}
+}
+async function applyUpdate() {
+  const b = $('#update-pill [data-update]'); if (b) { b.disabled = true; b.textContent = 'Updating…'; }
+  if (Call.active) { try { socket.emit('voice:leave'); } catch {} }
+  if (window.lumiDesktop?.update) return window.lumiDesktop.update(); // desktop app: clears its cache and reloads
+  try { await Promise.all(ASSETS.map((u) => fetch(u, { cache: 'reload' }))); } catch {}
+  location.reload();
+}
+setInterval(checkForUpdate, 60000);
+window.addEventListener('focus', checkForUpdate);
 async function boot() {
   applyTheme();
+  checkForUpdate();
   try { S.config = await api('GET', '/api/config'); } catch {}
   try { const r = await api('GET', '/api/me'); onSignedIn(r.user); }
   catch {
