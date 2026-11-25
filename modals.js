@@ -533,27 +533,37 @@ function openNewGroup(addToDm) {
 }
 
 // ------------------------------------------------------------------ stories
-const STORY_BGS = ['sunset', 'lime', 'ocean', 'night', 'candy', 'mono'];
+const STORY_BGS = ['ink', 'violet', 'clay', 'moss', 'sea', 'paper'];
+const STORY_FONTS = [['sans', 'Sans'], ['serif', 'Serif'], ['mono', 'Mono']];
+// stored as "color" or "color.font" (old moments only have the color)
+const storyCls = (v) => { const [b, f] = String(v || 'ink').split('.'); return `bg-${esc(b)} sf-${esc(f || 'sans')}`; };
 function myStoryClick(anchor) {
   const mine = S.stories.find((s) => s.user.id === S.me.id);
   if (!mine) return openStoryCompose();
   openMenu(anchor, [{ label: 'View your moment', icon: 'sparkle', onClick: () => openStoryViewer(S.me.id) }, { label: 'Add a moment', icon: 'plus', onClick: openStoryCompose }]);
 }
 function openStoryCompose() {
-  let bg = 'sunset', image = null;
+  let bg = 'ink', font = 'sans', image = null;
+  const PH = 'Start typing below';
   const m = openModal({ title: 'New moment', cls: 'story-compose', body: `
-    <div class="preview bg-sunset" id="st-prev"><span id="st-txt">Tap below to write something ✨</span></div>
-    <div class="bgs">${STORY_BGS.map((b) => `<button class="bg-${b} ${b === bg ? 'sel' : ''}" data-bg="${b}"></button>`).join('')}<button class="icon-btn" data-photo data-tip="Add photo" style="margin-left:auto">${icon('image')}</button></div>
+    <div class="preview ${storyCls(bg)}" id="st-prev"><span id="st-txt" class="ph">${PH}</span></div>
+    <div class="st-tools">
+      <div class="bgs">${STORY_BGS.map((b) => `<button class="bg-${b} ${b === bg ? 'sel' : ''}" data-bg="${b}" data-tip="${b[0].toUpperCase() + b.slice(1)}"></button>`).join('')}</div>
+      <div class="st-fonts">${STORY_FONTS.map(([k, l]) => `<button class="sf-${k} ${k === font ? 'sel' : ''}" data-font="${k}">${l}</button>`).join('')}</div>
+      <button class="icon-btn" data-photo data-tip="Add photo">${icon('image')}</button>
+    </div>
     <textarea class="textarea" id="st-in" maxlength="280" placeholder="What's on your mind?" autofocus></textarea>
     <p class="hint">Moments disappear after 24 hours and only your friends can see them.</p>`,
-    foot: `<button class="btn" data-cancel>Cancel</button><button class="btn grad" data-share>Share moment</button>` });
-  const el = m.el;
-  el.querySelector('#st-in').oninput = (e) => (el.querySelector('#st-txt').textContent = e.target.value || 'Tap below to write something ✨');
-  el.querySelectorAll('[data-bg]').forEach((b) => (b.onclick = () => { bg = b.dataset.bg; el.querySelector('#st-prev').className = 'preview bg-' + bg; el.querySelectorAll('[data-bg]').forEach((x) => x.classList.toggle('sel', x === b)); }));
-  el.querySelector('[data-photo]').onclick = async () => { const f = await pickFile(); if (!f) return; try { image = (await uploadFile(f)).url; el.querySelector('#st-prev img')?.remove(); el.querySelector('#st-prev').prepend(h(`<img src="${esc(image)}">`)); } catch (e) { toast(e.message, true); } };
+    foot: `<button class="btn" data-cancel>Cancel</button><button class="btn primary" data-share>Share moment</button>` });
+  const el = m.el, prev = el.querySelector('#st-prev'), txt = el.querySelector('#st-txt');
+  const paint = () => { prev.className = 'preview ' + storyCls(bg + '.' + font); };
+  el.querySelector('#st-in').oninput = (e) => { const v = e.target.value; txt.textContent = v || PH; txt.classList.toggle('ph', !v); txt.classList.toggle('long', v.length > 120); };
+  el.querySelectorAll('[data-bg]').forEach((b) => (b.onclick = () => { bg = b.dataset.bg; paint(); el.querySelectorAll('[data-bg]').forEach((x) => x.classList.toggle('sel', x === b)); }));
+  el.querySelectorAll('[data-font]').forEach((b) => (b.onclick = () => { font = b.dataset.font; paint(); el.querySelectorAll('[data-font]').forEach((x) => x.classList.toggle('sel', x === b)); }));
+  el.querySelector('[data-photo]').onclick = async () => { const f = await pickFile(); if (!f) return; try { image = (await uploadFile(f)).url; el.querySelector('#st-prev img')?.remove(); prev.prepend(h(`<img src="${esc(image)}">`)); } catch (e) { toast(e.message, true); } };
   el.querySelector('[data-cancel]').onclick = () => m.close();
   el.querySelector('[data-share]').onclick = async () => {
-    try { await api('POST', '/api/stories', { text: el.querySelector('#st-in').value, bg, image }); m.close(); toast('Moment shared'); await refreshStories(); if (S.view.type === 'home') renderHomeBody(); } catch (e) { toast(e.message, true); }
+    try { await api('POST', '/api/stories', { text: el.querySelector('#st-in').value, bg: font === 'sans' ? bg : bg + '.' + font, image }); m.close(); toast('Moment shared'); await refreshStories(); if (S.view.type === 'home') renderHomeBody(); } catch (e) { toast(e.message, true); }
   };
 }
 let svState = null;
@@ -565,7 +575,7 @@ function openStoryViewer(uid) {
   const draw = () => {
     const grp = order[ui], it = grp.items[ii];
     const mine = grp.user.id === S.me.id;
-    root.innerHTML = `<button class="icon-btn x" data-x>${icon('x')}</button><div class="card bg-${esc(it.bg || 'sunset')}">
+    root.innerHTML = `<button class="icon-btn x" data-x>${icon('x')}</button><div class="card ${storyCls(it.bg)}${(it.text || '').length > 120 ? ' long' : ''}">
       <div class="bars">${grp.items.map((_, i) => `<i><b style="width:${i < ii ? 100 : 0}%"></b></i>`).join('')}</div>
       <div class="top">${avatar(grp.user, 32)}<span>${esc(grp.user.username)}</span><span class="t">${ago(it.createdAt)}</span><span class="sp"></span>
         ${mine ? `<span class="t">${icon('users', 'xs')} ${it.views || 0}</span><button class="icon-btn" data-del>${icon('trash', 'sm')}</button>` : ''}</div>

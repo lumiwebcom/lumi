@@ -91,11 +91,11 @@ function renderRail() {
   for (const s of S.servers) {
     const inVoice = Call.active && S.serverData[s.id]?.channels.some((c) => c.id === Call.active.channelId);
     html += railItem({ active: v.serverId === s.id, unread: s.unread > 0, tip: s.name + (inVoice ? ' • in a lounge' : ''),
-      inner: `<div class="rail-ring"><div class="rail-btn">${serverIcon(s)}</div></div>`, data: `data-server="${s.id}"` });
+      inner: `<div class="rail-ring"><div class="rail-btn srv ${s.icon ? 'has-img' : ''}" style="--c:${colorFor(s.id)}">${serverIcon(s)}</div></div>`, data: `data-server="${s.id}"` });
   }
   html += railItem({ tip: 'Create a space', inner: `<div class="rail-btn add">${icon('plus')}</div>`, data: 'data-act="create-server"' });
   html += railItem({ tip: 'Join with an invite', inner: `<div class="rail-btn add">${icon('compass')}</div>`, data: 'data-act="join-server"' });
-  if (isSiteAdmin()) html += '<div class="sep"></div>' + railItem({ tip: 'Admin panel', inner: `<div class="rail-btn add admin-btn">${SHIELD_BLUE}</div>`, data: 'data-act="admin-panel"' });
+  if (isSiteAdmin()) html += '<div class="rail-spacer"></div>' + railItem({ tip: 'Admin panel', inner: `<div class="rail-btn add admin-btn">${SHIELD_BLUE}</div>`, data: 'data-act="admin-panel"' });
   $('#rail').innerHTML = html;
 }
 function onRailClick(e) {
