@@ -800,3 +800,4 @@ svg.i.sm { width: 18px; height: 18px; } svg.i.xs { width: 14px; height: 14px; st
 .head-date { font-weight: 600; padding-right: 8px; }
 @media (max-width: 1080px) and (min-width: 761px) { :root { --rail: 72px; } }
 @media (max-width: 760px) { .head-date { display: none; } }
+.gbtn iframe { color-scheme: normal; }
