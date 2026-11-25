@@ -862,22 +862,6 @@ html { -webkit-text-size-adjust: 100%; }
 #feed-list { display: flex; flex-direction: column; gap: 12px; }
 /* zoom with a single tile (e.g. sharing your screen alone): fill the stage */
 .stage .grid.has-focus.one { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-auto-rows: 0; justify-content: stretch; }
-/* screen-share magnifier */
-.tile .vz { position: absolute; inset: 0; transform-origin: 0 0; transition: transform .12s ease-out; will-change: transform; }
-.tile.panning .vz { transition: none; }
-.tile:not(.has-video) .vz { display: none; }
-.tile.zoomed { cursor: grab; } .tile.zoomed.panning { cursor: grabbing; }
-.tile .zctl { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 3; display: none; align-items: center; gap: 2px; padding: 4px; border-radius: 12px; background: rgba(0,0,0,.6); backdrop-filter: blur(8px); color: #fff; cursor: default; }
-.tile.focus.has-video .zctl { display: flex; }
-.tile .zctl button { min-width: 30px; height: 28px; padding: 0 8px; border-radius: 8px; color: #fff; font-size: 15px; font-weight: 700; }
-.tile .zctl button:hover { background: rgba(255,255,255,.18); }
-.tile .zctl .zpct { min-width: 46px; text-align: center; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.tile.focus::after { content: "Scroll to magnify · double-click to zoom · click to exit" !important; }
-.tile.focus.zoomed::after { content: "Drag to move around · 1:1 to reset" !important; }
-.tile.focus.has-video::after { top: auto !important; bottom: 10px; right: 12px; }
-.tile:fullscreen { border-radius: 0; aspect-ratio: auto; width: 100vw; height: 100vh; max-height: none; background: #000; }
-.tile:fullscreen video { object-fit: contain; }
-
 /* ---------- server rail: refined ---------- */
 .rail { gap: 6px !important; padding: 12px 0 14px !important; }
 .rail .sep { width: 24px !important; height: 2px !important; border-radius: 2px; background: var(--border) !important; margin: 6px 0 !important; }

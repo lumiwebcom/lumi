@@ -632,7 +632,7 @@ function renderComposerRight() {
   const has = $('#msg-input').value.trim() || S.pending;
   el.innerHTML = has
     ? `<button class="send" data-act="send" data-tip="Send" ${S.pending?.uploading ? 'disabled' : ''}>${icon('arrowUp', 'sm')}</button>`
-    : `<button class="icon-btn" data-act="attach" data-tip="Photo, video or file">${icon('image')}</button><button class="icon-btn" data-act="send-heart" data-tip="Send a spark">${icon('sparkle')}</button>`;
+    : `<button class="icon-btn" data-act="attach" data-tip="Photo, video or file">${icon('image')}</button>`;
 }
 function renderComposerExtras() {
   const el = $('#composer-extras'); if (!el) return;

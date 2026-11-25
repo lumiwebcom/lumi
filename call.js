@@ -250,26 +250,11 @@ function updateStage() {
     stage = slot.querySelector('.stage');
     stage.querySelector('#call-controls').addEventListener('click', onCallControl);
     // click a tile (e.g. someone's screen share) to zoom it to fill the stage; click again to zoom back out
-    const g = stage.querySelector('#call-grid');
-    g.addEventListener('click', (e) => {
+    stage.querySelector('#call-grid').addEventListener('click', (e) => {
       const t = e.target.closest('.tile'); if (!t) return;
-      const zb = e.target.closest('[data-z]'); if (zb) { e.stopPropagation(); return zoomButton(t, zb.dataset.z); }
-      if (e.target.closest('.zctl') || t._dragged) return;
-      if (t.classList.contains('focus') && (t._z?.s || 1) > 1) return; // magnified: clicks don't exit, use 1:1 first
       const key = [...Call.tiles.entries()].find(([, el]) => el === t)?.[0];
-      clearTimeout(Call._clickT);
-      const go = () => { Call.focusSid = Call.focusSid === key ? null : key; updateStage(); };
-      if (t.classList.contains('focus') && t.classList.contains('has-video')) Call._clickT = setTimeout(go, 260); else go(); // wait so a double-click can magnify instead
-    });
-    g.addEventListener('dblclick', (e) => { clearTimeout(Call._clickT); const t = e.target.closest('.tile.focus.has-video'); if (!t || e.target.closest('.zctl')) return; const r = t.getBoundingClientRect(); zoomAt(t, (t._z?.s || 1) > 1 ? 1 : 2.5, e.clientX - r.left, e.clientY - r.top); });
-    g.addEventListener('wheel', (e) => { const t = e.target.closest('.tile.focus.has-video'); if (!t) return; e.preventDefault(); const r = t.getBoundingClientRect(); zoomAt(t, (t._z?.s || 1) * Math.exp(-e.deltaY * 0.0025), e.clientX - r.left, e.clientY - r.top); }, { passive: false });
-    g.addEventListener('pointerdown', (e) => {
-      const t = e.target.closest('.tile.focus.has-video'); if (!t || e.target.closest('.zctl')) return;
-      t._dragged = false; if ((t._z?.s || 1) <= 1) return;
-      const sx = e.clientX, sy = e.clientY, z0 = { ...t._z }; t.setPointerCapture(e.pointerId); t.classList.add('panning');
-      const mv = (ev) => { if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 4) t._dragged = true; t._z.x = z0.x + ev.clientX - sx; t._z.y = z0.y + ev.clientY - sy; applyZoom(t); };
-      const up = () => { t.removeEventListener('pointermove', mv); t.removeEventListener('pointerup', up); t.removeEventListener('pointercancel', up); t.classList.remove('panning'); setTimeout(() => { t._dragged = false; }, 0); };
-      t.addEventListener('pointermove', mv); t.addEventListener('pointerup', up); t.addEventListener('pointercancel', up);
+      Call.focusSid = Call.focusSid === key ? null : key;
+      updateStage();
     });
   }
   const c = Call.active;
@@ -298,7 +283,7 @@ function updateStage() {
     let tile = Call.tiles.get(p.socketId);
     const u = S.userCache[p.userId] || p.user;
     if (!tile) {
-      tile = h(`<div class="tile ${self ? 'self' : ''}"><div class="bgblur"></div><div class="tile-av"></div><div class="vz"><video autoplay playsinline muted></video></div><div class="lbl"></div><div class="zctl"><button data-z="out" data-tip="Zoom out">−</button><span class="zpct">100%</span><button data-z="in" data-tip="Zoom in">+</button><button data-z="fit" data-tip="Reset">1:1</button><button data-z="full" data-tip="Full screen">⛶</button></div></div>`);
+      tile = h(`<div class="tile ${self ? 'self' : ''}"><div class="bgblur"></div><div class="tile-av"></div><video autoplay playsinline muted></video><div class="lbl"></div></div>`);
       Call.tiles.set(p.socketId, tile);
     }
     const st = self ? { muted: c.muted, deafened: c.deafened, video: c.video, screen: c.screen } : p;
@@ -323,29 +308,10 @@ function updateStage() {
   // keep self last
   const selfTile = Call.tiles.get(socket.id); if (selfTile && list.length > 1) grid.appendChild(selfTile);
   if (Call.focusSid && !Call.tiles.has(Call.focusSid)) Call.focusSid = null;
-  for (const [k, el] of Call.tiles) { el.classList.toggle('focus', k === Call.focusSid); if (k !== Call.focusSid && el._z && el._z.s !== 1) { el._z = { s: 1, x: 0, y: 0 }; applyZoom(el); } }
+  for (const [k, el] of Call.tiles) el.classList.toggle('focus', k === Call.focusSid);
   grid.classList.toggle('has-focus', !!Call.focusSid);
   if (Call.focusSid) { const f = Call.tiles.get(Call.focusSid); if (f && grid.firstChild !== f) grid.prepend(f); }
 }
-// ---- magnifier for a focused video / screen share
-function applyZoom(t) {
-  const z = t._z || (t._z = { s: 1, x: 0, y: 0 }); const w = t.clientWidth, hh = t.clientHeight;
-  z.s = Math.min(5, Math.max(1, z.s)); z.x = Math.min(0, Math.max(w - w * z.s, z.x)); z.y = Math.min(0, Math.max(hh - hh * z.s, z.y));
-  const vz = t.querySelector('.vz'); if (vz) vz.style.transform = z.s === 1 ? '' : `translate(${z.x}px, ${z.y}px) scale(${z.s})`;
-  t.classList.toggle('zoomed', z.s > 1); const p = t.querySelector('.zpct'); if (p) p.textContent = Math.round(z.s * 100) + '%';
-}
-function zoomAt(t, s, px, py) {
-  const z = t._z || (t._z = { s: 1, x: 0, y: 0 }); const ns = Math.min(5, Math.max(1, s));
-  z.x = px - (px - z.x) * (ns / z.s); z.y = py - (py - z.y) * (ns / z.s); z.s = ns; applyZoom(t);
-}
-function zoomButton(t, act) {
-  const z = t._z || { s: 1 };
-  if (act === 'in') zoomAt(t, z.s * 1.5, t.clientWidth / 2, t.clientHeight / 2);
-  else if (act === 'out') zoomAt(t, z.s / 1.5, t.clientWidth / 2, t.clientHeight / 2);
-  else if (act === 'fit') zoomAt(t, 1, 0, 0);
-  else if (act === 'full') { if (document.fullscreenElement) document.exitFullscreen(); else t.requestFullscreen?.().catch(() => {}); }
-}
-document.addEventListener('fullscreenchange', () => Call.tiles?.forEach((t) => t._z && applyZoom(t)));
 function onCallControl(e) {
   const b = e.target.closest('[data-c]'); if (!b) return;
   ({ mute: toggleMute, video: toggleVideo, screen: toggleScreen, deafen: toggleDeafen, leave: () => leaveCall() })[b.dataset.c]();
