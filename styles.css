@@ -860,3 +860,5 @@ html { -webkit-text-size-adjust: 100%; }
 .streak svg { fill: currentColor; stroke: none; }
 @media (max-width: 760px) { .feed-page { padding: 12px 10px 40px; } }
 #feed-list { display: flex; flex-direction: column; gap: 12px; }
+/* zoom with a single tile (e.g. sharing your screen alone): fill the stage */
+.stage .grid.has-focus.one { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-auto-rows: 0; justify-content: stretch; }
