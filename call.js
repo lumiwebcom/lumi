@@ -261,7 +261,7 @@ function updateStage() {
   stage.querySelector('#call-controls').innerHTML = `
     <button class="ctrl ${c.muted ? 'off' : ''}" data-c="mute" data-tip="${c.muted ? 'Unmute' : 'Mute'}">${icon(c.muted ? 'micOff' : 'mic')}</button>
     <button class="ctrl ${c.video ? 'on' : ''}" data-c="video" data-tip="${c.video ? 'Turn off camera' : 'Turn on camera'}">${icon(c.video ? 'video' : 'videoOff')}</button>
-    <button class="ctrl ${c.screen ? 'on' : ''}" data-c="screen" data-tip="${c.screen ? 'Stop sharing' : 'Share your screen'}">${icon('screen')}</button>
+    ${navigator.mediaDevices?.getDisplayMedia ? `<button class="ctrl ${c.screen ? 'on' : ''}" data-c="screen" data-tip="${c.screen ? 'Stop sharing' : 'Share your screen'}">${icon('screen')}</button>` : ''}
     <button class="ctrl ${c.deafened ? 'off' : ''}" data-c="deafen" data-tip="${c.deafened ? 'Undeafen' : 'Deafen'}">${icon(c.deafened ? 'headphonesOff' : 'headphones')}</button>
     <button class="ctrl leave" data-c="leave" data-tip="Leave call">${icon('hangup')}</button>`;
   const grid = stage.querySelector('#call-grid');

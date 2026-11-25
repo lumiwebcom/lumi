@@ -238,7 +238,7 @@ for (const f of ['core', 'auth', 'views', 'modals', 'call', 'main']) FLAT_FILES[
 const INDEX_FILE = PUBLIC_DIR ? path.join(PUBLIC_DIR, 'index.html') : path.join(__dirname, 'index.html');
 if (PUBLIC_DIR) app.use(express.static(PUBLIC_DIR));
 else app.get(Object.keys(FLAT_FILES), (req, res) => res.sendFile(path.join(__dirname, FLAT_FILES[req.path])));
-app.use('/fonts', express.static(path.join(__dirname, 'node_modules', '@fontsource-variable', 'outfit', 'files'), { maxAge: '30d' }));
+app.use('/fonts', express.static(path.join(__dirname, 'node_modules', '@fontsource-variable', 'manrope', 'files'), { maxAge: '30d' }));
 app.get('/uploads/:name', async (req, res) => {
   const name = req.params.name;
   if (!/^[\w-]+(\.[a-z0-9]{1,10})?$/.test(name)) return res.status(404).end();
