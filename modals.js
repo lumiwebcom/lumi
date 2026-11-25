@@ -668,7 +668,8 @@ function openAdminPanel() {
   const m = openModal({ title: 'Admin panel', cls: 'wide admin-modal', body: `<nav class="settings-nav"><div class="lbl">lumi</div>
       <button data-f="all" class="active">${icon('users', 'sm')} Everyone</button>
       <button data-f="banned">${icon('hammer', 'sm')} Banned</button>
-      <button data-f="admins">${SHIELD_BLUE.replace('<svg', '<svg class="i sm"')} Admins</button>
+      <button data-f="owners">${POTION.replace('<svg', '<svg class="i sm"')} Owners</button>
+      <button data-f="admins">${SHIELD_BLUE.replace('<svg', '<svg class="i sm"')} Owners & admins</button>
       <div class="lbl" style="margin-top:14px">You are</div><div style="padding:4px 12px;display:flex;align-items:center;gap:6px;font-weight:600">${owner ? POTION.replace('<svg', '<svg style="width:18px;height:18px"') + ' Owner' : SHIELD_BLUE.replace('<svg', '<svg style="width:18px;height:18px"') + ' Admin'}</div></nav>
     <div class="settings-pane"><h2 id="ap-title">Everyone</h2><input class="input" id="ap-q" placeholder="Search by name or username${owner ? ' or email' : ''}" autocomplete="off" style="margin-bottom:6px"><div class="hint" id="ap-count" style="margin-bottom:10px"></div><div id="ap-list"></div></div>` });
   const el = m.el;
@@ -684,7 +685,14 @@ function openAdminPanel() {
       const acts = [];
       if (u.bannedAt) acts.push(`<button class="btn" data-unban="${u.id}">Unban</button>`);
       else if (canBan) acts.push(`<button class="btn danger" data-ban="${u.id}">${icon('hammer', 'sm')} Ban</button>`);
-      if (owner && !me && !u.bannedAt) acts.push(u.siteRole === 'admin' ? `<button class="btn" data-unadmin="${u.id}">Remove admin</button>` : `<button class="btn" data-admin="${u.id}">${SHIELD_BLUE.replace('<svg', '<svg style="width:16px;height:16px"')} Make admin</button>`);
+      const role = u.siteRole || 'member';
+      if (u.primary) acts.unshift(`<span class="role-pill owner">${POTION.replace('<svg', '<svg style="width:14px;height:14px"')} Main owner</span>`);
+      else if (owner && !me && (role !== 'owner' || r.viewerPrimary) && !u.bannedAt)
+        acts.unshift(`<label class="role-pick r-${role}" data-tip="lumi role"><select data-role="${u.id}">
+          <option value="member" ${role === 'member' ? 'selected' : ''}>Member</option>
+          <option value="admin" ${role === 'admin' ? 'selected' : ''}>Admin</option>
+          ${r.viewerPrimary ? `<option value="owner" ${role === 'owner' ? 'selected' : ''}>Owner</option>` : ''}</select></label>`);
+      else if (role !== 'member') acts.unshift(`<span class="role-pill ${role}">${role === 'owner' ? 'Owner' : 'Admin'}</span>`);
       return `<div class="row-line ${u.bannedAt ? 'is-banned' : ''}">${avatar(u, 42)}<div class="meta">
         <div class="bold">${esc(u.displayName)}${roleBadge(u)} <span class="muted" style="font-weight:400">@${esc(u.username)}</span>${me ? ' <span class="small muted">(you)</span>' : ''}</div>
         <div class="small muted">${u.email ? esc(u.email) + ' · ' : ''}joined ${new Date(u.createdAt).toLocaleDateString()}${u.bannedAt ? ` · <span class="ban-tag">${u.bannedUntil ? `banned · ${fmtBanLeft(u.bannedUntil - Date.now())} left (ends ${esc(fmtBanEnd(u.bannedUntil))})` : 'banned permanently'}${u.banReason ? ' — ' + esc(u.banReason) : ''}</span>` : ''}</div></div>
@@ -697,6 +705,12 @@ function openAdminPanel() {
       act(async () => { await api('POST', `/api/admin/users/${u.id}/ban`, r); toast(`@${u.username} was banned ${r.minutes ? 'for ' + fmtBanLeft(r.minutes * 60000) : 'permanently'}`); });
     }));
     el.querySelectorAll('[data-unban]').forEach((b) => (b.onclick = () => act(async () => { await api('DELETE', `/api/admin/users/${b.dataset.unban}/ban`); toast('Unbanned'); })));
+    el.querySelectorAll('[data-role]').forEach((sel) => (sel.onchange = async () => {
+      const u = S.userCache[sel.dataset.role], to = sel.value, from = u.siteRole || 'member';
+      const text = { owner: `Owners have every power: the admin panel, banning anyone except other owners, and listing their spaces on Stargaze without the 1,000-member minimum.`, admin: 'Admins can open this panel, search everyone, and ban or unban regular members.', member: `@${u.username} will lose their ${from} powers.` }[to];
+      if (!(await confirmDialog(`Make @${u.username} ${to === 'member' ? 'a regular member' : to === 'admin' ? 'an admin' : 'an owner'}?`, text, 'Change role', to === 'member'))) { sel.value = from; return; }
+      act(async () => { await api('POST', `/api/admin/users/${u.id}/role`, { role: to }); toast(`@${u.username} is now ${to === 'member' ? 'a member' : to === 'admin' ? 'an admin' : 'an owner'}`); });
+    }));
     el.querySelectorAll('[data-admin]').forEach((b) => (b.onclick = async () => {
       const u = S.userCache[b.dataset.admin];
       if (!(await confirmDialog(`Make @${u.username} an admin?`, 'Admins can open this panel, search everyone, and ban or unban regular users. Only you can add or remove admins.', 'Make admin', false))) return;
@@ -707,7 +721,7 @@ function openAdminPanel() {
   el.querySelector('#ap-q').oninput = () => { clearTimeout(timer); timer = setTimeout(load, 220); };
   el.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => {
     filter = b.dataset.f; el.querySelectorAll('[data-f]').forEach((x) => x.classList.toggle('active', x === b));
-    el.querySelector('#ap-title').textContent = { all: 'Everyone', banned: 'Banned', admins: 'Admins' }[filter]; load();
+    el.querySelector('#ap-title').textContent = { all: 'Everyone', banned: 'Banned', owners: 'Owners', admins: 'Owners & admins' }[filter]; load();
   }));
   load();
 }

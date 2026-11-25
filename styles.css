@@ -1010,3 +1010,13 @@ html { -webkit-text-size-adjust: 100%; }
 [data-theme="dark"] .acc-perk { background: rgba(116,58,251,.14); }
 .ban-lens button.acc-sel { background: color-mix(in srgb, var(--lime) 18%, var(--bg)); color: var(--text); box-shadow: inset 0 0 0 1.5px var(--lime); }
 @media (max-width: 760px) { .sg-page { padding: 10px 10px 40px; } .sg-hero { padding: 28px 20px; } .sg-hero h1 { font-size: 26px; } }
+
+/* admin panel roles */
+.role-pick { position: relative; display: inline-flex; align-items: center; }
+.role-pick select { appearance: none; height: 34px; padding: 0 30px 0 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg3); color: var(--text); font-weight: 600; font-size: 13px; cursor: pointer; outline: none; }
+.role-pick::after { content: ""; position: absolute; right: 12px; top: 13px; width: 6px; height: 6px; border-right: 2px solid var(--text3); border-bottom: 2px solid var(--text3); transform: rotate(45deg); pointer-events: none; }
+.role-pick.r-admin select { border-color: color-mix(in srgb, #3B82F6 55%, var(--border)); }
+.role-pick.r-owner select { border-color: color-mix(in srgb, var(--lime) 60%, var(--border)); }
+.role-pill { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px; border-radius: 9px; font-size: 12.5px; font-weight: 700; background: var(--bg3); color: var(--text2); }
+.role-pill.owner { background: color-mix(in srgb, var(--lime) 16%, var(--bg3)); color: var(--text); }
+.role-pill.admin { background: color-mix(in srgb, #3B82F6 14%, var(--bg3)); color: var(--text); }

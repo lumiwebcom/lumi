@@ -124,10 +124,19 @@ CREATE TABLE IF NOT EXISTS post_comments (id TEXT PRIMARY KEY, post_id TEXT NOT 
 // lumi owners (comma-separated OWNER_USERNAMES env adds more)
 const OWNER_USERNAMES = [...new Set([(process.env.OWNER_USERNAME || 'cook'), 'type', ...String(process.env.OWNER_USERNAMES || '').split(',')]
   .map((x) => x.trim().toLowerCase()).filter(Boolean))];
+// The main owner (OWNER_USERNAME, "cook") is always an owner and is the only one who can grant or remove owner.
+// Extra usernames in OWNER_USERNAMES are made owner once (when the account exists), after that it is managed in the admin panel.
+const PRIMARY_OWNER = OWNER_USERNAMES[0];
+db.exec('CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)');
+const isPrimaryOwner = (u) => !!u && u.username === PRIMARY_OWNER;
 function ensureOwner() {
   for (const name of OWNER_USERNAMES) {
+    const seeded = name !== PRIMARY_OWNER && db.prepare('SELECT 1 FROM meta WHERE k=?').get('owner_seeded:' + name);
+    if (seeded) continue;
     const u = db.prepare('SELECT id, site_role FROM users WHERE username=?').get(name);
-    if (u && u.site_role !== 'owner') db.prepare("UPDATE users SET site_role='owner', banned_at=NULL, ban_reason=NULL, ban_until=NULL WHERE id=?").run(u.id);
+    if (!u) continue;
+    if (u.site_role !== 'owner') db.prepare("UPDATE users SET site_role='owner', banned_at=NULL, ban_reason=NULL, ban_until=NULL WHERE id=?").run(u.id);
+    if (name !== PRIMARY_OWNER) db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('owner_seeded:' + name, String(now()));
   }
 }
 for (const [c, t] of [['discoverable', 'INTEGER DEFAULT 0'], ['discover_category', 'TEXT']]) if (!colsOf('servers').includes(c)) db.exec(`ALTER TABLE servers ADD COLUMN ${c} ${t}`);
@@ -880,11 +889,13 @@ app.get('/api/admin/users', auth, adminOnly, wrap(req => {
   const t0 = now(); db.prepare('UPDATE users SET banned_at=NULL, ban_reason=NULL, ban_until=NULL WHERE ban_until IS NOT NULL AND ban_until<=?').run(t0);
   if (req.query.filter === 'banned') where += ' AND banned_at IS NOT NULL';
   if (req.query.filter === 'admins') where += " AND site_role IN ('owner','admin')";
+  if (req.query.filter === 'owners') where += " AND site_role='owner'";
   const rows = db.prepare(`SELECT * FROM users WHERE ${where} ORDER BY (site_role='owner') DESC, (site_role='admin') DESC, created_at DESC LIMIT 100`).all(...params);
   return {
-    users: rows.map((u) => ({ ...publicUser(u), email: owner ? u.email : undefined, createdAt: u.created_at, bannedAt: u.banned_at, banReason: u.ban_reason, bannedUntil: u.ban_until || null })),
+    users: rows.map((u) => ({ ...publicUser(u), email: owner ? u.email : undefined, createdAt: u.created_at, bannedAt: u.banned_at, banReason: u.ban_reason, bannedUntil: u.ban_until || null, primary: isPrimaryOwner(u) })),
     total: db.prepare('SELECT COUNT(*) n FROM users').get().n,
     bannedCount: db.prepare('SELECT COUNT(*) n FROM users WHERE banned_at IS NOT NULL').get().n,
+    viewerPrimary: isPrimaryOwner(req.user), primaryOwner: PRIMARY_OWNER,
   };
 }));
 function assertCanModerateSite(actor, target) {
@@ -913,22 +924,32 @@ app.delete('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
   db.prepare('UPDATE users SET banned_at=NULL, ban_reason=NULL, ban_until=NULL WHERE id=?').run(t.id);
   return { ok: true };
 }));
-app.post('/api/admin/users/:id/admin', auth, wrap(req => {
-  if (req.user.site_role !== 'owner') throw fail(403, 'Only the owner can add admins.');
-  const t = getUser(req.params.id);
-  if (!t || t.id === req.user.id) throw fail(400, 'Pick someone else.');
-  if (activeBan(t)) throw fail(400, 'Unban them first.');
-  db.prepare("UPDATE users SET site_role='admin' WHERE id=?").run(t.id);
+// set someone's lumi role: 'member' | 'admin' | 'owner'
+function setSiteRole(actor, t, role) {
+  if (!['member', 'admin', 'owner'].includes(role)) throw fail(400, 'Unknown role.');
+  if (actor.site_role !== 'owner') throw fail(403, 'Only lumi owners can change roles.');
+  if (!t) throw fail(404, 'User not found');
+  if (t.id === actor.id) throw fail(400, "You can't change your own role.");
+  if (isPrimaryOwner(t)) throw fail(403, "The main owner's role can't be changed.");
+  const primary = isPrimaryOwner(actor);
+  if (t.site_role === 'owner' && !primary) throw fail(403, `Only @${PRIMARY_OWNER} can change another owner's role.`);
+  if (role === 'owner' && !primary) throw fail(403, `Only @${PRIMARY_OWNER} can make someone an owner.`);
+  if (role !== 'member' && activeBan(t)) throw fail(400, 'Unban them first.');
+  db.prepare('UPDATE users SET site_role=? WHERE id=?').run(role === 'member' ? null : role, t.id);
   broadcastUserUpdate(t.id, publicUser(getUser(t.id)));
-  return { ok: true };
+  return { ok: true, role };
+}
+app.post('/api/admin/users/:id/role', auth, wrap(req => setSiteRole(req.user, getUser(req.params.id), String(req.body.role || ''))));
+// older buttons: never touch owners
+app.post('/api/admin/users/:id/admin', auth, wrap(req => {
+  const t = getUser(req.params.id);
+  if (t?.site_role === 'owner') throw fail(400, 'Owners already have every admin power.');
+  return setSiteRole(req.user, t, 'admin');
 }));
 app.delete('/api/admin/users/:id/admin', auth, wrap(req => {
-  if (req.user.site_role !== 'owner') throw fail(403, 'Only the owner can remove admins.');
   const t = getUser(req.params.id);
   if (!t || t.site_role !== 'admin') throw fail(400, 'That person is not an admin.');
-  db.prepare('UPDATE users SET site_role=NULL WHERE id=?').run(t.id);
-  broadcastUserUpdate(t.id, publicUser(getUser(t.id)));
-  return { ok: true };
+  return setSiteRole(req.user, t, 'member');
 }));
 
 // invites
