@@ -1021,3 +1021,9 @@ html { -webkit-text-size-adjust: 100%; }
 .role-pill.owner { background: color-mix(in srgb, var(--lime) 16%, var(--bg3)); color: var(--text); }
 .role-pill.admin { background: color-mix(in srgb, #3B82F6 14%, var(--bg3)); color: var(--text); }
 .acc-genre { display: flex; gap: 8px; max-width: 460px; } .acc-genre .input { flex: 1; }
+.sg-page { padding-top: 22px; }
+.sg-top { display: flex; align-items: baseline; gap: 10px; margin: 0 2px 4px; }
+.sg-top h2 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.sg-top span { font-size: 13px; color: var(--text3); }
+.sg-note { margin: 0 2px 16px; font-size: 13px; color: var(--text2); }
+.sg-feat { background: rgba(0,0,0,.6); font-weight: 600; }

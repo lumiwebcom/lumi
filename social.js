@@ -215,12 +215,6 @@ function renderStargaze(main) {
   renderStargazeSide();
   main.innerHTML = `<header class="main-head">${mobileBtn()}<div class="t">${icon('compass')} Stargaze</div></header>
     <div class="content"><div class="home sg-page">
-      <section class="sg-hero">
-        <div class="sg-sky" aria-hidden="true">${Array.from({ length: 34 }, (_, i) => `<i style="left:${(i * 37) % 100}%;top:${(i * 53) % 100}%;animation-delay:${(i % 7) * .6}s;${i % 5 === 0 ? 'width:3px;height:3px' : ''}"></i>`).join('')}</div>
-        <div class="sg-hero-in"><div class="sg-kick">${icon('compass', 'xs')} Stargaze</div>
-          <h1>Find a space worth staying in</h1>
-          <p>Public spaces with active communities. Every space here has 1,000+ members, or is run by the lumi team.</p></div>
-      </section>
       <div id="sg-list"></div>
     </div></div>`;
   loadStargaze();
@@ -249,14 +243,15 @@ function renderStargazeList() {
   const L = S.star.list;
   if (!L) { el.innerHTML = '<div class="muted small" style="padding:30px;text-align:center">Loading…</div>'; return; }
   const title = S.star.q ? `Results for “${esc(S.star.q)}”` : 'All spaces';
+  const head = `<div class="sg-top"><h2>${title}</h2><span>${L.length} ${L.length === 1 ? 'space' : 'spaces'}</span></div>
+    ${S.star.q ? '' : '<p class="sg-note">Spaces show up here once they have 1,000 members and turn it on in Community settings › Access.</p>'}`;
   if (!L.length) {
-    el.innerHTML = `<div class="sg-h">${title}</div><div class="empty"><div class="art">${icon('compass')}</div><h3>No spaces here yet</h3><p>${S.star.q ? 'Try a different search.' : 'Spaces show up here once they reach 1,000 members and turn on Stargaze in their settings.'}</p></div>`;
+    el.innerHTML = `${head}<div class="empty"><div class="art">${icon('compass')}</div><h3>No spaces here yet</h3><p>${S.star.q ? 'Try a different search.' : 'Spaces show up here once they reach 1,000 members and turn on Stargaze in their settings.'}</p></div>`;
     return;
   }
   const feat = !S.star.q ? L.filter((s) => s.featured) : [];
   const rest = feat.length ? L.filter((s) => !s.featured) : L;
-  el.innerHTML = (feat.length ? `<div class="sg-h">${icon('sparkle', 'xs')} lumi picks</div><div class="sg-grid">${feat.map(sgCard).join('')}</div>` : '') +
-    (rest.length ? `<div class="sg-h">${title}</div><div class="sg-grid">${rest.map(sgCard).join('')}</div>` : '');
+  el.innerHTML = head + `<div class="sg-grid">${[...feat, ...rest].map(sgCard).join('')}</div>`;
 }
 async function joinFromStargaze(id) {
   const s = (S.star.list || []).find((x) => x.id === id);
