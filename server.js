@@ -136,7 +136,7 @@ function ensureOwner() {
     const u = db.prepare('SELECT id, site_role FROM users WHERE username=?').get(name);
     if (!u) continue;
     if (u.site_role !== 'owner') db.prepare("UPDATE users SET site_role='owner', banned_at=NULL, ban_reason=NULL, ban_until=NULL WHERE id=?").run(u.id);
-    if (name !== PRIMARY_OWNER) db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('owner_seeded:' + name, String(now()));
+    if (name !== PRIMARY_OWNER) db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('owner_seeded:' + name, String(Date.now()));
   }
 }
 for (const [c, t] of [['discoverable', 'INTEGER DEFAULT 0'], ['discover_category', 'TEXT']]) if (!colsOf('servers').includes(c)) db.exec(`ALTER TABLE servers ADD COLUMN ${c} ${t}`);
