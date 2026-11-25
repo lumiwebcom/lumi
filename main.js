@@ -161,3 +161,18 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 window.addEventListener('beforeunload', () => { if (Call.active) socket.emit('voice:leave'); });
 
 boot();
+
+// lumi's own links (invites, chats) open right here, not in a new tab or the browser.
+const LUMI_HOSTS = new Set([location.host, 'lumichat.pages.dev', 'lumi-gtih.onrender.com']);
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a[href]'); if (!a || e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  let u; try { u = new URL(a.href, location.href); } catch { return; }
+  if (!LUMI_HOSTS.has(u.host) || a.hasAttribute('download')) return;
+  const inv = u.pathname.match(/^\/invite\/([A-Za-z0-9_-]+)\/?$/);
+  if (inv) {
+    e.preventDefault();
+    if (!S.me) { sessionStorage.setItem('lumi.pendingInvite', inv[1]); return renderAuth('signup'); }
+    return openInviteAccept(inv[1]);
+  }
+  if (/^\/(channels|feed|activity|stargaze)(\/|$)/.test(u.pathname) && S.me) { e.preventDefault(); navigate(u.pathname); }
+}, true);
