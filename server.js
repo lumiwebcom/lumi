@@ -1,4 +1,4 @@
-// Lumi — a Discord-style community app with an Instagram look.
+// lumi: chats, orbits, lounges and calls for your people.
 // Express (REST) + Socket.IO (realtime + WebRTC signaling) + SQLite (storage).
 
 const fs = require('fs');
@@ -703,7 +703,7 @@ app.get('/api/servers', auth, wrap(req => {
 function serverDetail(sid, uid) {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid);
   const perms = memberPerms(sid, uid);
-  if (!s || !perms) throw fail(404, 'Community not found');
+  if (!s || !perms) throw fail(404, 'Orbit not found');
   const channels = db.prepare('SELECT * FROM channels WHERE server_id=? ORDER BY position, created_at').all(sid)
     .map(c => ({ id: c.id, type: c.type, name: c.name, topic: c.topic, position: c.position,
       categoryId: c.category_id || null, unread: c.type === 'text' ? unreadCount(uid, c.id) : 0 }));
@@ -732,7 +732,7 @@ function removeFromServerRooms(sid, uid) {
 }
 app.post('/api/servers', auth, wrap(req => {
   const name = sanitizeName(req.body.name, 100);
-  if (!name) throw fail(400, 'Give your community a name.');
+  if (!name) throw fail(400, 'Give your orbit a name.');
   const sid = id();
   db.prepare('INSERT INTO servers (id,name,icon,description,owner_id,created_at) VALUES (?,?,?,?,?,?)')
     .run(sid, name, req.body.icon || null, '', req.user.id, now());
@@ -750,7 +750,7 @@ app.post('/api/servers', auth, wrap(req => {
 }));
 app.patch('/api/servers/:id', auth, wrap(req => {
   const sid = req.params.id;
-  if (!has(memberPerms(sid, req.user.id), P.MANAGE_SERVER)) throw fail(403, 'You need the Manage Community permission.');
+  if (!has(memberPerms(sid, req.user.id), P.MANAGE_SERVER)) throw fail(403, 'You need the Manage Orbit permission.');
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid);
   const b = req.body;
   db.prepare('UPDATE servers SET name=?, icon=?, banner=?, description=? WHERE id=?').run(
@@ -764,7 +764,7 @@ app.patch('/api/servers/:id', auth, wrap(req => {
 }));
 app.delete('/api/servers/:id', auth, wrap(req => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
-  if (!s || s.owner_id !== req.user.id) throw fail(403, 'Only the owner can delete the community.');
+  if (!s || s.owner_id !== req.user.id) throw fail(403, 'Only the owner can delete the orbit.');
   io.to(`server:${s.id}`).emit('server:removed', { serverId: s.id, reason: 'deleted' });
   db.prepare('DELETE FROM servers WHERE id=?').run(s.id);
   return { ok: true };
@@ -772,7 +772,7 @@ app.delete('/api/servers/:id', auth, wrap(req => {
 app.post('/api/servers/:id/leave', auth, wrap(req => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
   if (!s) throw fail(404, 'Not found');
-  if (s.owner_id === req.user.id) throw fail(400, 'Transfer ownership or delete the community before leaving.');
+  if (s.owner_id === req.user.id) throw fail(400, 'Transfer ownership or delete the orbit before leaving.');
   db.prepare('DELETE FROM members WHERE server_id=? AND user_id=?').run(s.id, req.user.id);
   db.prepare('DELETE FROM member_roles WHERE server_id=? AND user_id=?').run(s.id, req.user.id);
   removeFromServerRooms(s.id, req.user.id);
@@ -949,7 +949,7 @@ app.get('/api/invites/:code', auth, wrap(req => {
 app.post('/api/invites/:code', auth, wrap(req => {
   const inv = validInvite(req.params.code);
   if (!inv) throw fail(404, 'This invite is invalid or has expired.');
-  if (db.prepare('SELECT 1 FROM bans WHERE server_id=? AND user_id=?').get(inv.server_id, req.user.id)) throw fail(403, 'You are banned from this community.');
+  if (db.prepare('SELECT 1 FROM bans WHERE server_id=? AND user_id=?').get(inv.server_id, req.user.id)) throw fail(403, 'You are banned from this orbit.');
   if (!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(inv.server_id, req.user.id)) {
     addMember(inv.server_id, req.user.id);
     db.prepare('UPDATE invites SET uses=uses+1 WHERE code=?').run(inv.code);
@@ -1160,14 +1160,14 @@ app.get('/api/feed', auth, wrap(req => {
   const uid = req.user.id; const before = Number(req.query.before) || now() + 1; const scope = String(req.query.scope || 'all');
   let rows;
   if (scope.startsWith('server:')) {
-    const sid = scope.slice(7); if (!memberPerms(sid, uid)) throw fail(404, 'Community not found');
+    const sid = scope.slice(7); if (!memberPerms(sid, uid)) throw fail(404, 'Orbit not found');
     rows = db.prepare('SELECT * FROM posts WHERE server_id=? AND created_at<? ORDER BY created_at DESC LIMIT 20').all(sid, before);
   } else if (scope.startsWith('user:')) {
     const tid = scope.slice(5); if (tid !== uid && !areFriends(uid, tid)) return { posts: [] };
     const sids = serverIdsOf(uid);
     rows = db.prepare(`SELECT * FROM posts WHERE user_id=? AND created_at<? AND (server_id IS NULL OR server_id IN (${sids.map(() => '?').join(',') || "''"})) ORDER BY created_at DESC LIMIT 20`).all(tid, before, ...sids);
   } else {
-    const fids = scope === 'communities' ? [] : [uid, ...friendIdsOf(uid)]; const sids = scope === 'friends' ? [] : serverIdsOf(uid);
+    const fids = scope === 'orbits' ? [] : [uid, ...friendIdsOf(uid)]; const sids = scope === 'friends' ? [] : serverIdsOf(uid);
     const q = (a) => a.map(() => '?').join(',') || "''";
     rows = db.prepare(`SELECT * FROM posts WHERE created_at<? AND ((server_id IS NULL AND user_id IN (${q(fids)})) OR server_id IN (${q(sids)})) ORDER BY created_at DESC LIMIT 20`).all(before, ...fids, ...sids);
   }
@@ -1178,7 +1178,7 @@ app.post('/api/posts', auth, wrap(req => {
   const image = typeof req.body.image === 'string' && req.body.image.startsWith('/uploads/') ? req.body.image : null;
   if (!content && !image) throw fail(400, 'Write something or add a photo.');
   const sid = req.body.serverId || null;
-  if (sid && !has(memberPerms(sid, req.user.id), P.SEND_MESSAGES)) throw fail(403, 'You can’t post in this community.');
+  if (sid && !has(memberPerms(sid, req.user.id), P.SEND_MESSAGES)) throw fail(403, 'You can’t post in this orbit.');
   const spark = req.body.spark ? todaySpark().id : null;
   rateLimit('post:' + req.user.id, 30, 3600_000);
   const p = { id: id(), user_id: req.user.id, server_id: sid, content, image, spark, created_at: now() };
@@ -1238,7 +1238,7 @@ app.get('/api/activity', auth, wrap(req => {
   return { items: [...likes, ...cmts, ...joins].filter(i => i.from).sort((a, b) => b.createdAt - a.createdAt).slice(0, 40) };
 }));
 app.get('/api/servers/:id/pulse', auth, wrap(req => {
-  const sid = req.params.id; if (!memberPerms(sid, req.user.id)) throw fail(404, 'Community not found');
+  const sid = req.params.id; if (!memberPerms(sid, req.user.id)) throw fail(404, 'Orbit not found');
   const t = now();
   const msgsToday = db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>?`).get(sid, t - DAY).n;
   const msgsWeek = db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>?`).get(sid, t - 7 * DAY).n;
@@ -1256,13 +1256,13 @@ const legalPage = (title, body) => `<!DOCTYPE html><html lang="en"><head><meta c
 <style>body{font:16px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;color:#17151C;background:#F7F5F1}h1{letter-spacing:-.03em}a{color:#0E9F8E}</style></head>
 <body><p><a href="/">← back to lumi</a></p><h1>${title}</h1>${body}<p style="color:#6E6977">Last updated ${new Date().getFullYear()}.</p></body></html>`;
 app.get('/privacy', (req, res) => res.send(legalPage('Privacy policy', `
-<p>lumi stores only what it needs to run: your account (email, username, display name, a hashed password or your Google account ID, and profile details you choose to add), your friends list, the communities you join, and the messages, photos and files you send.</p>
+<p>lumi stores only what it needs to run: your account (email, username, display name, a hashed password or your Google account ID, and profile details you choose to add), your friends list, the orbits you join, and the messages, photos and files you send.</p>
 <p>If you sign in with Google, lumi receives your name, email address and profile photo from Google. It does not access anything else in your Google account.</p>
 <p>Voice and video calls go directly between participants (or through a relay server when a direct connection is not possible) and are not recorded or stored.</p>
 <p>Your data is never sold or shared with advertisers. You can ask the owner of this lumi site to delete your account and data at any time.</p>`)));
 app.get('/terms', (req, res) => res.send(legalPage('Terms of service', `
 <p>lumi is provided as-is, without warranties. Be kind: don't use lumi to harass people, share illegal content, or spam.</p>
-<p>Community owners and moderators can remove content and members from their communities. The site owner can suspend accounts that break these terms.</p>
+<p>Orbit owners and moderators can remove content and members from their orbits. The site owner can suspend accounts that break these terms.</p>
 <p>You keep ownership of what you post, and you give lumi permission to store and show it to the people you share it with.</p>`)));
 
 // SPA fallback (for /invite/CODE links etc.)

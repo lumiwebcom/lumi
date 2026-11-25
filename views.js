@@ -31,9 +31,9 @@ async function route() {
   closeMenu(); $('#app')?.classList.remove('drawer');
   if (r.type === 'invite') { history.replaceState({}, '', '/home'); S.view = { type: 'feed' }; renderAll(); openInviteAccept(r.code); return; }
   if (r.type === 'server') {
-    if (!S.servers.find((s) => s.id === r.serverId)) return navigate('/communities', true);
+    if (!S.servers.find((s) => s.id === r.serverId)) return navigate('/orbits', true);
     let sd = S.serverData[r.serverId];
-    if (!sd) { try { sd = await loadServer(r.serverId); } catch { return navigate('/communities', true); } }
+    if (!sd) { try { sd = await loadServer(r.serverId); } catch { return navigate('/orbits', true); } }
     const ch = r.channelId && sd.channels.find((c) => c.id === r.channelId);
     if (!ch) {
       if (r.channelId) history.replaceState({}, '', `/channels/${r.serverId}`);
@@ -81,9 +81,9 @@ function dmAvatar(dm, size = 48) {
 }
 
 // ------------------------------------------------------------------ rail
-const NAV_PATHS = { feed: '/home', messages: '/messages', friends: '/friends', activity: '/activity', communities: '/communities' };
-function navLink(key, ic, label, count, active) {
-  return `<a class="nav-link ${active ? 'active' : ''}" data-nav="${key}">${icon(ic)}<span class="lbl">${label}</span>${count ? `<span class="count">${count > 99 ? '99+' : count}</span>` : ''}</a>`;
+const NAV_PATHS = { feed: '/home', messages: '/messages', friends: '/friends', activity: '/activity', orbits: '/orbits' };
+function navLink(key, label, count, active) {
+  return `<a class="tnav ${active ? 'active' : ''}" data-nav="${key}"><span>${label}</span>${count ? `<sup>${count > 99 ? '99+' : count}</sup>` : ''}</a>`;
 }
 function commIcon(s, size = 28) {
   return `<span class="cicon" style="width:${size}px;height:${size}px;--c:${colorFor(s.id)};font-size:${Math.round(size * 0.38)}px">${serverIcon(s)}</span>`;
@@ -94,26 +94,22 @@ function renderRail() {
   app.dataset.view = v.type;
   const pending = S.friends.filter((f) => f.type === 'incoming').length;
   const dmUnread = S.dms.reduce((a, d) => a + d.unread, 0);
-  let html = `<div class="brand" data-nav="feed">${wordmark()}</div>
-    <div class="nav-group">
-      ${navLink('feed', 'home', 'Home', 0, v.type === 'feed')}
-      ${navLink('messages', 'chat', 'Messages', dmUnread, v.type === 'messages' || v.type === 'dm')}
-      ${navLink('friends', 'users', 'Friends', pending, v.type === 'home')}
-      ${navLink('activity', 'bell', 'Activity', S.activityUnread || 0, v.type === 'activity')}
-      ${navLink('communities', 'grid', 'Communities', 0, v.type === 'communities')}
+  const orbUnread = S.servers.reduce((a, s) => a + (s.unread || 0), 0);
+  const live = S.dms.some((d) => (S.voice[d.id] || []).length) || Object.values(S.serverData).some((sd) => sd.channels.some((c) => (S.voice[c.id] || []).length));
+  $('#rail').innerHTML = `<div class="tb-left"><a class="brand" data-nav="feed">${wordmark()}</a></div>
+    <nav class="tnavs">
+      ${navLink('feed', 'Now', 0, v.type === 'feed')}
+      ${navLink('messages', 'Chats', dmUnread, v.type === 'messages' || v.type === 'dm')}
+      ${navLink('orbits', 'Orbits', orbUnread, v.type === 'orbits' || v.type === 'server')}
+      ${navLink('friends', 'People', pending, v.type === 'home')}
+    </nav>
+    <div class="tb-right">
+      ${live ? `<span class="live-flag" data-tip="Someone you know is in a call">${icon('waves', 'xs')} Live</span>` : ''}
+      <button class="tbtn" data-act="compose">${icon('edit', 'sm')}<span>Post</span></button>
+      <button class="ticon ${v.type === 'activity' ? 'active' : ''}" data-nav="activity" data-tip="Activity">${icon('bell')}${S.activityUnread ? '<i class="dotn"></i>' : ''}</button>
+      <button class="tme" data-act="me-menu">${avatar(S.me, 32, { dot: true })}</button>
     </div>
-    <button class="btn primary compose-btn" data-act="compose">${icon('edit', 'sm')}<span>New post</span></button>
-    <div class="nav-label"><span>Your communities</span><button class="icon-btn" data-act="community-add" data-tip="Create or join">${icon('plus', 'sm')}</button></div>
-    <div class="nav-comms">`;
-  for (const s of S.servers) {
-    const inVoice = Call.active && S.serverData[s.id]?.channels.some((c) => c.id === Call.active.channelId);
-    html += `<a class="nav-comm ${v.serverId === s.id ? 'active' : ''} ${s.unread ? 'unread' : ''}" data-server="${s.id}">${commIcon(s, 26)}<span class="lbl">${esc(s.name)}</span>${inVoice ? `<span class="live-ic">${icon('waves', 'xs')}</span>` : s.unread ? '<span class="unread-dot"></span>' : ''}</a>`;
-  }
-  if (!S.servers.length) html += `<button class="nav-empty" data-act="community-add">${icon('plus', 'xs')} Start or join a community</button>`;
-  html += '</div>';
-  if (isSiteAdmin()) html += `<a class="nav-link admin" data-act="admin-panel">${SHIELD_BLUE}<span class="lbl">Admin panel</span></a>`;
-  html += '<div class="side-foot" id="side-foot"></div>';
-  $('#rail').innerHTML = html;
+    <div class="side-foot" id="side-foot"></div>`;
   renderSideFoot(); renderTabbar();
 }
 function renderTabbar() {
@@ -121,14 +117,19 @@ function renderTabbar() {
   const dmUnread = S.dms.reduce((a, d) => a + d.unread, 0), pending = S.friends.filter((f) => f.type === 'incoming').length;
   const tab = (key, ic, label, count, active) => `<button class="tb ${active ? 'active' : ''}" data-nav="${key}">${icon(ic)}${count ? `<span class="count">${count > 99 ? '99+' : count}</span>` : ''}<span class="tl">${label}</span></button>`;
   el.innerHTML = (Call.active ? `<div class="tb-call" data-act="goto-call"><span class="pulse-dot"></span><span class="w">On a call · tap to open</span><button class="icon-btn danger" data-act="leave-call" data-tip="Leave">${icon('hangup', 'sm')}</button></div>` : '')
-    + `<div class="tb-row">${tab('feed', 'home', 'Home', 0, v.type === 'feed')}${tab('messages', 'chat', 'Messages', dmUnread, v.type === 'messages' || v.type === 'dm')}${tab('communities', 'grid', 'Communities', 0, v.type === 'communities' || v.type === 'server')}${tab('friends', 'users', 'Friends', pending, v.type === 'home')}
+    + `<div class="tb-row">${tab('feed', 'home', 'Now', 0, v.type === 'feed')}${tab('messages', 'chat', 'Chats', dmUnread, v.type === 'messages' || v.type === 'dm')}${tab('orbits', 'orbit', 'Orbits', 0, v.type === 'orbits' || v.type === 'server')}${tab('friends', 'users', 'People', pending, v.type === 'home')}
       <button class="tb ${v.type === 'activity' ? 'active' : ''}" data-act="me-menu">${avatar(S.me, 24)}${S.activityUnread ? '<span class="count dot"></span>' : ''}<span class="tl">You</span></button></div>`;
 }
 function meMenu(anchor) {
+  const muted = Call.active ? Call.active.muted : S.selfMute, deaf = Call.active ? Call.active.deafened : S.selfDeaf;
   openMenu(anchor, [
+    { html: `<div class="menu-me">${avatar(S.me, 40, { dot: true })}<div><b>${esc(S.me.displayName)}</b><span>@${esc(S.me.username)}</span></div></div>` },
     { label: 'My profile', icon: 'user', onClick: () => openProfile(S.me.id) },
     { label: `Activity${S.activityUnread ? ` (${S.activityUnread})` : ''}`, icon: 'bell', onClick: () => navigate('/activity') },
     { label: 'New post', icon: 'edit', onClick: () => openPostComposer() },
+    'sep',
+    { label: muted ? 'Unmute microphone' : 'Mute microphone', icon: muted ? 'mic' : 'micOff', onClick: () => toggleMute() },
+    { label: deaf ? 'Undeafen' : 'Deafen', icon: deaf ? 'headphones' : 'headphonesOff', onClick: () => toggleDeafen() },
     { label: 'Settings', icon: 'settings', onClick: () => openUserSettings() },
     isSiteAdmin() && { label: 'Admin panel', icon: 'shield', onClick: () => openAdminPanel() },
   ], { align: 'right' });
@@ -138,7 +139,7 @@ function onRailClick(e) {
   if (t.dataset.nav) return navigate(NAV_PATHS[t.dataset.nav]);
   if (t.dataset.server) return navigate('/channels/' + t.dataset.server);
   const a = t.dataset.act;
-  if (a === 'community-add') return openMenu(t, [{ label: 'Create a community', icon: 'plus', onClick: () => openCreateServer() }, { label: 'Join with an invite', icon: 'link', onClick: () => openCreateServer('join') }]);
+  if (a === 'community-add') return openMenu(t, [{ label: 'Create an orbit', icon: 'plus', onClick: () => openCreateServer() }, { label: 'Join with an invite', icon: 'link', onClick: () => openCreateServer('join') }]);
   if (a === 'admin-panel') return openAdminPanel();
   if (a === 'compose') return openPostComposer();
   if (a === 'me-menu') return meMenu(t);
@@ -154,13 +155,13 @@ async function serverMenu(sid, anchor) {
   openMenu(anchor, [
     can(sd, P.CREATE_INVITE) && { label: 'Invite people', icon: 'userPlus', onClick: () => openInvite(sid) },
     { label: 'Mark as read', icon: 'check', onClick: () => markServerRead(sid) },
-    (can(sd, P.MANAGE_SERVER) || can(sd, P.MANAGE_ROLES) || can(sd, P.KICK_MEMBERS) || can(sd, P.BAN_MEMBERS)) && { label: 'Community settings', icon: 'settings', onClick: () => openServerSettings(sid) },
+    (can(sd, P.MANAGE_SERVER) || can(sd, P.MANAGE_ROLES) || can(sd, P.KICK_MEMBERS) || can(sd, P.BAN_MEMBERS)) && { label: 'Orbit settings', icon: 'settings', onClick: () => openServerSettings(sid) },
     can(sd, P.MANAGE_CHANNELS) && { label: 'New room', icon: 'plus', onClick: () => openChannelModal(sid) },
     can(sd, P.MANAGE_CHANNELS) && { label: 'New category', icon: 'menu', onClick: () => openCategoryModal(sid) },
-    { label: 'Edit my community profile', icon: 'edit', onClick: () => editNickname(sid, S.me.id) },
+    { label: 'Edit my orbit profile', icon: 'edit', onClick: () => editNickname(sid, S.me.id) },
     'sep',
-    !owner && { label: 'Leave community', icon: 'logout', danger: true, onClick: () => leaveServer(sid) },
-    owner && can(sd, P.MANAGE_SERVER) && { label: 'Delete community', icon: 'trash', danger: true, onClick: () => openServerSettings(sid, 'delete') },
+    !owner && { label: 'Leave orbit', icon: 'logout', danger: true, onClick: () => leaveServer(sid) },
+    owner && can(sd, P.MANAGE_SERVER) && { label: 'Delete orbit', icon: 'trash', danger: true, onClick: () => openServerSettings(sid, 'delete') },
   ]);
 }
 async function markServerRead(sid) {
@@ -172,7 +173,7 @@ async function markServerRead(sid) {
 async function leaveServer(sid) {
   const sd = S.serverData[sid];
   if (!(await confirmDialog(`Leave '${sd?.server.name}'`, `Are you sure you want to leave <b>${esc(sd?.server.name)}</b>? You won't be able to rejoin unless you are re-invited.`, 'Leave'))) return;
-  try { await api('POST', `/api/servers/${sid}/leave`); removeServerLocal(sid); toast('You left the community'); } catch (e) { toast(e.message, true); }
+  try { await api('POST', `/api/servers/${sid}/leave`); removeServerLocal(sid); toast('You left the orbit'); } catch (e) { toast(e.message, true); }
 }
 function removeServerLocal(sid) {
   if (Call.active && S.serverData[sid]?.channels.some((c) => c.id === Call.active.channelId)) leaveCall();
@@ -186,13 +187,11 @@ function renderSideTop() {
   if (v.type === 'server') {
     const sd = S.serverData[v.serverId]; if (!sd) return (el.innerHTML = '');
     const sv = sd.server, online = sd.members.filter((m) => isOnline(m.user.id)).length;
-    el.innerHTML = `<div class="comm-head">
-      <div class="comm-cover" style="--c:${colorFor(sv.id)};${sv.banner ? `background-image:url('${esc(sv.banner)}')` : ''}"></div>
-      <div class="comm-id">${commIcon(sv, 44)}
-        <div class="meta"><div class="name">${esc(sv.name)}</div><div class="sub">${sd.members.length} member${sd.members.length === 1 ? '' : 's'} · <span class="on">${online} online</span></div></div>
-        <button class="icon-btn" data-act="server-menu" data-tip="Community options">${icon('more', 'sm')}</button></div></div>`;
+    el.innerHTML = `<div class="orb-side-head" style="--c:${colorFor(sv.id)}">
+      <div class="osh">${orbFlag(sv, 40)}<div class="osh-t"><b>${esc(sv.name)}</b><span>${sd.members.length} member${sd.members.length === 1 ? '' : 's'} · <i>${online} online</i></span></div>
+      <button class="icon-btn" data-act="server-menu" data-tip="Orbit options">${icon('more', 'sm')}</button></div></div>`;
   } else {
-    el.innerHTML = `<div class="side-head"><div class="title">Messages</div>
+    el.innerHTML = `<div class="side-head"><div class="title">Chats</div>
       <button class="icon-btn" data-act="new-group" data-tip="New message">${icon('edit', 'sm')}</button></div>
       <label class="side-search">${icon('search', 'sm')}<input id="dm-search" placeholder="Search conversations" autocomplete="off"></label>`;
     $('#dm-search').oninput = () => renderSideBody();
@@ -214,7 +213,7 @@ function renderSideBody() {
     else if (d.type === 'dm') { const u = S.userCache[d.recipients[0]?.id] || d.recipients[0]; sub = u ? esc(u.customStatus || (isOnline(u.id) ? 'Active now' : '@' + u.username)) : ''; }
     else sub = `${d.members.length} members`;
     html += `<div class="convo ${v.dmId === d.id ? 'active' : ''} ${d.unread ? 'unread' : ''}" data-dm="${d.id}">
-      ${dmAvatar(d, 44)}<div class="meta"><div class="n"><span class="nm">${esc(dmName(d))}</span>${d.type === 'dm' ? roleBadge(d.recipients[0]) : ''}</div><div class="sub">${sub}</div></div>
+      ${dmAvatar(d, 44)}<div class="meta"><div class="n"><span class="nm">${esc(dmName(d))}</span>${d.type === 'dm' ? roleBadge(d.recipients[0]) : `<span class="grp-tag">Group · ${d.members.length}</span>`}</div><div class="sub">${sub}</div></div>
       <div class="aside"><span class="time">${lm ? ago(lm.createdAt) : ''}</span><span class="marks">${streakChip(d)}${inCall ? `<span class="live-ic">${icon('phone', 'xs')}</span>` : d.unread ? `<span class="ucount">${d.unread > 99 ? '99+' : d.unread}</span>` : ''}</span></div></div>`;
   }
   el.innerHTML = html;
@@ -238,7 +237,7 @@ function renderServerSide(el) {
   const cats = [...(sd.categories || [])].sort((a, b) => a.position - b.position);
   const catIds = new Set(cats.map((c) => c.id));
   const loose = sd.channels.filter((c) => !c.categoryId || !catIds.has(c.categoryId));
-  let html = `<div class="nav-item chan ${S.view.overview ? 'active' : ''}" data-act="overview">${icon('trend', 'sm')}<span class="n">Overview</span></div>`;
+  let html = `<div class="nav-item chan ${S.view.overview ? 'active' : ''}" data-act="overview">${icon('feed', 'sm')}<span class="n">Board &amp; pulse</span></div>`;
   html += loose.length ? rows(loose) : '';
   for (const cat of cats) {
     const list = sd.channels.filter((c) => c.categoryId === cat.id);
@@ -329,10 +328,10 @@ const currentServer = () => (S.view.type === 'server' ? S.serverData[S.view.serv
 const mobileBtn = () => (hasSide() ? `<button class="icon-btn mobile-menu" data-act="drawer" data-tip="${S.view.type === 'server' ? 'Rooms' : 'Conversations'}">${icon('menu')}</button>` : '');
 function renderMain() {
   const v = S.view, main = $('#main');
-  main.classList.toggle('scroll-page', ['feed', 'activity', 'communities'].includes(v.type) || !!v.overview);
+  main.classList.toggle('scroll-page', ['feed', 'activity', 'orbits'].includes(v.type) || !!v.overview);
   if (v.type === 'feed') return renderFeed(main);
   if (v.type === 'activity') return renderActivity(main);
-  if (v.type === 'communities') return renderCommunities(main);
+  if (v.type === 'orbits') return renderCommunities(main);
   if (v.type === 'messages') return renderMessagesHome(main);
   if (v.type === 'home') return renderHome(main);
   if (v.type === 'dm') return renderChatView(main);
@@ -353,7 +352,7 @@ function renderMain() {
 function renderHome(main) {
   const pending = S.friends.filter((f) => f.type === 'incoming').length;
   const tabs = [['online', 'Online'], ['all', 'All'], ['pending', 'Pending'], ['blocked', 'Blocked']];
-  main.innerHTML = `<header class="main-head">${mobileBtn()}<div class="t">Friends</div>
+  main.innerHTML = `<header class="main-head">${mobileBtn()}<div class="t">People</div>
       <div class="tabs" style="padding:0 0 0 8px">${tabs.map(([k, l]) => `<button class="tab ${S.homeTab === k ? 'active' : ''}" data-tab="${k}">${l}${k === 'pending' && pending ? `<span class="c">${pending}</span>` : ''}</button>`).join('')}</div>
       <div class="tools"><button class="btn ${S.homeTab === 'add' ? 'primary' : 'grad'}" data-tab="add">${icon('userPlus', 'sm')} Add friend</button></div></header>
     <div class="content"><div class="home" id="home"></div><aside class="active-now" id="active-now"></aside></div>`;

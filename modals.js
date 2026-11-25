@@ -3,13 +3,13 @@
 
 // ------------------------------------------------------------------ create / join server
 function openCreateServer(start = 'create') {
-  const templates = [['default', '💬', 'Friends'], ['gaming', '🎮', 'Gaming'], ['study', '📚', 'Study group'], ['default', '✨', 'Community']];
+  const templates = [['default', '💬', 'Friends'], ['gaming', '🎮', 'Gaming'], ['study', '📚', 'Study group'], ['default', '✨', 'Orbit']];
   let tpl = 'default', iconUrl = null;
-  const m = openModal({ title: start === 'join' ? 'Join a community' : 'Create a community', body: '<div id="cs"></div>' });
+  const m = openModal({ title: start === 'join' ? 'Join an orbit' : 'Create an orbit', body: '<div id="cs"></div>' });
   const body = m.el.querySelector('#cs');
   const step1 = () => {
-    m.el.querySelector('.modal-head span').textContent = 'Create a community';
-    body.innerHTML = `<p class="muted" style="margin:0 0 16px;text-align:center">A community is your own corner for your people: rooms to chat, lounges to hang out.</p>
+    m.el.querySelector('.modal-head span').textContent = 'Create an orbit';
+    body.innerHTML = `<p class="muted" style="margin:0 0 16px;text-align:center">An orbit is your own corner for your people: rooms to chat, lounges to hang out.</p>
       <div class="choice-grid">${templates.map(([k, e, l], i) => `<button class="choice" data-i="${i}"><span class="em">${e}</span>${l}</button>`).join('')}</div>
       <div class="or">or</div><button class="btn block lg" data-join>Join with an invite</button>`;
     body.querySelectorAll('.choice').forEach((b) => (b.onclick = () => { tpl = templates[b.dataset.i][0]; step2(templates[b.dataset.i]); }));
@@ -19,7 +19,7 @@ function openCreateServer(start = 'create') {
     m.el.querySelector('.modal-head span').textContent = 'Make it yours';
     body.innerHTML = `<p class="muted" style="margin:0 0 18px;text-align:center">Give it a personality with a name and an icon. You can change these later.</p>
       <div style="display:flex;justify-content:center;margin-bottom:18px"><div class="ring" style="cursor:pointer" id="cs-icon"><div class="av" style="width:88px;height:88px;font-size:88px;background:var(--bg3);color:var(--text2)"><div class="ph" style="--ph:var(--bg3);color:var(--text2);font-size:12px">${icon('image')}<br>Upload</div></div></div></div>
-      <div class="field"><label>Community name</label><input class="input" id="cs-name" value="${esc(S.me.displayName)}'s ${esc(label === 'Friends' ? 'hangout' : label.toLowerCase())}" maxlength="100" autofocus></div>
+      <div class="field"><label>Orbit name</label><input class="input" id="cs-name" value="${esc(S.me.displayName)}'s ${esc(label === 'Friends' ? 'hangout' : label.toLowerCase())}" maxlength="100" autofocus></div>
       <div style="display:flex;gap:8px;margin-top:20px"><button class="btn" data-back>Back</button><button class="btn grad" style="flex:1" data-create>Create</button></div>`;
     body.querySelector('#cs-icon').onclick = async () => {
       const f = await pickFile(); if (!f) return;
@@ -27,7 +27,7 @@ function openCreateServer(start = 'create') {
     };
     body.querySelector('[data-back]').onclick = step1;
     const go = async () => {
-      const name = body.querySelector('#cs-name').value.trim(); if (!name) return toast('Name your community', true);
+      const name = body.querySelector('#cs-name').value.trim(); if (!name) return toast('Name your orbit', true);
       try {
         const d = await api('POST', '/api/servers', { name, icon: iconUrl, template: tpl });
         S.serverData[d.server.id] = d; S.servers.push({ id: d.server.id, name: d.server.name, icon: d.server.icon, unread: 0 });
@@ -39,11 +39,11 @@ function openCreateServer(start = 'create') {
     setTimeout(() => body.querySelector('#cs-name').select(), 30);
   };
   const joinStep = () => {
-    m.el.querySelector('.modal-head span').textContent = 'Join a community';
-    body.innerHTML = `<p class="muted" style="margin:0 0 18px;text-align:center">Paste an invite link to join a community.</p>
+    m.el.querySelector('.modal-head span').textContent = 'Join an orbit';
+    body.innerHTML = `<p class="muted" style="margin:0 0 18px;text-align:center">Paste an invite link to join an orbit.</p>
       <div class="field"><label>Invite link</label><input class="input" id="js-code" placeholder="${location.origin}/invite/hTKzmak" autofocus></div>
       <p class="hint">Invites look like <b>hTKzmak</b> or <b>${location.host}/invite/hTKzmak</b></p>
-      <div style="display:flex;gap:8px;margin-top:20px"><button class="btn" data-back>Back</button><button class="btn primary" style="flex:1" data-go>Join community</button></div>`;
+      <div style="display:flex;gap:8px;margin-top:20px"><button class="btn" data-back>Back</button><button class="btn primary" style="flex:1" data-go>Join orbit</button></div>`;
     body.querySelector('[data-back]').onclick = step1;
     const go = () => { const raw = body.querySelector('#js-code').value.trim(); const code = raw.split('/').filter(Boolean).pop(); if (!code) return; m.close(); openInviteAccept(code); };
     body.querySelector('[data-go]').onclick = go;
@@ -107,7 +107,7 @@ async function openInviteAccept(code) {
     <p class="muted" style="margin:12px 0 2px">${esc(d.inviter?.displayName || 'Someone')} invited you to join</p>
     <h2 style="margin:0">${esc(s.name)}</h2>${s.description ? `<p class="muted small" style="margin:6px 0 0">${esc(s.description)}</p>` : ''}
     <div class="counts"><span class="on">${s.onlineCount} Online</span><span>${s.memberCount} Members</span></div>
-    <button class="btn grad block lg" data-accept>${d.alreadyMember ? 'Open community' : 'Join community'}</button></div>` });
+    <button class="btn grad block lg" data-accept>${d.alreadyMember ? 'Open orbit' : 'Join orbit'}</button></div>` });
   m.el.querySelector('[data-accept]').onclick = async () => {
     try {
       const sd = await api('POST', `/api/invites/${encodeURIComponent(code)}`);
@@ -152,7 +152,7 @@ function openChannelModal(sid, cid = null, type = 'text', catId = null) {
 }
 async function editNickname(sid, uid) {
   const sd = S.serverData[sid]; const mem = sd.members.find((m) => m.user.id === uid);
-  const v = await promptDialog(uid === S.me.id ? 'Edit my community profile' : 'Change nickname', 'Nickname (leave blank to reset)', mem?.nickname || '');
+  const v = await promptDialog(uid === S.me.id ? 'Edit my orbit profile' : 'Change nickname', 'Nickname (leave blank to reset)', mem?.nickname || '');
   if (v === null) return;
   try { await api('PATCH', `/api/servers/${sid}/members/${uid === S.me.id ? '@me' : uid}`, { nickname: v }); } catch (e) { toast(e.message, true); }
 }
@@ -171,7 +171,7 @@ async function openServerSettings(sid, tab) {
   tab = tab || tabs[0][0];
   const m = openModal({ title: sd.server.name, cls: 'wide', body: `<nav class="settings-nav"><div class="lbl">${esc(sd.server.name)}</div>
     ${tabs.map(([k, l, i]) => `<button data-tab="${k}">${icon(i, 'sm')} ${l}</button>`).join('')}
-    ${owner ? `<div class="lbl" style="margin-top:12px">Danger zone</div><button data-tab="delete" class="dz">${icon('trash', 'sm')} Delete community</button>` : ''}</nav><div class="settings-pane" id="ss-pane"></div>` });
+    ${owner ? `<div class="lbl" style="margin-top:12px">Danger zone</div><button data-tab="delete" class="dz">${icon('trash', 'sm')} Delete orbit</button>` : ''}</nav><div class="settings-pane" id="ss-pane"></div>` });
   const pane = m.el.querySelector('#ss-pane');
   const show = async (t) => {
     tab = t; m.el.querySelectorAll('.settings-nav [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
@@ -190,9 +190,9 @@ function ssOverview(pane, sid) {
   pane.innerHTML = `<h2>Overview</h2>
     <div class="banner-up" id="ss-banner" style="${s.banner ? `background-image:url('${esc(s.banner)}')` : ''}"></div>
     <div class="upload-av"><div class="ring"><div class="av" id="ss-icon" style="width:88px;height:88px;font-size:88px;border:3px solid var(--bg);box-sizing:content-box;background:var(--bg3);color:var(--text)">${s.icon ? `<img src="${esc(s.icon)}">` : `<div class="ph">${esc(initials(s.name))}</div>`}</div></div>
-      <div><div class="bold">Community icon</div><div class="hint">We recommend at least 512×512.</div><div style="display:flex;gap:8px;margin-top:8px"><button class="btn" data-up-icon>Upload image</button>${s.icon ? '<button class="btn ghost" data-rm-icon>Remove</button>' : ''}</div></div></div>
-    <div class="field"><label>Community name</label><input class="input" id="ss-name" value="${esc(s.name)}" maxlength="100"></div>
-    <div class="field"><label>Description</label><textarea class="textarea" id="ss-desc" maxlength="300" placeholder="What’s this community about?">${esc(s.description || '')}</textarea></div>
+      <div><div class="bold">Orbit icon</div><div class="hint">We recommend at least 512×512.</div><div style="display:flex;gap:8px;margin-top:8px"><button class="btn" data-up-icon>Upload image</button>${s.icon ? '<button class="btn ghost" data-rm-icon>Remove</button>' : ''}</div></div></div>
+    <div class="field"><label>Orbit name</label><input class="input" id="ss-name" value="${esc(s.name)}" maxlength="100"></div>
+    <div class="field"><label>Description</label><textarea class="textarea" id="ss-desc" maxlength="300" placeholder="What’s this orbit about?">${esc(s.description || '')}</textarea></div>
     ${owner ? `<div class="field"><label>Transfer ownership</label><select class="select" id="ss-owner">${sd.members.map((m) => `<option value="${m.user.id}" ${m.user.id === s.ownerId ? 'selected' : ''}>${esc(m.user.displayName)} (@${esc(m.user.username)})</option>`).join('')}</select><div class="hint">The new owner gets full control. You'll keep your roles.</div></div>` : ''}
     <div class="save-bar"><span>Careful — you have unsaved changes!</span><button class="btn ghost" data-reset>Reset</button><button class="btn primary" data-save>Save changes</button></div>`;
   const bar = pane.querySelector('.save-bar'); bar.style.visibility = 'hidden';
@@ -206,7 +206,7 @@ function ssOverview(pane, sid) {
     const body = { name: pane.querySelector('#ss-name').value, description: pane.querySelector('#ss-desc').value, icon: s.icon, banner: s.banner };
     const newOwner = pane.querySelector('#ss-owner')?.value;
     if (newOwner && newOwner !== s.ownerId) {
-      if (!(await confirmDialog('Transfer ownership', 'You will no longer be the owner of this community. This cannot be undone by you.', 'Transfer'))) return;
+      if (!(await confirmDialog('Transfer ownership', 'You will no longer be the owner of this orbit. This cannot be undone by you.', 'Transfer'))) return;
       body.ownerId = newOwner;
     }
     try { const d = await api('PATCH', `/api/servers/${sid}`, body); S.serverData[sid] = d; toast('Saved'); bar.style.visibility = 'hidden'; await loadServer(sid); renderAll(); } catch (e) { toast(e.message, true); }
@@ -342,11 +342,11 @@ async function ssBans(pane, sid) {
 }
 function ssDelete(pane, sid, modal) {
   const sd = S.serverData[sid];
-  pane.innerHTML = `<h2 style="color:var(--red)">Delete '${esc(sd.server.name)}'</h2><p>This permanently deletes the community, its rooms, lounges, messages, roles and invites. <b>This can't be undone.</b></p>
-    <div class="field"><label>Type the community name to confirm</label><input class="input" id="del-name" placeholder="${esc(sd.server.name)}"></div><button class="btn danger" data-del disabled>Delete community</button>`;
+  pane.innerHTML = `<h2 style="color:var(--red)">Delete '${esc(sd.server.name)}'</h2><p>This permanently deletes the orbit, its rooms, lounges, messages, roles and invites. <b>This can't be undone.</b></p>
+    <div class="field"><label>Type the orbit name to confirm</label><input class="input" id="del-name" placeholder="${esc(sd.server.name)}"></div><button class="btn danger" data-del disabled>Delete orbit</button>`;
   const inp = pane.querySelector('#del-name'), btn = pane.querySelector('[data-del]');
   inp.oninput = () => (btn.disabled = inp.value !== sd.server.name);
-  btn.onclick = async () => { try { await api('DELETE', `/api/servers/${sid}`); modal.close(); removeServerLocal(sid); toast('Community deleted'); } catch (e) { toast(e.message, true); } };
+  btn.onclick = async () => { try { await api('DELETE', `/api/servers/${sid}`); modal.close(); removeServerLocal(sid); toast('Orbit deleted'); } catch (e) { toast(e.message, true); } };
 }
 
 // ------------------------------------------------------------------ profile
@@ -380,7 +380,7 @@ async function openProfile(uid, serverId) {
       <div class="psec"><h5>Member since</h5><div>${new Date(d.memberSince).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}${mem ? ` · joined ${esc(sd.server.name)} ${new Date(mem.joinedAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}</div></div>
       ${sd && mem ? `<div class="psec"><h5>Roles</h5><div>${mi.roles.map((r) => `<span class="role-chip"><span class="role-dot" style="background:${esc(r.color)};width:9px;height:9px"></span>${esc(r.name)}${canRoles && r.position < sd.myTopPosition ? `<button data-rmrole="${r.id}">${icon('x', 'xs')}</button>` : ''}</span>`).join('') || (canRoles ? '' : '<span class="muted small">No roles</span>')}
         ${canRoles && assignable.length ? `<button class="role-chip" data-addrole style="cursor:pointer">${icon('plus', 'xs')} Add role</button>` : ''}</div></div>` : ''}
-      ${!me && d.mutualServers.length ? `<div class="psec"><h5>Communities in common — ${d.mutualServers.length}</h5><div class="mutual">${d.mutualServers.map((s) => `<span>${esc(s.name)}</span>`).join('')}</div></div>` : ''}
+      ${!me && d.mutualServers.length ? `<div class="psec"><h5>Orbits in common — ${d.mutualServers.length}</h5><div class="mutual">${d.mutualServers.map((s) => `<span>${esc(s.name)}</span>`).join('')}</div></div>` : ''}
       <div class="psec" id="p-posts" hidden></div>
       <div class="pacts">${acts}</div></div>` });
   const el = m.el;
@@ -401,7 +401,7 @@ async function openProfile(uid, serverId) {
     rel === 'friend' && { label: 'Remove friend', icon: 'x', danger: true, onClick: async () => { await api('DELETE', `/api/friends/${uid}`); m.close(); } },
     { label: 'Block', icon: 'block', danger: true, onClick: () => { m.close(); blockUser(uid); } },
     sd && mem && 'sep',
-    ...(sd && mem ? [{ label: 'Community actions…', icon: 'shield', onClick: () => memberModMenu(e.target, serverId, uid, () => m.close()) }] : []),
+    ...(sd && mem ? [{ label: 'Orbit actions…', icon: 'shield', onClick: () => memberModMenu(e.target, serverId, uid, () => m.close()) }] : []),
     { label: 'Copy username', icon: 'copy', onClick: () => copyText('@' + u.username) },
   ]));
   const setRoles = async (ids) => { try { await api('PATCH', `/api/servers/${serverId}/members/${uid}`, { roleIds: ids }); await loadServer(serverId); m.close(); openProfile(uid, serverId); renderAll(); } catch (e) { toast(e.message, true); } };

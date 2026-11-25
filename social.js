@@ -1,4 +1,4 @@
-/* social: home feed, posts, daily spark, activity, communities directory, community overview */
+/* social: home feed, posts, daily spark, activity, orbits directory, orbit overview */
 'use strict';
 
 S.feed = { scope: 'all', posts: [], loaded: false, hasMore: false, loading: false };
@@ -150,7 +150,7 @@ function openPostComposer({ serverId = null, spark = false } = {}) {
     const sid = spark ? null : (m.el.querySelector('#pc-aud')?.value || null);
     try {
       const { post } = await api('POST', '/api/posts', { content: ta.value, image, serverId: sid, spark });
-      m.close(); toast(sid ? 'Shared with the community' : 'Posted');
+      m.close(); toast(sid ? 'Shared with the orbit' : 'Posted');
       if (spark && S.spark) S.spark.answered = true;
       insertNewPost(post);
     } catch (e) { toast(e.message, true); busy = false; sync(); }
@@ -158,7 +158,7 @@ function openPostComposer({ serverId = null, spark = false } = {}) {
 }
 function insertNewPost(post) {
   const sc = S.feed.scope;
-  if (S.feed.loaded && !S.feed.posts.some((p) => p.id === post.id) && (sc === 'all' || (sc === 'friends' && !post.server) || (sc === 'communities' && post.server))) S.feed.posts.unshift(post);
+  if (S.feed.loaded && !S.feed.posts.some((p) => p.id === post.id) && (sc === 'all' || (sc === 'friends' && !post.server) || (sc === 'orbits' && post.server))) S.feed.posts.unshift(post);
   if (post.server && S.commPosts[post.server.id] && !S.commPosts[post.server.id].posts.some((p) => p.id === post.id)) S.commPosts[post.server.id].posts.unshift(post);
   if (S.view.type === 'feed') renderFeedList();
   if (S.view.overview && post.server?.id === S.view.serverId) renderCommPosts(post.server.id);
@@ -166,21 +166,64 @@ function insertNewPost(post) {
 }
 
 // ------------------------------------------------------------------ home feed
+function greet() { const h = new Date().getHours(); return h < 5 ? 'Up late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; }
+function aroundStrip() {
+  const friends = S.friends.filter((f) => f.type === 'friend').map((f) => S.userCache[f.user.id] || f.user);
+  const dmLive = S.dms.filter((d) => (S.voice[d.id] || []).length && Call.active?.channelId !== d.id);
+  const lounges = []; for (const sd of Object.values(S.serverData)) for (const c of sd.channels) if (c.type === 'voice' && (S.voice[c.id] || []).length && Call.active?.channelId !== c.id) lounges.push({ sd, c });
+  const on = friends.filter((u) => isOnline(u.id)).sort((a, b) => !!b.customStatus - !!a.customStatus);
+  let html = '';
+  for (const d of dmLive) html += `<div class="pal live" data-dm="${d.id}">${dmAvatar(d, 56)}<b>${esc(dmName(d))}</b><span class="pl-s">In a call</span><span class="pl-go">Drop in →</span></div>`;
+  for (const { sd, c } of lounges) html += `<div class="pal live orb" data-lounge="${c.id}" data-sid="${sd.server.id}" style="--c:${colorFor(sd.server.id)}"><span class="pl-flag">${esc(initials(sd.server.name).toUpperCase())}</span><b>${esc(c.name)}</b><span class="pl-s">${plural(S.voice[c.id].length, 'person')} in ${esc(sd.server.name)}</span><span class="pl-go">Drop in →</span></div>`;
+  for (const u of on) html += `<div class="pal" data-user="${u.id}">${u.customStatus ? `<span class="pl-note">${esc(u.customStatus)}</span>` : ''}${avatar(u, 56, { dot: true })}<b>${esc(u.displayName.split(' ')[0])}</b><span class="pl-s">${u.customStatus ? 'Online' : 'Around now'}</span></div>`;
+  if (html) html += `<div class="pal add" data-nav-link="/friends"><span class="plus">${icon('userPlus', 'sm')}</span>Add people</div>`;
+  if (!html) html = `<div class="around-empty">Nobody’s around right now. <a data-nav-link="/friends">Find people</a> or <button class="linkish" data-pact="compose">post something</button> to get things going.</div>`;
+  return { html, count: on.length, live: dmLive.length + lounges.length };
+}
 function renderFeed(main) {
   const sc = S.feed.scope;
-  const tab = (k, l) => `<button class="seg-b ${sc === k ? 'active' : ''}" data-pact="scope" data-scope="${k}">${l}</button>`;
-  main.innerHTML = `${pageHead('Home', `<span class="muted small head-date">${new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</span>`)}
-    <div class="page feed-page"><div class="feed-col">
-      <section class="moments-card"><div class="card-h"><h3>Moments</h3><span class="muted small">Disappear after 24 hours</span></div>${storiesBar()}</section>
+  const tab = (k, l) => `<button class="ftab ${sc === k ? 'active' : ''}" data-pact="scope" data-scope="${k}">${l}</button>`;
+  const ar = aroundStrip(); const unread = S.dms.reduce((a, d) => a + d.unread, 0);
+  const bits = [ar.count ? `${plural(ar.count, 'friend')} around` : '', ar.live ? `${ar.live} live` : '', unread ? `${plural(unread, 'unread message')}` : ''].filter(Boolean);
+  main.innerHTML = `<div class="page now">
+    <header class="now-hero"><span class="kicker">${new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</span>
+      <h1>${greet()}, ${esc(S.me.displayName.split(' ')[0])}.</h1><p>${bits.length ? bits.join(' · ') : 'Here’s what’s happening with your people.'}</p></header>
+    <section class="around"><div class="sec-k">Around now</div><div class="around-row" id="around">${ar.html}</div></section>
+    <div class="now-grid"><div class="now-main">
+      <form class="inline-post" id="now-post">${avatar(S.me, 40)}<div class="ip-body"><textarea name="t" rows="1" maxlength="1000" placeholder="What’s on your mind, ${esc(S.me.displayName.split(' ')[0])}?"></textarea>
+        <div class="ip-img" id="ip-img"></div>
+        <div class="ip-foot"><label class="ip-aud">To <select name="aud"><option value="">Friends</option>${S.servers.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
+        <button type="button" class="icon-btn" data-ip-img data-tip="Add a photo">${icon('image', 'sm')}</button><span style="flex:1"></span><button class="btn primary sm" type="submit" disabled>Post</button></div></div></form>
       <section class="spark" id="spark"></section>
-      <button class="compose-card" data-pact="compose">${avatar(S.me, 40)}<span>Share an update with your friends…</span><span class="cc-ic">${icon('image', 'sm')}</span></button>
-      <div class="seg" role="tablist">${tab('all', 'For you')}${tab('friends', 'Friends')}${tab('communities', 'Communities')}</div>
+      <section class="moments"><div class="sec-k">Moments <span>· gone in 24h</span></div>${storiesBar()}</section>
+      <div class="ftabs">${tab('all', 'Everything')}${tab('friends', 'Friends')}${tab('orbits', 'Orbits')}</div>
       <div class="feed-list" id="feed-list"></div>
-    </div>
-    <aside class="feed-side" id="feed-side"></aside></div>`;
+    </div><aside class="now-side" id="feed-side"></aside></div></div>`;
+  wireInlinePost(main.querySelector('#now-post'));
+  main.querySelectorAll('[data-lounge]').forEach((x) => (x.onclick = () => { navigate(`/channels/${x.dataset.sid}/${x.dataset.lounge}`); joinCall(x.dataset.lounge); }));
   renderSpark(); renderFeedSide(); renderFeedList();
   if (!S.feed.loaded) loadFeed();
   if (!S.spark) api('GET', '/api/spark').then((r) => { S.spark = r; renderSpark(); }).catch(() => {});
+}
+function wireInlinePost(f, fixedSid) {
+  let image = null, busy = false; const ta = f.querySelector('textarea'), btn = f.querySelector('[type=submit]');
+  const sync = () => { btn.disabled = busy || (!ta.value.trim() && !image); ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 240) + 'px'; f.classList.toggle('open', document.activeElement === ta || !!ta.value || !!image); };
+  ta.oninput = sync; ta.onfocus = sync; ta.onblur = () => setTimeout(sync, 150);
+  ta.onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !btn.disabled) f.requestSubmit(); };
+  f.querySelector('[data-ip-img]').onclick = async () => {
+    const file = await pickFile('image/*'); if (!file) return; const slot = f.querySelector('.ip-img'); slot.textContent = 'Uploading…'; busy = true; sync();
+    try { image = (await uploadFile(file)).url; slot.innerHTML = `<div class="pc-prev"><img src="${esc(image)}" alt=""><button type="button" class="icon-btn">${icon('x', 'sm')}</button></div>`; slot.querySelector('button').onclick = () => { image = null; slot.innerHTML = ''; sync(); }; }
+    catch (e) { slot.innerHTML = ''; toast(e.message, true); }
+    busy = false; sync();
+  };
+  f.onsubmit = async (e) => {
+    e.preventDefault(); if (btn.disabled) return; busy = true; sync();
+    try {
+      const { post } = await api('POST', '/api/posts', { content: ta.value, image, serverId: fixedSid || f.aud?.value || null });
+      ta.value = ''; image = null; f.querySelector('.ip-img').innerHTML = ''; toast('Posted'); insertNewPost(post);
+    } catch (err) { toast(err.message, true); }
+    busy = false; sync();
+  };
 }
 async function loadFeed(more = false) {
   if (S.feed.loading) return; S.feed.loading = true; const sc = S.feed.scope;
@@ -198,8 +241,8 @@ function renderFeedList() {
   if (!S.feed.loaded) { el.innerHTML = [1, 2].map(() => `<div class="post skel"><div class="sk-h"><i class="sk-av"></i><div><i class="sk-l w40"></i><i class="sk-l w25"></i></div></div><i class="sk-l"></i><i class="sk-l w70"></i></div>`).join(''); return; }
   if (!S.feed.posts.length) {
     const sc = S.feed.scope;
-    el.innerHTML = `<div class="empty-card">${icon(sc === 'communities' ? 'grid' : 'feed')}<h3>${sc === 'communities' ? 'No community updates yet' : 'Your feed is quiet'}</h3>
-      <p>${sc === 'communities' ? 'Updates posted in your communities appear here.' : 'Posts from you and your friends appear here. Start things off with a post or answer today’s Spark.'}</p>
+    el.innerHTML = `<div class="empty-card">${icon(sc === 'orbits' ? 'grid' : 'feed')}<h3>${sc === 'orbits' ? 'No orbit updates yet' : 'Your feed is quiet'}</h3>
+      <p>${sc === 'orbits' ? 'Updates posted in your orbits appear here.' : 'Posts from you and your friends appear here. Start things off with a post or answer today’s Spark.'}</p>
       <button class="btn primary" data-pact="compose">Write a post</button></div>`;
     return;
   }
@@ -207,31 +250,30 @@ function renderFeedList() {
 }
 function renderSpark() {
   const el = $('#spark'); if (!el) return;
-  const d = S.spark; if (!d) { el.innerHTML = ''; el.hidden = true; return; }
+  const d = S.spark; if (!d) { el.hidden = true; return; }
   el.hidden = false;
-  const hrs = Math.max(1, Math.round((d.spark.endsAt - Date.now()) / 3600000));
-  const fr = d.friends || [];
-  el.innerHTML = `<div class="spark-top"><span class="spark-badge">${icon('sparkle', 'xs')} Daily Spark</span><span class="muted small">New question in ${hrs}h</span></div>
+  const hrs = Math.max(1, Math.round((d.spark.endsAt - Date.now()) / 3600000)); const fr = d.friends || [];
+  el.innerHTML = `<div class="spark-top"><span class="spark-badge">${icon('sparkle', 'xs')} Today’s Spark</span><span class="spark-t">${hrs}h left</span></div>
     <p class="spark-q">${esc(d.spark.text)}</p>
-    <div class="spark-foot"><div class="spark-who">${fr.length ? `<span class="stack">${fr.slice(0, 4).map((u) => avatar(u, 22)).join('')}</span><span>${fr.length === 1 ? `${esc(fr[0].displayName)} answered` : `${esc(fr[0].displayName)} and ${plural(fr.length - 1, 'friend')} answered`}</span>` : '<span>Be the first of your friends to answer.</span>'}</div>
-    ${d.answered ? `<span class="spark-done">${icon('check', 'xs')} Answered</span>` : `<button class="btn primary sm" data-pact="spark">Answer</button>`}</div>`;
+    ${d.answered ? `<div class="spark-done">${icon('check', 'xs')} You answered. ${fr.length ? `${plural(fr.length, 'friend')} did too. Their answers are in your feed.` : 'Your friends will see it in their feed.'}</div>`
+      : `<form class="spark-form" id="spark-form"><input name="a" maxlength="500" placeholder="Your answer…" autocomplete="off"><button class="btn sm">Answer</button></form>`}
+    ${fr.length ? `<div class="spark-who"><span class="stack">${fr.slice(0, 5).map((u) => avatar(u, 22)).join('')}</span>${esc(fr[0].displayName)}${fr.length > 1 ? ` and ${plural(fr.length - 1, 'other')}` : ''} answered</div>` : ''}`;
+  el.querySelector('#spark-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault(); const v = e.target.a.value.trim(); if (!v) return; e.target.querySelector('button').disabled = true;
+    try { const { post } = await api('POST', '/api/posts', { content: v, spark: true }); S.spark.answered = true; insertNewPost(post); renderSpark(); }
+    catch (err) { toast(err.message, true); e.target.querySelector('button').disabled = false; }
+  });
 }
 function renderFeedSide() {
   const el = $('#feed-side'); if (!el) return;
-  const convos = S.dms.filter((d) => d.lastMessage).slice(0, 5);
-  const friends = S.friends.filter((f) => f.type === 'friend').map((f) => S.userCache[f.user.id] || f.user).sort((a, b) => isOnline(b.id) - isOnline(a.id) || !!b.customStatus - !!a.customStatus);
-  const online = friends.filter((u) => isOnline(u.id));
-  const calls = S.dms.filter((d) => (S.voice[d.id] || []).length && Call.active?.channelId !== d.id);
-  let html = '';
-  if (calls.length) html += `<section class="side-card live"><h4>${icon('waves', 'xs')} Live now</h4>${calls.map((d) => `<div class="mini" data-dm="${d.id}">${dmAvatar(d, 32)}<div class="mm"><b>${esc(dmName(d))}</b><span class="live-txt">In a call · join</span></div></div>`).join('')}</section>`;
-  html += `<section class="side-card"><h4>Recent conversations<a data-nav-link="/messages">See all</a></h4>${convos.length ? convos.map((d) => `<div class="mini ${d.unread ? 'unread' : ''}" data-dm="${d.id}">${dmAvatar(d, 36)}<div class="mm"><b>${esc(dmName(d))}</b><span>${d.lastMessage.authorId === S.me.id ? 'You: ' : ''}${esc(d.lastMessage.content || 'Attachment')}</span></div><div class="mx">${streakChip(d)}${d.unread ? `<span class="ucount">${d.unread}</span>` : `<span class="time">${ago(d.lastMessage.createdAt)}</span>`}</div></div>`).join('') : '<p class="muted small pad">No conversations yet.</p>'}</section>`;
-  html += `<section class="side-card"><h4>Friends · ${online.length} online<a data-nav-link="/friends">Manage</a></h4>${friends.length ? `<div class="notes">${friends.slice(0, 8).map((u) => `<div class="note" data-user="${u.id}">${u.customStatus ? `<span class="bubble-note">${esc(u.customStatus)}</span>` : ''}${avatar(u, 44, { dot: true })}<span class="nn">${esc(u.displayName.split(' ')[0])}</span></div>`).join('')}</div>` : `<p class="muted small pad">Add friends to see what they’re up to.</p><button class="btn sm" data-nav-link="/friends" style="margin:0 14px 14px">Find friends</button>`}</section>`;
-  html += `<section class="side-card"><h4>Your communities<a data-nav-link="/communities">Browse</a></h4>${S.servers.length ? S.servers.slice(0, 6).map((s) => `<div class="mini" data-pact="open-comm" data-sid="${s.id}">${commIcon(s, 32)}<div class="mm"><b>${esc(s.name)}</b><span>${plural(s.memberCount || 1, 'member')}</span></div>${s.unread ? `<span class="ucount">${s.unread > 99 ? '99+' : s.unread}</span>` : ''}</div>`).join('') : '<p class="muted small pad">You haven’t joined any communities yet.</p>'}</section>`;
-  html += `<footer class="side-legal"><a href="/privacy" target="_blank">Privacy</a> · <a href="/terms" target="_blank">Terms</a> · lumi © ${new Date().getFullYear()}</footer>`;
+  const ar = $('#around'); if (ar) { ar.innerHTML = aroundStrip().html; ar.querySelectorAll('[data-lounge]').forEach((x) => (x.onclick = () => { navigate(`/channels/${x.dataset.sid}/${x.dataset.lounge}`); joinCall(x.dataset.lounge); })); }
+  const convos = S.dms.filter((d) => d.lastMessage).slice(0, 6);
+  let html = `<section class="idx"><div class="sec-k">Chats <a data-nav-link="/messages">All →</a></div>${convos.length ? convos.map((d) => `<div class="idx-row ${d.unread ? 'unread' : ''}" data-dm="${d.id}">${dmAvatar(d, 34)}<div class="ir-m"><b>${esc(dmName(d))}</b><span>${d.lastMessage.authorId === S.me.id ? 'You: ' : ''}${esc(d.lastMessage.content || 'Attachment')}</span></div><div class="ir-x">${streakChip(d)}${d.unread ? `<span class="ucount">${d.unread}</span>` : `<span class="time">${ago(d.lastMessage.createdAt)}</span>`}</div></div>`).join('') : '<p class="idx-empty">No chats yet.</p>'}</section>`;
+  html += `<section class="idx"><div class="sec-k">Your orbits <a data-nav-link="/orbits">All →</a></div>${S.servers.length ? S.servers.slice(0, 6).map((s) => `<div class="idx-row" data-pact="open-comm" data-sid="${s.id}"><span class="flag" style="--c:${colorFor(s.id)}">${s.icon ? `<img src="${esc(s.icon)}" alt="">` : esc(initials(s.name).toUpperCase())}</span><div class="ir-m"><b>${esc(s.name)}</b><span>${plural(s.memberCount || 1, 'member')}</span></div>${s.unread ? `<span class="ucount">${s.unread > 99 ? '99+' : s.unread}</span>` : ''}</div>`).join('') : '<p class="idx-empty">You’re not in any orbits yet. <button class="linkish" data-act-c2="create">Start one</button></p>'}</section>
+    <footer class="side-legal"><a href="/privacy" target="_blank">Privacy</a> · <a href="/terms" target="_blank">Terms</a> · lumi © ${new Date().getFullYear()}</footer>`;
   el.innerHTML = html;
+  el.querySelector('[data-act-c2]')?.addEventListener('click', () => openCreateServer());
 }
-document.addEventListener('click', (e) => { const t = e.target.closest('[data-nav-link]'); if (t) { e.preventDefault(); navigate(t.dataset.navLink); } });
-
 // ------------------------------------------------------------------ activity
 async function renderActivity(main) {
   S.activityUnread = 0; renderRail();
@@ -245,7 +287,7 @@ async function renderActivity(main) {
   if (reqs.length) html += `<h5 class="list-h">Friend requests</h5><div class="list-card">${reqs.map((f) => `<div class="act-row" data-fid="${f.user.id}">${avatar(f.user, 40)}<div class="ar"><b>${esc(f.user.displayName)}</b> <span class="muted">@${esc(f.user.username)}</span><div class="muted small">wants to be friends</div></div>
     <button class="btn sm primary" data-act="accept">Accept</button><button class="btn sm" data-act="decline">Ignore</button></div>`).join('')}</div>`;
   html += `<h5 class="list-h">Recent</h5>`;
-  if (!items.length) html += `<div class="empty-card">${icon('bell')}<h3>Nothing new yet</h3><p>When people glow or reply to your posts, or join your communities, you’ll see it here.</p></div>`;
+  if (!items.length) html += `<div class="empty-card">${icon('bell')}<h3>Nothing new yet</h3><p>When people glow or reply to your posts, or join your orbits, you’ll see it here.</p></div>`;
   else {
     let last = '';
     html += '<div class="list-card">';
@@ -262,45 +304,46 @@ async function renderActivity(main) {
   $('#act-list').innerHTML = html;
 }
 
-// ------------------------------------------------------------------ communities directory
+// ------------------------------------------------------------------ orbits directory
+function orbFlag(s, size = 52) { return `<span class="flag" style="--c:${colorFor(s.id)};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.36)}px">${s.icon ? `<img src="${esc(s.icon)}" alt="">` : esc(initials(s.name).toUpperCase())}</span>`; }
 function renderCommunities(main) {
-  main.innerHTML = `${pageHead('Communities', `<button class="btn sm" data-act-c="join">${icon('link', 'xs')} Join with invite</button><button class="btn sm primary" data-act-c="create">${icon('plus', 'xs')} Create</button>`)}
-    <div class="page"><p class="page-intro">Your communities are places for your groups, with rooms to chat, lounges to hang out in, and an updates board for news.</p>
-    <div class="comm-grid">${S.servers.map((s) => `<article class="comm-card" data-pact="open-comm" data-sid="${s.id}">
-      <div class="cc-cover" style="--c:${colorFor(s.id)};${s.banner ? `background-image:url('${esc(s.banner)}')` : ''}"></div>
-      <div class="cc-body">${commIcon(s, 52)}<h3>${esc(s.name)}</h3><p>${esc(s.description || 'A community on lumi.')}</p>
-      <div class="cc-meta"><span>${icon('users', 'xs')} ${plural(s.memberCount || 1, 'member')}</span>${s.ownerId === S.me.id ? '<span class="own">Owner</span>' : ''}${s.unread ? `<span class="new">${s.unread > 99 ? '99+' : s.unread} new</span>` : ''}</div></div></article>`).join('')}
-      <article class="comm-card add" data-act-c="create"><div class="cc-add">${icon('plus')}</div><h3>Start a community</h3><p>Bring your friends, team, or club together.</p></article>
-    </div></div>`;
+  const liveIn = (sid) => { const sd = S.serverData[sid]; return sd ? sd.channels.reduce((a, c) => a + (S.voice[c.id] || []).length, 0) : 0; };
+  main.innerHTML = `<div class="page orbits">
+    <header class="page-hero"><span class="kicker">${plural(S.servers.length, 'orbit')}</span><h1>Orbits</h1>
+      <p>Orbits are small worlds for your groups: rooms to talk in, lounges to hang out in, and a board for updates.</p>
+      <div class="hero-acts"><button class="btn primary" data-act-c="create">${icon('plus', 'sm')} Start an orbit</button><button class="btn" data-act-c="join">${icon('link', 'sm')} Join with an invite</button></div></header>
+    ${S.servers.length ? `<ol class="orbit-index">${S.servers.map((s, i) => { const lv = liveIn(s.id); return `<li class="orb-row" data-pact="open-comm" data-sid="${s.id}" style="--c:${colorFor(s.id)}">
+      <span class="orb-n">${String(i + 1).padStart(2, '0')}</span>${orbFlag(s, 56)}
+      <div class="orb-main"><h3>${esc(s.name)}</h3><p>${esc(s.description || 'No description yet.')}</p></div>
+      <div class="orb-meta"><span>${plural(s.memberCount || 1, 'member')}</span>${s.ownerId === S.me.id ? '<span>You run this</span>' : ''}${lv ? `<span class="live-txt">● ${lv} in a lounge</span>` : ''}</div>
+      ${s.unread ? `<span class="orb-new">${s.unread > 99 ? '99+' : s.unread} new</span>` : '<span></span>'}<span class="orb-go">→</span></li>`; }).join('')}</ol>`
+      : `<div class="empty-block"><h3>No orbits yet</h3><p>Start one for your friends, team, class or club, or join one with an invite link.</p></div>`}
+  </div>`;
   main.querySelectorAll('[data-act-c]').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); openCreateServer(b.dataset.actC === 'join' ? 'join' : 'create'); }));
 }
-
-// ------------------------------------------------------------------ community overview
+// ------------------------------------------------------------------ orbit overview
 function renderCommunityOverview(main) {
   const sd = S.serverData[S.view.serverId]; if (!sd) return;
   const sv = sd.server, sid = sv.id;
   const online = sd.members.filter((m) => isOnline(m.user.id));
   const texts = sd.channels.filter((c) => c.type === 'text'), voices = sd.channels.filter((c) => c.type === 'voice');
   const manage = can(sd, P.MANAGE_SERVER) || can(sd, P.MANAGE_ROLES) || can(sd, P.KICK_MEMBERS) || can(sd, P.BAN_MEMBERS);
-  main.innerHTML = `${pageHead(`${esc(sv.name)}`, `${can(sd, P.CREATE_INVITE) ? `<button class="btn sm" data-act="invite">${icon('userPlus', 'xs')} Invite</button>` : ''}`)}
-    <div class="page comm-page">
-      <section class="comm-hero">
-        <div class="ch-cover" style="--c:${colorFor(sid)};${sv.banner ? `background-image:url('${esc(sv.banner)}')` : ''}"></div>
-        <div class="ch-row">${commIcon(sv, 84)}
-          <div class="ch-meta"><h1>${esc(sv.name)}</h1><p>${esc(sv.description || 'Welcome! This is the home of the community. Check the rooms on the left to join the conversation.')}</p>
-            <div class="ch-stats"><span><b>${sd.members.length}</b> ${sd.members.length === 1 ? 'member' : 'members'}</span><span class="on"><i></i><b>${online.length}</b> online</span><span><b>${texts.length}</b> ${texts.length === 1 ? 'room' : 'rooms'}</span><span><b>${voices.length}</b> ${voices.length === 1 ? 'lounge' : 'lounges'}</span><span>Since ${new Date(sv.createdAt || Date.now()).toLocaleDateString([], { month: 'short', year: 'numeric' })}</span></div></div>
-          <div class="ch-acts">${manage ? `<button class="btn sm" data-ov="settings">${icon('settings', 'xs')} Settings</button>` : ''}<button class="icon-btn" data-ov="menu">${icon('more', 'sm')}</button></div></div>
+  main.innerHTML = `<header class="main-head orb-head">${mobileBtn()}<div class="t">${esc(sv.name)}</div><div class="tools">${can(sd, P.CREATE_INVITE) ? `<button class="btn sm" data-act="invite">${icon('userPlus', 'xs')} Invite</button>` : ''}${manage ? `<button class="btn sm" data-ov="settings">${icon('settings', 'xs')} Settings</button>` : ''}<button class="icon-btn" data-ov="menu">${icon('more', 'sm')}</button></div></header>
+    <div class="page orbit-page">
+      <section class="orb-hero" style="--c:${colorFor(sid)};${sv.banner ? `--img:url('${esc(sv.banner)}')` : ''}">
+        <div class="oh-in">${orbFlag(sv, 72)}<div class="oh-txt"><span class="kicker">Orbit · since ${new Date(sv.createdAt || Date.now()).toLocaleDateString([], { month: 'short', year: 'numeric' })}</span><h1>${esc(sv.name)}</h1>
+          <p>${esc(sv.description || 'Pick a room on the left to join the conversation.')}</p></div></div>
+        <div class="oh-stats"><div><b>${sd.members.length}</b>members</div><div><b class="on">${online.length}</b>online</div><div><b>${texts.length}</b>rooms</div><div><b>${voices.length}</b>lounges</div></div>
       </section>
-      <div class="comm-cols">
-        <div class="comm-main">
-          <div class="sec-h"><h2>Updates</h2><span class="muted small">News and posts from members</span></div>
-          ${can(sd, P.SEND_MESSAGES) ? `<button class="compose-card" data-pact="compose" data-sid="${sid}">${avatar(S.me, 36)}<span>Share an update with ${esc(sv.name)}…</span><span class="cc-ic">${icon('image', 'sm')}</span></button>` : ''}
-          <div class="feed-list" id="comm-posts"></div>
-        </div>
-        <aside class="comm-side" id="comm-pulse"><section class="side-card"><h4>Pulse</h4><p class="muted small pad">Loading…</p></section></aside>
-      </div></div>`;
+      <div class="orb-cols"><div class="orb-main-col">
+        <div class="sec-k">Board · updates from members</div>
+        ${can(sd, P.SEND_MESSAGES) ? `<form class="inline-post" id="orb-post">${avatar(S.me, 36)}<div class="ip-body"><textarea name="t" rows="1" maxlength="1000" placeholder="Post an update to ${esc(sv.name)}…"></textarea><div class="ip-img"></div>
+          <div class="ip-foot"><button type="button" class="icon-btn" data-ip-img data-tip="Add a photo">${icon('image', 'sm')}</button><span style="flex:1"></span><button class="btn primary sm" type="submit" disabled>Post</button></div></div></form>` : ''}
+        <div class="feed-list" id="comm-posts"></div>
+      </div><aside class="orb-side" id="comm-pulse"><div class="sec-k">Pulse</div><p class="idx-empty">Loading…</p></aside></div></div>`;
   main.querySelector('[data-ov=settings]')?.addEventListener('click', () => openServerSettings(sid));
   main.querySelector('[data-ov=menu]').addEventListener('click', (e) => serverMenu(sid, e.currentTarget));
+  const f = main.querySelector('#orb-post'); if (f) wireInlinePost(f, sid);
   renderCommPosts(sid); loadCommPosts(sid); loadPulse(sid);
 }
 async function loadCommPosts(sid, more = false) {
@@ -318,7 +361,7 @@ function renderCommPosts(sid) {
   const st = S.commPosts[sid];
   if (!st?.loaded) { el.innerHTML = `<div class="post skel"><div class="sk-h"><i class="sk-av"></i><div><i class="sk-l w40"></i><i class="sk-l w25"></i></div></div><i class="sk-l"></i></div>`; return; }
   el.innerHTML = st.posts.length ? st.posts.map(postCard).join('') + (st.hasMore ? `<button class="btn ghost load-feed" data-pact="comm-more" data-sid="${sid}">Show more</button>` : '')
-    : `<div class="empty-card">${icon('feed')}<h3>No updates yet</h3><p>Post announcements, plans, or highlights here. Everyone in the community will see them on their Home feed.</p></div>`;
+    : `<div class="empty-card">${icon('feed')}<h3>No updates yet</h3><p>Post announcements, plans, or highlights here. Everyone in the orbit will see them on their Home feed.</p></div>`;
 }
 async function loadPulse(sid) {
   let d; try { d = await api('GET', `/api/servers/${sid}/pulse`); } catch { return; }
@@ -339,11 +382,13 @@ async function loadPulse(sid) {
 
 // ------------------------------------------------------------------ messages index
 function renderMessagesHome(main) {
-  main.innerHTML = `${pageHead('Messages')}<div class="empty-pane"><div class="empty-card">${icon('chat')}<h3>Your conversations</h3>
-    <p>Pick a conversation on the left, or start a new one with a friend or a group.</p><button class="btn primary" data-act-m="new">${icon('edit', 'xs')} New message</button></div></div>`;
+  const friends = S.friends.filter((f) => f.type === 'friend').map((f) => S.userCache[f.user.id] || f.user).sort((a, b) => isOnline(b.id) - isOnline(a.id));
+  main.innerHTML = `<div class="page chats-home"><header class="page-hero"><span class="kicker">Chats</span><h1>Say something.</h1><p>Pick a conversation, message a friend directly, or start a group chat.</p>
+    <div class="hero-acts"><button class="btn primary" data-act-m="new">${icon('users', 'sm')} New group chat</button></div></header>
+    ${friends.length ? `<div class="sec-k">Message a friend</div><div class="quick-people">${friends.slice(0, 12).map((u) => `<button class="qp" data-qp="${u.id}">${avatar(u, 48, { dot: true })}<b>${esc(u.displayName.split(' ')[0])}</b><span>${esc(u.customStatus || (isOnline(u.id) ? 'Online' : '@' + u.username))}</span></button>`).join('')}</div>` : `<div class="empty-block"><h3>No friends yet</h3><p>Add people by username from the People tab, then come back to chat.</p></div>`}</div>`;
   main.querySelector('[data-act-m]').onclick = () => openNewGroup();
+  main.querySelectorAll('[data-qp]').forEach((b) => (b.onclick = () => openDM(b.dataset.qp)));
 }
-
 // ------------------------------------------------------------------ realtime hooks
 function socialSocket(sock) {
   sock.on('post:new', async ({ id, serverId }) => {

@@ -66,11 +66,12 @@ const ICONS = {
   grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/>',
   trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
   glow: '<path d="M12 2.5l2.1 5.6 5.9.4-4.6 3.8 1.5 5.8L12 14.9l-4.9 3.2 1.5-5.8L4 8.5l5.9-.4z"/>',
+  orbit: '<circle cx="12" cy="12" r="3"/><ellipse cx="12" cy="12" rx="10" ry="4.2" transform="rotate(-25 12 12)"/>',
   feed: '<rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/>',
   hammer: '<path d="m15 12-8.5 8.5a2.1 2.1 0 0 1-3-3L12 9M17.6 15 22 10.6M20 12.5 11.5 4a3 3 0 0 0-4.2 0L6 5.3l12.7 12.7"/>',
 };
-const LOGO_MARK = '<svg class="mark" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 782 727"><path fill="currentColor" d="M762 342 759 342 741 352 712 364 670 376 635 383 630 383 624 385 529 400 500 407 480 415 462 425 442 440 425 457 411 475 396 502 387 526 381 552 381 559 380 560 380 571 379 572 380 606 381 607 382 621 386 636 386 640 397 675 408 701 411 705 412 705 413 696 422 663 434 633 443 615 455 595 469 575 483 558 513 528 536 509 558 493 609 462 701 415 728 397 741 385 753 369 759 356 762 346ZM386 24 384 22 383 23 382 32 378 47 369 71 361 88 347 113 320 150 289 182 265 202 251 212 213 236 188 250 148 270 146 270 90 297 60 315 52 321 37 336 32 343 24 359 20 379 24 378 41 366 66 353 86 345 109 338 147 330 153 330 154 329 160 329 161 328 167 328 182 325 189 325 190 324 197 324 198 323 230 320 238 318 245 318 285 310 313 299 327 291 346 277 373 249 385 232 393 218 401 200 406 185 411 161 413 129 412 128 412 113 411 112 409 92 400 58Z"/><path fill="#743AFB" d="M39 412 39 414 58 411 86 411 87 412 102 413 127 419 130 421 133 421 148 427 170 438 189 450 205 462 222 477 243 499 258 517 277 543 313 600 334 638 354 677 355 681 357 683 352 652 350 646 348 626 347 625 345 571 346 570 347 545 348 544 348 537 349 536 351 519 357 493 365 469 358 456 343 435 318 410 301 397 282 385 252 371 219 362 202 361 201 360 174 360 173 361 163 361 162 362 144 364 106 375 73 390 56 400ZM441 42 443 62 445 69 446 90 447 91 447 111 448 112 447 151 446 152 446 163 445 164 445 173 444 174 442 194 434 227 429 239 429 244 439 261 451 277 480 306 493 316 512 328 537 340 554 346 572 350 601 352 602 351 623 350 638 347 678 335 719 318 721 316 723 316 747 304 749 301 721 301 720 300 711 300 710 299 698 298 673 292 643 281 609 263 594 253 570 234 537 200 509 163 474 106Z"/></svg>';
-const POTION = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="1.6" width="6" height="2.6" rx="1.1" fill="#B98A5B"/><path d="M10 4.2h4v3.7a7 7 0 1 1-4 0z" fill="#EDE6FF" stroke="#743AFB" stroke-width="1.5"/><path d="M5.6 14.6a6.4 6.4 0 0 0 12.8 0z" fill="#743AFB"/><circle cx="10.2" cy="16.4" r="1.1" fill="#fff" opacity=".85"/><circle cx="13.6" cy="18.2" r=".75" fill="#fff" opacity=".7"/><circle cx="12.6" cy="11.2" r=".7" fill="#743AFB"/></svg>';
+const LOGO_MARK = '<svg class="mark" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 782 727"><path fill="currentColor" d="M762 342 759 342 741 352 712 364 670 376 635 383 630 383 624 385 529 400 500 407 480 415 462 425 442 440 425 457 411 475 396 502 387 526 381 552 381 559 380 560 380 571 379 572 380 606 381 607 382 621 386 636 386 640 397 675 408 701 411 705 412 705 413 696 422 663 434 633 443 615 455 595 469 575 483 558 513 528 536 509 558 493 609 462 701 415 728 397 741 385 753 369 759 356 762 346ZM386 24 384 22 383 23 382 32 378 47 369 71 361 88 347 113 320 150 289 182 265 202 251 212 213 236 188 250 148 270 146 270 90 297 60 315 52 321 37 336 32 343 24 359 20 379 24 378 41 366 66 353 86 345 109 338 147 330 153 330 154 329 160 329 161 328 167 328 182 325 189 325 190 324 197 324 198 323 230 320 238 318 245 318 285 310 313 299 327 291 346 277 373 249 385 232 393 218 401 200 406 185 411 161 413 129 412 128 412 113 411 112 409 92 400 58Z"/><path class="mk2" d="M39 412 39 414 58 411 86 411 87 412 102 413 127 419 130 421 133 421 148 427 170 438 189 450 205 462 222 477 243 499 258 517 277 543 313 600 334 638 354 677 355 681 357 683 352 652 350 646 348 626 347 625 345 571 346 570 347 545 348 544 348 537 349 536 351 519 357 493 365 469 358 456 343 435 318 410 301 397 282 385 252 371 219 362 202 361 201 360 174 360 173 361 163 361 162 362 144 364 106 375 73 390 56 400ZM441 42 443 62 445 69 446 90 447 91 447 111 448 112 447 151 446 152 446 163 445 164 445 173 444 174 442 194 434 227 429 239 429 244 439 261 451 277 480 306 493 316 512 328 537 340 554 346 572 350 601 352 602 351 623 350 638 347 678 335 719 318 721 316 723 316 747 304 749 301 721 301 720 300 711 300 710 299 698 298 673 292 643 281 609 263 594 253 570 234 537 200 509 163 474 106Z"/></svg>';
+const POTION = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="1.6" width="6" height="2.6" rx="1.1" fill="#B98A5B"/><path d="M10 4.2h4v3.7a7 7 0 1 1-4 0z" fill="#EDE6FF" stroke="#743AFB" stroke-width="1.5"/><path d="M5.6 14.6a6.4 6.4 0 0 0 12.8 0z" class="mk2"/><circle cx="10.2" cy="16.4" r="1.1" fill="#fff" opacity=".85"/><circle cx="13.6" cy="18.2" r=".75" fill="#fff" opacity=".7"/><circle cx="12.6" cy="11.2" r=".7" class="mk2"/></svg>';
 const SHIELD_BLUE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.8 3.8 5v6.2c0 5.2 3.5 9.6 8.2 11 4.7-1.4 8.2-5.8 8.2-11V5z" fill="#3B82F6"/><path d="m8.3 12.2 2.6 2.6 4.8-5.2" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 function roleBadge(u) {
   const r = (u && (S.userCache[u.id]?.siteRole ?? u.siteRole)) || null;
@@ -83,7 +84,7 @@ const isSiteAdmin = () => S.me && (S.me.siteRole === 'owner' || S.me.siteRole ==
 const icon = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ''}</svg>`;
 
 // ------------------------------------------------------------------ avatars
-const PALETTE = ['#7C5CFF', '#0EA5A0', '#F2705E', '#D9961F', '#3B82F6', '#DB4F9A', '#4D9A12', '#0B8FC7', '#A055F0', '#E5484D'];
+const PALETTE = ['#E8461C', '#1F7A5C', '#2B63E8', '#C98A00', '#B8215A', '#0E8A9E', '#7A5A2E', '#3D3D3D', '#D45D00', '#4F7A1F'];
 function colorFor(id) { let x = 0; for (const c of String(id)) x = (x * 31 + c.charCodeAt(0)) >>> 0; return PALETTE[x % PALETTE.length]; }
 function initials(name) { return String(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => [...w][0] || '').join('') || '?'; }
 function avatar(u, size = 40, opts = {}) {
@@ -139,14 +140,14 @@ const P = { ADMINISTRATOR: 1, MANAGE_SERVER: 2, MANAGE_CHANNELS: 4, MANAGE_ROLES
   MANAGE_MESSAGES: 64, CREATE_INVITE: 128, SEND_MESSAGES: 256, CONNECT: 512, ATTACH_FILES: 1024, MANAGE_NICKNAMES: 2048 };
 const PERM_INFO = [
   ['ADMINISTRATOR', 'Administrator', 'Every permission, and bypasses all restrictions. Grant carefully.'],
-  ['MANAGE_SERVER', 'Manage Community', 'Change the community name, icon, banner and description, and view invites.'],
+  ['MANAGE_SERVER', 'Manage Orbit', 'Change the orbit name, icon, banner and description, and view invites.'],
   ['MANAGE_CHANNELS', 'Manage Rooms', 'Create, edit and delete rooms and lounges.'],
   ['MANAGE_ROLES', 'Manage Roles', 'Create and edit roles below their highest role, and assign them.'],
-  ['KICK_MEMBERS', 'Kick Members', 'Remove members from the community. They can rejoin with an invite.'],
+  ['KICK_MEMBERS', 'Kick Members', 'Remove members from the orbit. They can rejoin with an invite.'],
   ['BAN_MEMBERS', 'Ban Members', 'Permanently remove members and block them from rejoining.'],
   ['MANAGE_MESSAGES', 'Manage Messages', "Delete and pin other members' messages."],
   ['MANAGE_NICKNAMES', 'Manage Nicknames', "Change other members' nicknames."],
-  ['CREATE_INVITE', 'Create Invite', 'Invite new people to this community.'],
+  ['CREATE_INVITE', 'Create Invite', 'Invite new people to this orbit.'],
   ['SEND_MESSAGES', 'Send Messages', 'Send messages in rooms.'],
   ['ATTACH_FILES', 'Attach Files', 'Upload photos, videos and files.'],
   ['CONNECT', 'Join Lounges', 'Join voice and video lounges.'],
@@ -328,7 +329,7 @@ function parseRoute(p = location.pathname) {
   if (p.startsWith('/messages')) return { type: 'messages' };
   if (p.startsWith('/friends')) return { type: 'home' };
   if (p.startsWith('/activity')) return { type: 'activity' };
-  if (p.startsWith('/communities')) return { type: 'communities' };
+  if (p.startsWith('/orbits') || p.startsWith('/communities')) return { type: 'orbits' };
   return { type: 'feed' };
 }
 function navigate(path, replace = false) {

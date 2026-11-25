@@ -50,7 +50,7 @@ function connectSocket() {
       const sd = S.serverData[serverId];
       const ch = sd?.channels.find((c) => c.id === m.channelId);
       if (!mine && !viewing) { if (ch) ch.unread = (ch.unread || 0) + 1; const s = S.servers.find((s) => s.id === serverId); if (s) s.unread++; }
-      if (mention && (!viewing || !document.hasFocus())) { playSound('message'); notify(`${m.author.displayName} in ${sd?.server.name || 'a community'}`, m.content, () => navigate(`/channels/${serverId}/${m.channelId}`)); }
+      if (mention && (!viewing || !document.hasFocus())) { playSound('message'); notify(`${m.author.displayName} in ${sd?.server.name || 'an orbit'}`, m.content, () => navigate(`/channels/${serverId}/${m.channelId}`)); }
     }
     renderRail(); if (!viewing || !serverId) renderSideBody(); updateTitle();
   });
@@ -99,7 +99,7 @@ function connectSocket() {
     if (S.openServerSettings?.sid === serverId) S.openServerSettings.refresh?.();
   });
   socket.on('server:removed', ({ serverId, reason }) => {
-    const name = S.servers.find((s) => s.id === serverId)?.name || 'a community';
+    const name = S.servers.find((s) => s.id === serverId)?.name || 'an orbit';
     removeServerLocal(serverId);
     if (S.openServerSettings?.sid === serverId) S.openServerSettings.close();
     if (reason === 'kicked') toast(`You were removed from ${name}`, true);
