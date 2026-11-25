@@ -114,6 +114,12 @@ if (!colsOf('channels').includes('category_id')) db.exec('ALTER TABLE channels A
 db.exec(`CREATE TABLE IF NOT EXISTS categories (id TEXT PRIMARY KEY, server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
   name TEXT NOT NULL, position INTEGER DEFAULT 0, created_at INTEGER NOT NULL)`);
 
+db.exec(`CREATE TABLE IF NOT EXISTS posts (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  server_id TEXT REFERENCES servers(id) ON DELETE CASCADE, content TEXT DEFAULT '', image TEXT, spark TEXT, created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_posts_time ON posts(created_at);
+CREATE TABLE IF NOT EXISTS post_likes (post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at INTEGER NOT NULL, PRIMARY KEY (post_id, user_id));
+CREATE TABLE IF NOT EXISTS post_comments (id TEXT PRIMARY KEY, post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, content TEXT NOT NULL, created_at INTEGER NOT NULL);`);
+
 // The site owner is the account with this username (default "cook"). Once set, ownership stays with that account.
 const OWNER_USERNAME = (process.env.OWNER_USERNAME || 'cook').toLowerCase();
 function ensureOwner() {
@@ -234,7 +240,7 @@ app.use(express.json({ limit: '1mb' }));
 // project root instead, serve just those known files from the root, and never anything else.
 const PUBLIC_DIR = fs.existsSync(path.join(__dirname, 'public', 'index.html')) ? path.join(__dirname, 'public') : null;
 const FLAT_FILES = { '/index.html': 'index.html', '/styles.css': 'styles.css', '/favicon.svg': 'favicon.svg' };
-for (const f of ['core', 'auth', 'views', 'modals', 'call', 'main']) FLAT_FILES[`/js/${f}.js`] = `${f}.js`;
+for (const f of ['core', 'auth', 'views', 'social', 'modals', 'call', 'main']) FLAT_FILES[`/js/${f}.js`] = `${f}.js`;
 const INDEX_FILE = PUBLIC_DIR ? path.join(PUBLIC_DIR, 'index.html') : path.join(__dirname, 'index.html');
 if (PUBLIC_DIR) app.use(express.static(PUBLIC_DIR));
 else app.get(Object.keys(FLAT_FILES), (req, res) => res.sendFile(path.join(__dirname, FLAT_FILES[req.path])));
@@ -526,7 +532,7 @@ function serializeDM(c, uid) {
   return { id: c.id, type: c.type, name: c.name, icon: c.icon, ownerId: c.owner_id, members,
     recipients: members.filter(m => m.id !== uid),
     lastMessage: last ? { content: last.content, authorId: last.author_id, createdAt: last.created_at, attachmentType: last.attachment_type } : null,
-    lastActivity: last ? last.created_at : c.created_at, unread: unreadCount(uid, c.id) };
+    lastActivity: last ? last.created_at : c.created_at, unread: unreadCount(uid, c.id), streak: c.type === 'dm' ? dmStreak(c.id, members) : 0 };
 }
 app.get('/api/dms', auth, wrap(req => {
   const chans = db.prepare(`SELECT c.* FROM channels c JOIN channel_members m ON m.channel_id=c.id WHERE m.user_id=? AND c.type IN ('dm','group')`).all(req.user.id);
@@ -687,7 +693,8 @@ app.post('/api/channels/:id/read', auth, wrap(req => {
 function serverSummary(s, uid) {
   const chans = db.prepare(`SELECT id FROM channels WHERE server_id=? AND type='text'`).all(s.id);
   const unread = chans.reduce((a, c) => a + unreadCount(uid, c.id), 0);
-  return { id: s.id, name: s.name, icon: s.icon, unread };
+  return { id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, unread,
+    memberCount: db.prepare('SELECT COUNT(*) n FROM members WHERE server_id=?').get(s.id).n, ownerId: s.owner_id };
 }
 app.get('/api/servers', auth, wrap(req => {
   const rows = db.prepare(`SELECT s.* FROM servers s JOIN members m ON m.server_id=s.id WHERE m.user_id=? ORDER BY m.joined_at`).all(req.user.id);
@@ -696,7 +703,7 @@ app.get('/api/servers', auth, wrap(req => {
 function serverDetail(sid, uid) {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid);
   const perms = memberPerms(sid, uid);
-  if (!s || !perms) throw fail(404, 'Space not found');
+  if (!s || !perms) throw fail(404, 'Community not found');
   const channels = db.prepare('SELECT * FROM channels WHERE server_id=? ORDER BY position, created_at').all(sid)
     .map(c => ({ id: c.id, type: c.type, name: c.name, topic: c.topic, position: c.position,
       categoryId: c.category_id || null, unread: c.type === 'text' ? unreadCount(uid, c.id) : 0 }));
@@ -725,7 +732,7 @@ function removeFromServerRooms(sid, uid) {
 }
 app.post('/api/servers', auth, wrap(req => {
   const name = sanitizeName(req.body.name, 100);
-  if (!name) throw fail(400, 'Give your space a name.');
+  if (!name) throw fail(400, 'Give your community a name.');
   const sid = id();
   db.prepare('INSERT INTO servers (id,name,icon,description,owner_id,created_at) VALUES (?,?,?,?,?,?)')
     .run(sid, name, req.body.icon || null, '', req.user.id, now());
@@ -743,7 +750,7 @@ app.post('/api/servers', auth, wrap(req => {
 }));
 app.patch('/api/servers/:id', auth, wrap(req => {
   const sid = req.params.id;
-  if (!has(memberPerms(sid, req.user.id), P.MANAGE_SERVER)) throw fail(403, 'You need the Manage Space permission.');
+  if (!has(memberPerms(sid, req.user.id), P.MANAGE_SERVER)) throw fail(403, 'You need the Manage Community permission.');
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid);
   const b = req.body;
   db.prepare('UPDATE servers SET name=?, icon=?, banner=?, description=? WHERE id=?').run(
@@ -757,7 +764,7 @@ app.patch('/api/servers/:id', auth, wrap(req => {
 }));
 app.delete('/api/servers/:id', auth, wrap(req => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
-  if (!s || s.owner_id !== req.user.id) throw fail(403, 'Only the owner can delete the space.');
+  if (!s || s.owner_id !== req.user.id) throw fail(403, 'Only the owner can delete the community.');
   io.to(`server:${s.id}`).emit('server:removed', { serverId: s.id, reason: 'deleted' });
   db.prepare('DELETE FROM servers WHERE id=?').run(s.id);
   return { ok: true };
@@ -765,7 +772,7 @@ app.delete('/api/servers/:id', auth, wrap(req => {
 app.post('/api/servers/:id/leave', auth, wrap(req => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
   if (!s) throw fail(404, 'Not found');
-  if (s.owner_id === req.user.id) throw fail(400, 'Transfer ownership or delete the space before leaving.');
+  if (s.owner_id === req.user.id) throw fail(400, 'Transfer ownership or delete the community before leaving.');
   db.prepare('DELETE FROM members WHERE server_id=? AND user_id=?').run(s.id, req.user.id);
   db.prepare('DELETE FROM member_roles WHERE server_id=? AND user_id=?').run(s.id, req.user.id);
   removeFromServerRooms(s.id, req.user.id);
@@ -942,7 +949,7 @@ app.get('/api/invites/:code', auth, wrap(req => {
 app.post('/api/invites/:code', auth, wrap(req => {
   const inv = validInvite(req.params.code);
   if (!inv) throw fail(404, 'This invite is invalid or has expired.');
-  if (db.prepare('SELECT 1 FROM bans WHERE server_id=? AND user_id=?').get(inv.server_id, req.user.id)) throw fail(403, 'You are banned from this space.');
+  if (db.prepare('SELECT 1 FROM bans WHERE server_id=? AND user_id=?').get(inv.server_id, req.user.id)) throw fail(403, 'You are banned from this community.');
   if (!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(inv.server_id, req.user.id)) {
     addMember(inv.server_id, req.user.id);
     db.prepare('UPDATE invites SET uses=uses+1 WHERE code=?').run(inv.code);
@@ -1105,18 +1112,157 @@ app.delete('/api/stories/:id', auth, wrap(req => {
   return { ok: true };
 }));
 
+// ---------------------------------------------------------------- streaks, posts, sparks, pulse
+const DAY = 86400_000;
+const dayNum = (t) => Math.floor(t / DAY);
+function dmStreak(cid, members) {
+  if (members.length !== 2) return 0;
+  const rows = db.prepare('SELECT DISTINCT author_id a, created_at / 86400000 d FROM messages WHERE channel_id=? AND created_at>?').all(cid, now() - 120 * DAY);
+  const by = new Map(); for (const r of rows) { const d = Math.floor(r.d); (by.get(d) || by.set(d, new Set()).get(d)).add(r.a); }
+  const both = (d) => (by.get(d)?.size || 0) >= 2;
+  let d = dayNum(now()); if (!both(d)) d -= 1;
+  let n = 0; while (both(d)) { n++; d--; }
+  return n;
+}
+const SPARKS = [
+  'What made you smile today?', 'What are you listening to on repeat?', 'Share something you are proud of this week.',
+  'What is the best thing you ate recently?', 'Recommend a show, game, or book to your friends.', 'What is one goal for this week?',
+  'Describe your perfect weekend in one sentence.', 'What is a small thing that made your day better?', 'What are you learning right now?',
+  'Post the last photo you took (if you dare).', 'What song would be the soundtrack of your day?', 'What is something you are looking forward to?',
+  'What is your current comfort food?', 'Name a place you would love to visit.', 'What is a hot take you will defend?',
+  'Who deserves a shout-out today, and why?', 'What is on your desk right now?', 'Describe today in three words.',
+];
+const todaySpark = () => { const d = dayNum(now()); return { id: 's' + d, text: SPARKS[d % SPARKS.length], endsAt: (d + 1) * DAY }; };
+const friendIdsOf = (uid) => friendList(uid).filter(f => f.type === 'friend').map(f => f.user.id);
+const serverIdsOf = (uid) => db.prepare('SELECT server_id FROM members WHERE user_id=?').all(uid).map(r => r.server_id);
+function canSeePost(uid, p) {
+  if (!p) return false;
+  if (p.server_id) return memberPerms(p.server_id, uid) > 0;
+  return p.user_id === uid || areFriends(uid, p.user_id);
+}
+function serializePost(p, uid) {
+  const likes = db.prepare('SELECT COUNT(*) n FROM post_likes WHERE post_id=?').get(p.id).n;
+  const comments = db.prepare('SELECT * FROM post_comments WHERE post_id=? ORDER BY created_at DESC LIMIT 2').all(p.id).reverse();
+  const s = p.server_id ? db.prepare('SELECT id, name, icon FROM servers WHERE id=?').get(p.server_id) : null;
+  const likers = db.prepare('SELECT user_id FROM post_likes WHERE post_id=? ORDER BY created_at DESC LIMIT 3').all(p.id).map(r => publicUser(getUser(r.user_id))).filter(Boolean);
+  return { id: p.id, author: publicUser(getUser(p.user_id)), content: p.content, image: p.image, spark: p.spark ? { id: p.spark, text: SPARKS[Number(p.spark.slice(1)) % SPARKS.length] } : null,
+    server: s ? { id: s.id, name: s.name, icon: s.icon } : null, createdAt: p.created_at, likes, liked: !!db.prepare('SELECT 1 FROM post_likes WHERE post_id=? AND user_id=?').get(p.id, uid),
+    likers, commentCount: db.prepare('SELECT COUNT(*) n FROM post_comments WHERE post_id=?').get(p.id).n,
+    comments: comments.map(c => ({ id: c.id, author: publicUser(getUser(c.user_id)), content: c.content, createdAt: c.created_at })),
+    canDelete: p.user_id === uid || isSiteAdmin(getUser(uid)) || (p.server_id ? has(memberPerms(p.server_id, uid), P.MANAGE_MESSAGES) : false) };
+}
+function postAudience(p) {
+  if (p.server_id) return [`server:${p.server_id}`];
+  return [p.user_id, ...friendIdsOf(p.user_id)].map(u => `user:${u}`);
+}
+const emitPost = (p, ev, data) => { let r = io; for (const room of postAudience(p)) r = r.to(room); r.emit(ev, data); };
+app.get('/api/feed', auth, wrap(req => {
+  const uid = req.user.id; const before = Number(req.query.before) || now() + 1; const scope = String(req.query.scope || 'all');
+  let rows;
+  if (scope.startsWith('server:')) {
+    const sid = scope.slice(7); if (!memberPerms(sid, uid)) throw fail(404, 'Community not found');
+    rows = db.prepare('SELECT * FROM posts WHERE server_id=? AND created_at<? ORDER BY created_at DESC LIMIT 20').all(sid, before);
+  } else if (scope.startsWith('user:')) {
+    const tid = scope.slice(5); if (tid !== uid && !areFriends(uid, tid)) return { posts: [] };
+    const sids = serverIdsOf(uid);
+    rows = db.prepare(`SELECT * FROM posts WHERE user_id=? AND created_at<? AND (server_id IS NULL OR server_id IN (${sids.map(() => '?').join(',') || "''"})) ORDER BY created_at DESC LIMIT 20`).all(tid, before, ...sids);
+  } else {
+    const fids = scope === 'communities' ? [] : [uid, ...friendIdsOf(uid)]; const sids = scope === 'friends' ? [] : serverIdsOf(uid);
+    const q = (a) => a.map(() => '?').join(',') || "''";
+    rows = db.prepare(`SELECT * FROM posts WHERE created_at<? AND ((server_id IS NULL AND user_id IN (${q(fids)})) OR server_id IN (${q(sids)})) ORDER BY created_at DESC LIMIT 20`).all(before, ...fids, ...sids);
+  }
+  return { posts: rows.map(p => serializePost(p, uid)) };
+}));
+app.post('/api/posts', auth, wrap(req => {
+  const content = String(req.body.content || '').trim().slice(0, 1000);
+  const image = typeof req.body.image === 'string' && req.body.image.startsWith('/uploads/') ? req.body.image : null;
+  if (!content && !image) throw fail(400, 'Write something or add a photo.');
+  const sid = req.body.serverId || null;
+  if (sid && !has(memberPerms(sid, req.user.id), P.SEND_MESSAGES)) throw fail(403, 'You can’t post in this community.');
+  const spark = req.body.spark ? todaySpark().id : null;
+  rateLimit('post:' + req.user.id, 30, 3600_000);
+  const p = { id: id(), user_id: req.user.id, server_id: sid, content, image, spark, created_at: now() };
+  db.prepare('INSERT INTO posts (id, user_id, server_id, content, image, spark, created_at) VALUES (?,?,?,?,?,?,?)').run(p.id, p.user_id, p.server_id, p.content, p.image, p.spark, p.created_at);
+  emitPost(p, 'post:new', { id: p.id, serverId: sid });
+  return { post: serializePost(p, req.user.id) };
+}));
+const loadPost = (pid, uid) => { const p = db.prepare('SELECT * FROM posts WHERE id=?').get(pid); if (!canSeePost(uid, p)) throw fail(404, 'Post not found'); return p; };
+app.get('/api/posts/:id', auth, wrap(req => ({ post: serializePost(loadPost(req.params.id, req.user.id), req.user.id) })));
+app.delete('/api/posts/:id', auth, wrap(req => {
+  const p = loadPost(req.params.id, req.user.id);
+  if (!serializePost(p, req.user.id).canDelete) throw fail(403, 'You can’t delete this post.');
+  db.prepare('DELETE FROM posts WHERE id=?').run(p.id); emitPost(p, 'post:delete', { id: p.id });
+  return { ok: true };
+}));
+app.post('/api/posts/:id/like', auth, wrap(req => {
+  const p = loadPost(req.params.id, req.user.id);
+  const on = !db.prepare('SELECT 1 FROM post_likes WHERE post_id=? AND user_id=?').get(p.id, req.user.id);
+  if (on) db.prepare('INSERT INTO post_likes VALUES (?,?,?)').run(p.id, req.user.id, now()); else db.prepare('DELETE FROM post_likes WHERE post_id=? AND user_id=?').run(p.id, req.user.id);
+  emitPost(p, 'post:update', { id: p.id });
+  if (on && p.user_id !== req.user.id) io.to(`user:${p.user_id}`).emit('activity:new', { kind: 'glow', from: publicUser(req.user) });
+  return { post: serializePost(p, req.user.id) };
+}));
+app.get('/api/posts/:id/comments', auth, wrap(req => {
+  const p = loadPost(req.params.id, req.user.id);
+  return { comments: db.prepare('SELECT * FROM post_comments WHERE post_id=? ORDER BY created_at').all(p.id).map(c => ({ id: c.id, author: publicUser(getUser(c.user_id)), content: c.content, createdAt: c.created_at, canDelete: c.user_id === req.user.id || p.user_id === req.user.id })) };
+}));
+app.post('/api/posts/:id/comments', auth, wrap(req => {
+  const p = loadPost(req.params.id, req.user.id);
+  const content = String(req.body.content || '').trim().slice(0, 500); if (!content) throw fail(400, 'Write a reply.');
+  rateLimit('cmt:' + req.user.id, 90, 3600_000);
+  db.prepare('INSERT INTO post_comments VALUES (?,?,?,?,?)').run(id(), p.id, req.user.id, content, now());
+  emitPost(p, 'post:update', { id: p.id });
+  if (p.user_id !== req.user.id) io.to(`user:${p.user_id}`).emit('activity:new', { kind: 'reply', from: publicUser(req.user) });
+  return { post: serializePost(p, req.user.id) };
+}));
+app.delete('/api/comments/:id', auth, wrap(req => {
+  const c = db.prepare('SELECT * FROM post_comments WHERE id=?').get(req.params.id); if (!c) throw fail(404, 'Not found');
+  const p = loadPost(c.post_id, req.user.id);
+  if (c.user_id !== req.user.id && p.user_id !== req.user.id) throw fail(403, 'Not allowed');
+  db.prepare('DELETE FROM post_comments WHERE id=?').run(c.id); emitPost(p, 'post:update', { id: p.id });
+  return { ok: true };
+}));
+app.get('/api/spark', auth, wrap(req => {
+  const sp = todaySpark(); const fids = [req.user.id, ...friendIdsOf(req.user.id)];
+  const rows = db.prepare(`SELECT DISTINCT user_id FROM posts WHERE spark=? AND server_id IS NULL AND user_id IN (${fids.map(() => '?').join(',')})`).all(sp.id, ...fids);
+  return { spark: sp, answered: rows.some(r => r.user_id === req.user.id), friends: rows.filter(r => r.user_id !== req.user.id).map(r => publicUser(getUser(r.user_id))) };
+}));
+app.get('/api/activity', auth, wrap(req => {
+  const uid = req.user.id; const since = now() - 14 * DAY;
+  const likes = db.prepare(`SELECT l.user_id, l.created_at, p.id pid, p.content FROM post_likes l JOIN posts p ON p.id=l.post_id WHERE p.user_id=? AND l.user_id<>? AND l.created_at>? ORDER BY l.created_at DESC LIMIT 30`).all(uid, uid, since)
+    .map(r => ({ kind: 'glow', from: publicUser(getUser(r.user_id)), postId: r.pid, snippet: r.content.slice(0, 80), createdAt: r.created_at }));
+  const cmts = db.prepare(`SELECT c.user_id, c.created_at, c.content, p.id pid FROM post_comments c JOIN posts p ON p.id=c.post_id WHERE p.user_id=? AND c.user_id<>? AND c.created_at>? ORDER BY c.created_at DESC LIMIT 30`).all(uid, uid, since)
+    .map(r => ({ kind: 'reply', from: publicUser(getUser(r.user_id)), postId: r.pid, snippet: r.content.slice(0, 80), createdAt: r.created_at }));
+  const joins = db.prepare(`SELECT m.user_id, m.joined_at, s.id sid, s.name FROM members m JOIN servers s ON s.id=m.server_id WHERE s.owner_id=? AND m.user_id<>? AND m.joined_at>? ORDER BY m.joined_at DESC LIMIT 20`).all(uid, uid, since)
+    .map(r => ({ kind: 'join', from: publicUser(getUser(r.user_id)), serverId: r.sid, snippet: r.name, createdAt: r.joined_at }));
+  return { items: [...likes, ...cmts, ...joins].filter(i => i.from).sort((a, b) => b.createdAt - a.createdAt).slice(0, 40) };
+}));
+app.get('/api/servers/:id/pulse', auth, wrap(req => {
+  const sid = req.params.id; if (!memberPerms(sid, req.user.id)) throw fail(404, 'Community not found');
+  const t = now();
+  const msgsToday = db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>?`).get(sid, t - DAY).n;
+  const msgsWeek = db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>?`).get(sid, t - 7 * DAY).n;
+  const active = db.prepare(`SELECT m.author_id u, COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>? GROUP BY m.author_id ORDER BY n DESC LIMIT 5`).all(sid, t - 7 * DAY)
+    .map(r => ({ user: publicUser(getUser(r.u)), count: r.n })).filter(r => r.user);
+  const rooms = db.prepare(`SELECT c.id, c.name, COUNT(m.id) n, MAX(m.created_at) last FROM channels c LEFT JOIN messages m ON m.channel_id=c.id AND m.created_at>? WHERE c.server_id=? AND c.type='text' GROUP BY c.id ORDER BY n DESC, c.position LIMIT 4`).all(t - 7 * DAY, sid)
+    .map(r => ({ id: r.id, name: r.name, count: r.n, last: r.last }));
+  const newMembers = db.prepare('SELECT COUNT(*) n FROM members WHERE server_id=? AND joined_at>?').get(sid, t - 7 * DAY).n;
+  const days = []; for (let i = 6; i >= 0; i--) { const a = (dayNum(t) - i) * DAY; days.push(db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>=? AND m.created_at<?`).get(sid, a, a + DAY).n); }
+  return { msgsToday, msgsWeek, active, rooms, newMembers, days };
+}));
+
 // Simple privacy + terms pages (linked from Google's sign-in screen)
 const legalPage = (title, body) => `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} · lumi</title>
 <style>body{font:16px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;color:#17151C;background:#F7F5F1}h1{letter-spacing:-.03em}a{color:#0E9F8E}</style></head>
 <body><p><a href="/">← back to lumi</a></p><h1>${title}</h1>${body}<p style="color:#6E6977">Last updated ${new Date().getFullYear()}.</p></body></html>`;
 app.get('/privacy', (req, res) => res.send(legalPage('Privacy policy', `
-<p>lumi stores only what it needs to run: your account (email, username, display name, a hashed password or your Google account ID, and profile details you choose to add), your friends list, the spaces you join, and the messages, photos and files you send.</p>
+<p>lumi stores only what it needs to run: your account (email, username, display name, a hashed password or your Google account ID, and profile details you choose to add), your friends list, the communities you join, and the messages, photos and files you send.</p>
 <p>If you sign in with Google, lumi receives your name, email address and profile photo from Google. It does not access anything else in your Google account.</p>
 <p>Voice and video calls go directly between participants (or through a relay server when a direct connection is not possible) and are not recorded or stored.</p>
 <p>Your data is never sold or shared with advertisers. You can ask the owner of this lumi site to delete your account and data at any time.</p>`)));
 app.get('/terms', (req, res) => res.send(legalPage('Terms of service', `
 <p>lumi is provided as-is, without warranties. Be kind: don't use lumi to harass people, share illegal content, or spam.</p>
-<p>Space owners and moderators can remove content and members from their spaces. The site owner can suspend accounts that break these terms.</p>
+<p>Community owners and moderators can remove content and members from their communities. The site owner can suspend accounts that break these terms.</p>
 <p>You keep ownership of what you post, and you give lumi permission to store and show it to the people you share it with.</p>`)));
 
 // SPA fallback (for /invite/CODE links etc.)

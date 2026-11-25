@@ -4,14 +4,17 @@
 function renderShell() {
   $('#root').innerHTML = `<div class="app" id="app">
     <nav class="rail" id="rail"></nav>
-    <aside class="side" id="side"><div id="side-top"></div><div class="side-body" id="side-body"></div><div class="side-foot" id="side-foot"></div></aside>
-    <main class="main" id="main"></main></div>`;
+    <aside class="side" id="side"><div id="side-top"></div><div class="side-body" id="side-body"></div></aside>
+    <main class="main" id="main"></main>
+    <nav class="tabbar" id="tabbar"></nav></div>`;
   $('#rail').addEventListener('click', onRailClick);
   $('#rail').addEventListener('contextmenu', onRailContext);
+  $('#tabbar').addEventListener('click', onRailClick);
   $('#side').addEventListener('click', onSideClick);
   $('#main').addEventListener('click', onMainClick);
   $('#app').addEventListener('click', (e) => { if (e.target.id === 'app') $('#app').classList.remove('drawer'); });
 }
+const hasSide = () => ['messages', 'dm', 'server'].includes(S.view.type);
 function renderAll() { renderRail(); renderSideTop(); renderSideBody(); renderSideFoot(); renderMain(); updateTitle(); }
 function updateTitle() {
   const unread = S.dms.reduce((a, d) => a + d.unread, 0);
@@ -26,28 +29,28 @@ async function route() {
   if (!S.me) return;
   const r = parseRoute();
   closeMenu(); $('#app')?.classList.remove('drawer');
-  if (r.type === 'invite') { history.replaceState({}, '', '/channels/@me'); S.view = { type: 'home' }; renderAll(); openInviteAccept(r.code); return; }
+  if (r.type === 'invite') { history.replaceState({}, '', '/home'); S.view = { type: 'feed' }; renderAll(); openInviteAccept(r.code); return; }
   if (r.type === 'server') {
-    if (!S.servers.find((s) => s.id === r.serverId)) return navigate('/channels/@me', true);
+    if (!S.servers.find((s) => s.id === r.serverId)) return navigate('/communities', true);
     let sd = S.serverData[r.serverId];
-    if (!sd) { try { sd = await loadServer(r.serverId); } catch { return navigate('/channels/@me', true); } }
-    let cid = r.channelId;
-    if (!cid || !sd.channels.find((c) => c.id === cid)) {
-      const last = S.lastChannel[r.serverId];
-      cid = (last && sd.channels.find((c) => c.id === last && c.type === 'text') ? last : (sd.channels.find((c) => c.type === 'text') || sd.channels[0])?.id) || null;
-      if (cid) history.replaceState({}, '', `/channels/${r.serverId}/${cid}`);
+    if (!sd) { try { sd = await loadServer(r.serverId); } catch { return navigate('/communities', true); } }
+    const ch = r.channelId && sd.channels.find((c) => c.id === r.channelId);
+    if (!ch) {
+      if (r.channelId) history.replaceState({}, '', `/channels/${r.serverId}`);
+      S.view = { type: 'server', serverId: r.serverId, channelId: null, overview: true };
+    } else {
+      if (ch.type === 'text') { S.lastChannel[r.serverId] = ch.id; localStorage.setItem('lumi.lastChannel', JSON.stringify(S.lastChannel)); }
+      S.view = { type: 'server', serverId: r.serverId, channelId: ch.id };
     }
-    const ch = sd.channels.find((c) => c.id === cid);
-    if (ch?.type === 'text') { S.lastChannel[r.serverId] = cid; localStorage.setItem('lumi.lastChannel', JSON.stringify(S.lastChannel)); }
-    S.view = { type: 'server', serverId: r.serverId, channelId: cid };
   } else if (r.type === 'dm') {
-    if (!S.dms.find((d) => d.id === r.dmId)) { await refreshDMs(); if (!S.dms.find((d) => d.id === r.dmId)) return navigate('/channels/@me', true); }
+    if (!S.dms.find((d) => d.id === r.dmId)) { await refreshDMs(); if (!S.dms.find((d) => d.id === r.dmId)) return navigate('/messages', true); }
     S.view = { type: 'dm', dmId: r.dmId, channelId: r.dmId };
-  } else S.view = { type: 'home' };
+  } else S.view = { type: r.type };
+  if (S.view.type === 'activity') S.activityUnread = 0;
   S.panel = null; S.replyTo = null; S.pending = null; S.editing = null;
   renderAll();
+  $('#main')?.scrollTo?.(0, 0);
 }
-
 // ------------------------------------------------------------------ data loaders
 async function loadServer(id) {
   const d = await api('GET', `/api/servers/${id}`);
@@ -78,34 +81,68 @@ function dmAvatar(dm, size = 48) {
 }
 
 // ------------------------------------------------------------------ rail
-function railItem({ active, unread, tip, inner, data, badge }) {
-  return `<div class="rail-item ${active ? 'active' : ''} ${unread ? 'unread' : ''}" ${data} data-tip="${esc(tip)}"><span class="pill"></span>${inner}${badge ? `<span class="badge">${badge > 99 ? '99+' : badge}</span>` : ''}</div>`;
+const NAV_PATHS = { feed: '/home', messages: '/messages', friends: '/friends', activity: '/activity', communities: '/communities' };
+function navLink(key, ic, label, count, active) {
+  return `<a class="nav-link ${active ? 'active' : ''}" data-nav="${key}">${icon(ic)}<span class="lbl">${label}</span>${count ? `<span class="count">${count > 99 ? '99+' : count}</span>` : ''}</a>`;
+}
+function commIcon(s, size = 28) {
+  return `<span class="cicon" style="width:${size}px;height:${size}px;--c:${colorFor(s.id)};font-size:${Math.round(size * 0.38)}px">${serverIcon(s)}</span>`;
 }
 function renderRail() {
-  const v = S.view;
+  const v = S.view, app = $('#app'); if (!app) return;
+  app.classList.toggle('no-side', !hasSide());
+  app.dataset.view = v.type;
   const pending = S.friends.filter((f) => f.type === 'incoming').length;
-  let html = railItem({ active: v.type !== 'server', tip: 'Chats', inner: `<div class="rail-btn home">${LOGO_MARK}</div>`, data: 'data-go="home"', badge: pending });
-  for (const d of S.dms.filter((d) => d.unread > 0).slice(0, 5))
-    html += railItem({ tip: dmName(d), inner: `<div class="rail-btn" style="background:none">${dmAvatar(d, 48)}</div>`, data: `data-dm="${d.id}"`, badge: d.unread });
-  html += '<div class="sep"></div>';
+  const dmUnread = S.dms.reduce((a, d) => a + d.unread, 0);
+  let html = `<div class="brand" data-nav="feed">${wordmark()}</div>
+    <div class="nav-group">
+      ${navLink('feed', 'home', 'Home', 0, v.type === 'feed')}
+      ${navLink('messages', 'chat', 'Messages', dmUnread, v.type === 'messages' || v.type === 'dm')}
+      ${navLink('friends', 'users', 'Friends', pending, v.type === 'home')}
+      ${navLink('activity', 'bell', 'Activity', S.activityUnread || 0, v.type === 'activity')}
+      ${navLink('communities', 'grid', 'Communities', 0, v.type === 'communities')}
+    </div>
+    <button class="btn primary compose-btn" data-act="compose">${icon('edit', 'sm')}<span>New post</span></button>
+    <div class="nav-label"><span>Your communities</span><button class="icon-btn" data-act="community-add" data-tip="Create or join">${icon('plus', 'sm')}</button></div>
+    <div class="nav-comms">`;
   for (const s of S.servers) {
     const inVoice = Call.active && S.serverData[s.id]?.channels.some((c) => c.id === Call.active.channelId);
-    html += railItem({ active: v.serverId === s.id, unread: s.unread > 0, tip: s.name + (inVoice ? ' • in a lounge' : ''),
-      inner: `<div class="rail-ring"><div class="rail-btn">${serverIcon(s)}</div></div>`, data: `data-server="${s.id}"` });
+    html += `<a class="nav-comm ${v.serverId === s.id ? 'active' : ''} ${s.unread ? 'unread' : ''}" data-server="${s.id}">${commIcon(s, 26)}<span class="lbl">${esc(s.name)}</span>${inVoice ? `<span class="live-ic">${icon('waves', 'xs')}</span>` : s.unread ? '<span class="unread-dot"></span>' : ''}</a>`;
   }
-  html += railItem({ tip: 'Create a space', inner: `<div class="rail-btn add">${icon('plus')}</div>`, data: 'data-act="create-server"' });
-  html += railItem({ tip: 'Join with an invite', inner: `<div class="rail-btn add">${icon('compass')}</div>`, data: 'data-act="join-server"' });
-  if (isSiteAdmin()) html += '<div class="sep"></div>' + railItem({ tip: 'Admin panel', inner: `<div class="rail-btn add admin-btn">${SHIELD_BLUE}</div>`, data: 'data-act="admin-panel"' });
+  if (!S.servers.length) html += `<button class="nav-empty" data-act="community-add">${icon('plus', 'xs')} Start or join a community</button>`;
+  html += '</div>';
+  if (isSiteAdmin()) html += `<a class="nav-link admin" data-act="admin-panel">${SHIELD_BLUE}<span class="lbl">Admin panel</span></a>`;
+  html += '<div class="side-foot" id="side-foot"></div>';
   $('#rail').innerHTML = html;
+  renderSideFoot(); renderTabbar();
+}
+function renderTabbar() {
+  const el = $('#tabbar'); if (!el || !S.me) return; const v = S.view;
+  const dmUnread = S.dms.reduce((a, d) => a + d.unread, 0), pending = S.friends.filter((f) => f.type === 'incoming').length;
+  const tab = (key, ic, label, count, active) => `<button class="tb ${active ? 'active' : ''}" data-nav="${key}">${icon(ic)}${count ? `<span class="count">${count > 99 ? '99+' : count}</span>` : ''}<span class="tl">${label}</span></button>`;
+  el.innerHTML = (Call.active ? `<div class="tb-call" data-act="goto-call"><span class="pulse-dot"></span><span class="w">On a call · tap to open</span><button class="icon-btn danger" data-act="leave-call" data-tip="Leave">${icon('hangup', 'sm')}</button></div>` : '')
+    + `<div class="tb-row">${tab('feed', 'home', 'Home', 0, v.type === 'feed')}${tab('messages', 'chat', 'Messages', dmUnread, v.type === 'messages' || v.type === 'dm')}${tab('communities', 'grid', 'Communities', 0, v.type === 'communities' || v.type === 'server')}${tab('friends', 'users', 'Friends', pending, v.type === 'home')}
+      <button class="tb ${v.type === 'activity' ? 'active' : ''}" data-act="me-menu">${avatar(S.me, 24)}${S.activityUnread ? '<span class="count dot"></span>' : ''}<span class="tl">You</span></button></div>`;
+}
+function meMenu(anchor) {
+  openMenu(anchor, [
+    { label: 'My profile', icon: 'user', onClick: () => openProfile(S.me.id) },
+    { label: `Activity${S.activityUnread ? ` (${S.activityUnread})` : ''}`, icon: 'bell', onClick: () => navigate('/activity') },
+    { label: 'New post', icon: 'edit', onClick: () => openPostComposer() },
+    { label: 'Settings', icon: 'settings', onClick: () => openUserSettings() },
+    isSiteAdmin() && { label: 'Admin panel', icon: 'shield', onClick: () => openAdminPanel() },
+  ], { align: 'right' });
 }
 function onRailClick(e) {
-  const it = e.target.closest('.rail-item'); if (!it) return;
-  if (it.dataset.go === 'home') return navigate('/channels/@me');
-  if (it.dataset.dm) return navigate('/channels/@me/' + it.dataset.dm);
-  if (it.dataset.server) return navigate('/channels/' + it.dataset.server + (S.lastChannel[it.dataset.server] ? '/' + S.lastChannel[it.dataset.server] : ''));
-  if (it.dataset.act === 'create-server') return openCreateServer();
-  if (it.dataset.act === 'join-server') return openCreateServer('join');
-  if (it.dataset.act === 'admin-panel') return openAdminPanel();
+  const t = e.target.closest('[data-nav],[data-server],[data-act]'); if (!t) return;
+  if (t.dataset.nav) return navigate(NAV_PATHS[t.dataset.nav]);
+  if (t.dataset.server) return navigate('/channels/' + t.dataset.server);
+  const a = t.dataset.act;
+  if (a === 'community-add') return openMenu(t, [{ label: 'Create a community', icon: 'plus', onClick: () => openCreateServer() }, { label: 'Join with an invite', icon: 'link', onClick: () => openCreateServer('join') }]);
+  if (a === 'admin-panel') return openAdminPanel();
+  if (a === 'compose') return openPostComposer();
+  if (a === 'me-menu') return meMenu(t);
+  return onSideClick(e);
 }
 function onRailContext(e) {
   const it = e.target.closest('[data-server]'); if (!it) return;
@@ -117,13 +154,13 @@ async function serverMenu(sid, anchor) {
   openMenu(anchor, [
     can(sd, P.CREATE_INVITE) && { label: 'Invite people', icon: 'userPlus', onClick: () => openInvite(sid) },
     { label: 'Mark as read', icon: 'check', onClick: () => markServerRead(sid) },
-    (can(sd, P.MANAGE_SERVER) || can(sd, P.MANAGE_ROLES) || can(sd, P.KICK_MEMBERS) || can(sd, P.BAN_MEMBERS)) && { label: 'Space settings', icon: 'settings', onClick: () => openServerSettings(sid) },
+    (can(sd, P.MANAGE_SERVER) || can(sd, P.MANAGE_ROLES) || can(sd, P.KICK_MEMBERS) || can(sd, P.BAN_MEMBERS)) && { label: 'Community settings', icon: 'settings', onClick: () => openServerSettings(sid) },
     can(sd, P.MANAGE_CHANNELS) && { label: 'New room', icon: 'plus', onClick: () => openChannelModal(sid) },
     can(sd, P.MANAGE_CHANNELS) && { label: 'New category', icon: 'menu', onClick: () => openCategoryModal(sid) },
-    { label: 'Edit my space profile', icon: 'edit', onClick: () => editNickname(sid, S.me.id) },
+    { label: 'Edit my community profile', icon: 'edit', onClick: () => editNickname(sid, S.me.id) },
     'sep',
-    !owner && { label: 'Leave space', icon: 'logout', danger: true, onClick: () => leaveServer(sid) },
-    owner && can(sd, P.MANAGE_SERVER) && { label: 'Delete space', icon: 'trash', danger: true, onClick: () => openServerSettings(sid, 'delete') },
+    !owner && { label: 'Leave community', icon: 'logout', danger: true, onClick: () => leaveServer(sid) },
+    owner && can(sd, P.MANAGE_SERVER) && { label: 'Delete community', icon: 'trash', danger: true, onClick: () => openServerSettings(sid, 'delete') },
   ]);
 }
 async function markServerRead(sid) {
@@ -135,7 +172,7 @@ async function markServerRead(sid) {
 async function leaveServer(sid) {
   const sd = S.serverData[sid];
   if (!(await confirmDialog(`Leave '${sd?.server.name}'`, `Are you sure you want to leave <b>${esc(sd?.server.name)}</b>? You won't be able to rejoin unless you are re-invited.`, 'Leave'))) return;
-  try { await api('POST', `/api/servers/${sid}/leave`); removeServerLocal(sid); toast('You left the space'); } catch (e) { toast(e.message, true); }
+  try { await api('POST', `/api/servers/${sid}/leave`); removeServerLocal(sid); toast('You left the community'); } catch (e) { toast(e.message, true); }
 }
 function removeServerLocal(sid) {
   if (Call.active && S.serverData[sid]?.channels.some((c) => c.id === Call.active.channelId)) leaveCall();
@@ -145,41 +182,40 @@ function removeServerLocal(sid) {
 
 // ------------------------------------------------------------------ sidebar
 function renderSideTop() {
-  const v = S.view, el = $('#side-top');
+  const v = S.view, el = $('#side-top'); if (!el) return;
   if (v.type === 'server') {
     const sd = S.serverData[v.serverId]; if (!sd) return (el.innerHTML = '');
-    const b = sd.server.banner;
-    el.innerHTML = `<div class="server-head ${b ? 'has-banner' : ''}" data-act="server-menu">
-      ${b ? `<div class="banner" style="background-image:url('${esc(b)}')"></div>` : ''}
-      <div class="row"><span class="name">${esc(sd.server.name)}</span>${icon('chevron', 'sm')}</div></div>`;
+    const sv = sd.server, online = sd.members.filter((m) => isOnline(m.user.id)).length;
+    el.innerHTML = `<div class="comm-head">
+      <div class="comm-cover" style="--c:${colorFor(sv.id)};${sv.banner ? `background-image:url('${esc(sv.banner)}')` : ''}"></div>
+      <div class="comm-id">${commIcon(sv, 44)}
+        <div class="meta"><div class="name">${esc(sv.name)}</div><div class="sub">${sd.members.length} member${sd.members.length === 1 ? '' : 's'} · <span class="on">${online} online</span></div></div>
+        <button class="icon-btn" data-act="server-menu" data-tip="Community options">${icon('more', 'sm')}</button></div></div>`;
   } else {
-    el.innerHTML = `<div class="side-head"><div class="title">${esc(S.me.username)}</div>
-      <button class="icon-btn" data-act="new-group" data-tip="New message">${icon('edit')}</button></div>
-      <div class="side-search"><input id="dm-search" placeholder="Search" autocomplete="off"></div>`;
+    el.innerHTML = `<div class="side-head"><div class="title">Messages</div>
+      <button class="icon-btn" data-act="new-group" data-tip="New message">${icon('edit', 'sm')}</button></div>
+      <label class="side-search">${icon('search', 'sm')}<input id="dm-search" placeholder="Search conversations" autocomplete="off"></label>`;
     $('#dm-search').oninput = () => renderSideBody();
   }
 }
+function streakChip(d) { return d.streak >= 2 ? `<span class="streak" data-tip="${d.streak}-day streak: you have both messaged ${d.streak} days in a row">${icon('flame', 'xs')}${d.streak}</span>` : ''; }
 function renderSideBody() {
   const v = S.view, el = $('#side-body'); if (!el) return;
   if (v.type === 'server') return renderServerSide(el);
   const q = ($('#dm-search')?.value || '').toLowerCase();
-  const pending = S.friends.filter((f) => f.type === 'incoming').length;
-  let html = `<div class="nav-item ${v.type === 'home' ? 'active' : ''}" data-go="home">
-      <div style="width:48px;display:grid;place-items:center">${icon('users')}</div><div class="meta"><div class="n bold">Friends</div></div>
-      ${pending ? `<span class="count">${pending}</span>` : ''}</div>
-    <div class="side-section"><span>Chats</span><button class="icon-btn" data-act="new-group" data-tip="New group">${icon('plus', 'sm')}</button></div>`;
+  let html = '';
   const list = S.dms.filter((d) => !q || dmName(d).toLowerCase().includes(q) || d.recipients.some((r) => r.username.includes(q)));
-  if (!list.length) html += `<div class="muted small" style="padding:8px 14px">${q ? 'No matches.' : 'No messages yet. Say hi to a friend!'}</div>`;
+  if (!list.length) html += `<div class="side-empty">${q ? 'No conversations match.' : `No conversations yet.<br><button class="btn sm" data-act="new-group">${icon('edit', 'xs')} Start one</button>`}</div>`;
   for (const d of list) {
     const lm = d.lastMessage; const inCall = (S.voice[d.id] || []).length > 0;
     let sub = '';
-    if (inCall) sub = `<span style="color:var(--green)">● Call in progress</span>`;
-    else if (lm) sub = `${lm.authorId === S.me.id ? 'You: ' : ''}${esc(lm.content || (lm.attachmentType ? 'Sent an attachment' : ''))} · ${ago(lm.createdAt)}`;
+    if (inCall) sub = `<span class="live-txt">Call in progress</span>`;
+    else if (lm) sub = `${lm.authorId === S.me.id ? 'You: ' : ''}${esc(lm.content || (lm.attachmentType ? 'Sent an attachment' : ''))}`;
     else if (d.type === 'dm') { const u = S.userCache[d.recipients[0]?.id] || d.recipients[0]; sub = u ? esc(u.customStatus || (isOnline(u.id) ? 'Active now' : '@' + u.username)) : ''; }
     else sub = `${d.members.length} members`;
-    html += `<div class="nav-item ${v.dmId === d.id ? 'active' : ''} ${d.unread ? 'unread' : ''}" data-dm="${d.id}">
-      ${dmAvatar(d, 48)}<div class="meta"><div class="n">${esc(dmName(d))}${d.type === 'dm' ? roleBadge(d.recipients[0]) : ''}</div><div class="sub">${sub}</div></div>
-      ${inCall ? `<span style="color:var(--green)">${icon('phone', 'sm')}</span>` : d.unread ? '<span class="unread-dot"></span>' : ''}</div>`;
+    html += `<div class="convo ${v.dmId === d.id ? 'active' : ''} ${d.unread ? 'unread' : ''}" data-dm="${d.id}">
+      ${dmAvatar(d, 44)}<div class="meta"><div class="n"><span class="nm">${esc(dmName(d))}</span>${d.type === 'dm' ? roleBadge(d.recipients[0]) : ''}</div><div class="sub">${sub}</div></div>
+      <div class="aside"><span class="time">${lm ? ago(lm.createdAt) : ''}</span><span class="marks">${streakChip(d)}${inCall ? `<span class="live-ic">${icon('phone', 'xs')}</span>` : d.unread ? `<span class="ucount">${d.unread > 99 ? '99+' : d.unread}</span>` : ''}</span></div></div>`;
   }
   el.innerHTML = html;
 }
@@ -202,7 +238,8 @@ function renderServerSide(el) {
   const cats = [...(sd.categories || [])].sort((a, b) => a.position - b.position);
   const catIds = new Set(cats.map((c) => c.id));
   const loose = sd.channels.filter((c) => !c.categoryId || !catIds.has(c.categoryId));
-  let html = loose.length ? `<div style="height:8px"></div>${rows(loose)}` : '';
+  let html = `<div class="nav-item chan ${S.view.overview ? 'active' : ''}" data-act="overview">${icon('trend', 'sm')}<span class="n">Overview</span></div>`;
+  html += loose.length ? rows(loose) : '';
   for (const cat of cats) {
     const list = sd.channels.filter((c) => c.categoryId === cat.id);
     const isCol = collapsed.has(cat.id);
@@ -250,7 +287,8 @@ function onSideClick(e) {
   if (act === 'new-chan-in') { e.stopPropagation(); return openChannelModal(S.view.serverId, null, 'text', t.closest('[data-cat]').dataset.cat); }
   if (act === 'edit-cat') { e.stopPropagation(); return openCategoryModal(S.view.serverId, t.closest('[data-cat]').dataset.cat); }
   if (act === 'new-cat') return openCategoryModal(S.view.serverId);
-  if (act === 'server-menu') return serverMenu(S.view.serverId, t.querySelector('.row'));
+  if (act === 'server-menu') return serverMenu(S.view.serverId, t);
+  if (act === 'overview') return navigate(`/channels/${S.view.serverId}`);
   if (act === 'new-group') return openNewGroup();
   if (act === 'goto-call') return gotoCall();
   if (act === 'leave-call') return leaveCall();
@@ -260,7 +298,7 @@ function onSideClick(e) {
   if (act === 'toggle-deafen') return toggleDeafen();
   if (act === 'user-settings') return openUserSettings();
   if (act === 'my-profile') return openProfile(S.me.id);
-  if (t.dataset.go === 'home') return navigate('/channels/@me');
+  if (t.dataset.go === 'home') return navigate('/friends');
   if (t.dataset.dm) return navigate('/channels/@me/' + t.dataset.dm);
   if (t.dataset.user) return openProfile(t.dataset.user, S.view.serverId);
   if (t.dataset.chan) {
@@ -288,11 +326,17 @@ function memberInfo(sd, uid) {
 const currentServer = () => (S.view.type === 'server' ? S.serverData[S.view.serverId] : null);
 
 // ------------------------------------------------------------------ main area
-const mobileBtn = () => `<button class="icon-btn mobile-menu" data-act="drawer">${icon('menu')}</button>`;
+const mobileBtn = () => (hasSide() ? `<button class="icon-btn mobile-menu" data-act="drawer" data-tip="${S.view.type === 'server' ? 'Rooms' : 'Conversations'}">${icon('menu')}</button>` : '');
 function renderMain() {
   const v = S.view, main = $('#main');
+  main.classList.toggle('scroll-page', ['feed', 'activity', 'communities'].includes(v.type) || !!v.overview);
+  if (v.type === 'feed') return renderFeed(main);
+  if (v.type === 'activity') return renderActivity(main);
+  if (v.type === 'communities') return renderCommunities(main);
+  if (v.type === 'messages') return renderMessagesHome(main);
   if (v.type === 'home') return renderHome(main);
   if (v.type === 'dm') return renderChatView(main);
+  if (v.overview) return renderCommunityOverview(main);
   const sd = S.serverData[v.serverId];
   const ch = sd?.channels.find((c) => c.id === v.channelId);
   if (!ch) {
@@ -328,7 +372,7 @@ function storiesBar() {
 function renderHomeBody() {
   const el = $('#home'); if (!el) return;
   const tab = S.homeTab;
-  let html = storiesBar();
+  let html = '';
   if (tab === 'add') {
     html += `<div class="add-friend"><h3>Add friend</h3><div class="muted">Add friends by their lumi username.</div>
       <form id="add-friend-form"><span class="muted">@</span><input name="u" placeholder="username" autocomplete="off" autofocus>
