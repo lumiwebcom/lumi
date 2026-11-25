@@ -1,0 +1,36 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Share your screen</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+  * { box-sizing: border-box; } body { margin: 0; font: 14px/1.4 "Segoe UI", system-ui, sans-serif; background: #17151C; color: #ECEAF1; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 18px 22px 10px; } h1 { margin: 0; font-size: 18px; font-weight: 700; }
+  .tabs { display: flex; gap: 6px; padding: 0 22px 12px; } .tabs button { background: #24212C; color: #B9B5C4; border: 0; border-radius: 8px; height: 30px; padding: 0 14px; font: inherit; font-weight: 600; cursor: pointer; } .tabs button.on { background: #743AFB; color: #fff; }
+  .grid { flex: 1; overflow: auto; padding: 4px 22px 16px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-content: start; }
+  .src { background: #1F1C26; border: 2px solid transparent; border-radius: 12px; padding: 8px; cursor: pointer; text-align: left; color: inherit; font: inherit; }
+  .src:hover { border-color: #3A3545; } .src.sel { border-color: #743AFB; }
+  .src .ph { display: grid; place-items: center; color: #8E899B; font-size: 13px; }
+  .src img.t, .src .t { width: 100%; aspect-ratio: 16/9; object-fit: contain; background: #0E0D12; border-radius: 8px; display: block; }
+  .src .n { display: flex; align-items: center; gap: 6px; margin-top: 7px; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .src .n img { width: 16px; height: 16px; }
+  footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 22px 18px; border-top: 1px solid #26232E; }
+  footer button { height: 36px; padding: 0 18px; border-radius: 9px; border: 0; font: inherit; font-weight: 600; cursor: pointer; background: #2A2632; color: #ECEAF1; } footer .go { background: #743AFB; color: #fff; } footer .go:disabled { opacity: .4; cursor: default; }
+  .empty { grid-column: 1/-1; color: #8E899B; text-align: center; padding: 40px 0; }
+</style></head><body>
+<header><h1>Share your screen</h1></header>
+<div class="tabs"><button data-k="screen" class="on">Screens</button><button data-k="window">Windows</button></div>
+<div class="grid" id="grid"></div>
+<footer><button id="cancel">Cancel</button><button class="go" id="go" disabled>Share</button></footer>
+<script>
+  let all = [], kind = 'screen', sel = null;
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  function draw() {
+    const list = all.filter((s) => (kind === 'screen') === s.screen);
+    document.getElementById('grid').innerHTML = list.length ? list.map((s) => `<button class="src ${sel === s.id ? 'sel' : ''}" data-id="${esc(s.id)}">${s.thumb ? `<img class="t" src="${s.thumb}">` : `<div class="t ph">${s.screen ? "Screen" : "Window"}</div>`}<div class="n">${s.icon ? `<img src="${s.icon}">` : ''}<span>${esc(s.name)}</span></div></button>`).join('') : '<div class="empty">Nothing to share here.</div>';
+    document.getElementById('go').disabled = !sel;
+  }
+  document.getElementById('grid').onclick = (e) => { const b = e.target.closest('.src'); if (!b) return; sel = b.dataset.id; draw(); };
+  document.getElementById('grid').ondblclick = (e) => { const b = e.target.closest('.src'); if (b) picker.choose(b.dataset.id); };
+  document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => { kind = b.dataset.k; document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x === b)); draw(); });
+  document.getElementById('go').onclick = () => sel && picker.choose(sel);
+  document.getElementById('cancel').onclick = () => picker.choose(null);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') picker.choose(null); });
+  picker.onSources((list) => { all = list; sel = (list.find((s) => s.screen) || list[0] || {}).id || null; draw(); });
+</script></body></html>

@@ -1,0 +1,9 @@
+{
+  "name": "lumi",
+  "productName": "lumi",
+  "version": "1.0.0",
+  "description": "lumi for desktop",
+  "main": "main.js",
+  "author": "lumi",
+  "license": "UNLICENSED"
+}
