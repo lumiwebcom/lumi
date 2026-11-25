@@ -6,17 +6,6 @@ function renderAuth(mode = 'login') {
   const signup = mode === 'signup';
   root.innerHTML = `
   <div class="auth">
-    <section class="auth-hero" aria-hidden="true">
-      <div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>
-      <div class="hero-copy">
-        ${wordmark('lg')}
-        <h1>Light up<br>your circle.</h1>
-        <p>Chat, call and hang out in spaces made for your people.</p>
-        <div class="hero-chips"><span>✨ Moments</span><span>🎧 Lounges</span><span>💬 Rooms</span></div>
-      </div>
-      <div class="float-card fc1"><div class="fc-av" style="background:#7C5CFF">M</div><div><b>Maya</b><span>pull up to the lounge 🎧</span></div></div>
-      <div class="float-card fc2"><div class="fc-dot"></div><div><b>Chill zone</b><span>4 hanging out</span></div></div>
-    </section>
     <section class="auth-panel">
       <div class="auth-card">
         ${wordmark()}
