@@ -197,3 +197,114 @@ function socialSocket(socket) {
   socket.on('activity:new', ({ kind, from } = {}) => { if (from) toast(`${from.displayName} ${kind === 'glow' ? 'glowed your post' : 'replied to your post'}`); if (S.view.type === 'activity') return renderActivity($('#main')); S.activityUnread++; if (S.view.type !== 'server') renderSideBody(); });
 }
 function refreshMomentsUI() { if (S.view.type === 'home' && typeof svState !== 'undefined' && !svState) renderHomeBody(); }
+
+// ================= Stargaze: discover public spaces =================
+S.star = { q: '', cat: '', list: null, cats: [], loading: false };
+function renderStargazeSide() {
+  const top = $('#side-top'), body = $('#side-body'); if (!top || !body) return;
+  top.innerHTML = `<div class="side-head"><div class="title">Stargaze</div></div>`;
+  const cats = S.star.cats.length ? S.star.cats : ['Gaming', 'Music', 'Study', 'Art & Design', 'Tech', 'Anime', 'Sports', 'Hangout'];
+  const ic = { '': 'compass', Gaming: 'gamepad', Music: 'music', Study: 'book', 'Art & Design': 'image', Tech: 'code', Anime: 'sparkle', Sports: 'flame', Hangout: 'users' };
+  body.innerHTML = `<div class="side-section"><span>Browse</span></div>` +
+    [['', 'All spaces'], ...cats.map((c) => [c, c])].map(([k, l]) => `<div class="nav-item sg-cat ${S.star.cat === k ? 'active' : ''}" data-sg-cat="${esc(k)}">
+      <div class="sg-ci">${icon(ICONS[ic[k]] ? ic[k] : 'hash', 'sm')}</div><div class="meta"><div class="n">${esc(l)}</div></div></div>`).join('') +
+    `<div class="sg-side-foot"><button class="btn block" data-sg-invite>${icon('link', 'sm')} Join with an invite</button></div>`;
+}
+function renderStargaze(main) {
+  renderStargazeSide();
+  main.innerHTML = `<header class="main-head">${mobileBtn()}<div class="t">${icon('compass')} Stargaze</div></header>
+    <div class="content"><div class="home sg-page">
+      <section class="sg-hero">
+        <div class="sg-sky" aria-hidden="true">${Array.from({ length: 34 }, (_, i) => `<i style="left:${(i * 37) % 100}%;top:${(i * 53) % 100}%;animation-delay:${(i % 7) * .6}s;${i % 5 === 0 ? 'width:3px;height:3px' : ''}"></i>`).join('')}</div>
+        <div class="sg-hero-in"><div class="sg-kick">${icon('compass', 'xs')} Stargaze</div>
+          <h1>Find a space worth staying in</h1>
+          <p>Public spaces with active communities. Every space here has 1,000+ members, or is run by the lumi team.</p>
+          <form class="sg-search" id="sg-search">${icon('search', 'sm')}<input name="q" placeholder="Search spaces" value="${esc(S.star.q)}" autocomplete="off"></form></div>
+      </section>
+      <div id="sg-list"></div>
+    </div></div>`;
+  const f = $('#sg-search'); let t;
+  f.q.oninput = () => { clearTimeout(t); t = setTimeout(() => { S.star.q = f.q.value.trim(); loadStargaze(); }, 250); };
+  f.onsubmit = (e) => { e.preventDefault(); S.star.q = f.q.value.trim(); loadStargaze(); };
+  loadStargaze();
+}
+async function loadStargaze() {
+  S.star.loading = true; renderStargazeList();
+  try {
+    const r = await api('GET', `/api/discover?q=${encodeURIComponent(S.star.q)}&category=${encodeURIComponent(S.star.cat)}`);
+    S.star.list = r.servers; if (!S.star.cats.length) { S.star.cats = r.categories; if (S.view.type === 'stargaze') renderStargazeSide(); }
+  } catch (e) { toast(e.message, true); S.star.list = S.star.list || []; }
+  S.star.loading = false; renderStargazeList();
+}
+const fmtCount = (n) => n >= 10000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, '') + 'k' : n.toLocaleString();
+function sgCard(s) {
+  const c = colorFor(s.id);
+  return `<article class="sg-card" data-sg-open="${s.id}" style="--c:${c}">
+    <div class="sg-banner" style="${s.banner ? `background-image:url('${esc(s.banner)}')` : ''}">${s.featured ? `<span class="sg-feat">${icon('sparkle', 'xs')} lumi pick</span>` : ''}</div>
+    <div class="sg-icon">${s.icon ? `<img src="${esc(s.icon)}" alt="">` : esc(initials(s.name).toUpperCase())}</div>
+    <div class="sg-body"><h3>${esc(s.name)}</h3><p>${esc(s.description || 'No description yet.')}</p>
+      <div class="sg-meta"><span class="on"><i></i>${fmtCount(s.onlineCount)} online</span><span><i></i>${fmtCount(s.memberCount)} ${s.memberCount === 1 ? 'member' : 'members'}</span>${s.category ? `<span class="sg-tag">${esc(s.category)}</span>` : ''}</div>
+      <button class="btn ${s.joined ? '' : 'primary'} sm sg-join" data-sg-join="${s.id}">${s.joined ? 'Open' : 'Join space'}</button></div>
+  </article>`;
+}
+function renderStargazeList() {
+  const el = $('#sg-list'); if (!el) return;
+  const L = S.star.list;
+  if (!L) { el.innerHTML = '<div class="muted small" style="padding:30px;text-align:center">Loading…</div>'; return; }
+  const title = S.star.q ? `Results for “${esc(S.star.q)}”` : S.star.cat ? esc(S.star.cat) : 'Popular right now';
+  if (!L.length) {
+    el.innerHTML = `<div class="sg-h">${title}</div><div class="empty"><div class="art">${icon('compass')}</div><h3>No spaces here yet</h3><p>${S.star.q || S.star.cat ? 'Try another search or category.' : 'Spaces show up here once they reach 1,000 members and turn on Stargaze in their settings.'}</p></div>`;
+    return;
+  }
+  const feat = !S.star.q && !S.star.cat ? L.filter((s) => s.featured) : [];
+  const rest = feat.length ? L.filter((s) => !s.featured) : L;
+  el.innerHTML = (feat.length ? `<div class="sg-h">${icon('sparkle', 'xs')} lumi picks</div><div class="sg-grid">${feat.map(sgCard).join('')}</div>` : '') +
+    (rest.length ? `<div class="sg-h">${title}</div><div class="sg-grid">${rest.map(sgCard).join('')}</div>` : '');
+}
+async function joinFromStargaze(id) {
+  const s = (S.star.list || []).find((x) => x.id === id);
+  if (s?.joined || S.servers.find((x) => x.id === id)) return navigate('/channels/' + id);
+  try {
+    const sd = await api('POST', `/api/discover/${id}/join`);
+    S.serverData[sd.server.id] = sd; sd.members.forEach((x) => cacheUser(x.user));
+    if (!S.servers.find((x) => x.id === sd.server.id)) S.servers.push({ id: sd.server.id, name: sd.server.name, icon: sd.server.icon, unread: 0 });
+    toast(`Welcome to ${sd.server.name}!`); navigate('/channels/' + sd.server.id);
+  } catch (e) { toast(e.message, true); }
+}
+document.addEventListener('click', (e) => {
+  const c = e.target.closest('[data-sg-cat]'); if (c) { S.star.cat = c.dataset.sgCat; renderStargazeSide(); return loadStargaze(); }
+  if (e.target.closest('[data-sg-invite]')) return openCreateServer('join');
+  const j = e.target.closest('[data-sg-join]'); if (j) { e.stopPropagation(); return joinFromStargaze(j.dataset.sgJoin); }
+  const o = e.target.closest('[data-sg-open]'); if (o) return joinFromStargaze(o.dataset.sgOpen);
+});
+
+// ---- Space settings › Access
+async function ssAccess(pane, sid) {
+  pane.innerHTML = '<h2>Access</h2><div class="muted">Loading…</div>';
+  let st; try { st = await api('GET', `/api/servers/${sid}/discovery`); } catch (e) { pane.innerHTML = `<h2>Access</h2><p class="err">${esc(e.message)}</p>`; return; }
+  const sd = S.serverData[sid]; const hasDesc = !!String(sd?.server?.description || '').trim();
+  const pct = Math.min(100, Math.round((st.memberCount / st.minimum) * 100));
+  const locked = !st.eligible && !st.enabled;
+  pane.innerHTML = `<h2>Access</h2>
+    <div class="acc-card ${st.enabled ? 'on' : ''}">
+      <div class="acc-top"><div class="acc-ic">${icon('compass')}</div>
+        <div class="acc-t"><b>List on Stargaze</b><span>Anyone on lumi can find this space and join without an invite.</span></div>
+        <label class="switch"><input type="checkbox" id="acc-on" ${st.enabled ? 'checked' : ''} ${locked ? 'disabled' : ''}><span></span></label></div>
+      ${st.exempt ? `<div class="acc-perk">${POTION.replace('<svg', '<svg style="width:16px;height:16px"')} This space is run by a lumi owner, so the ${st.minimum.toLocaleString()}-member minimum doesn't apply.</div>`
+        : `<div class="acc-req"><div class="acc-req-h"><span>Members</span><b>${st.memberCount.toLocaleString()} / ${st.minimum.toLocaleString()}</b></div>
+          <div class="acc-bar"><i style="width:${pct}%"></i></div>
+          <div class="hint">${st.eligible ? 'This space meets the member minimum.' : `Spaces need at least ${st.minimum.toLocaleString()} members to go on Stargaze. ${(st.minimum - st.memberCount).toLocaleString()} to go.`}</div></div>`}
+      ${!hasDesc ? `<div class="hint" style="margin-top:10px">Add a description in <a data-acc-go="overview">Overview</a> first, so people know what your space is about.</div>` : ''}
+    </div>
+    <div class="field" style="margin-top:20px"><label>Category</label>
+      <div class="ban-lens">${st.categories.map((c) => `<button type="button" data-acc-cat="${esc(c)}" class="${st.category === c ? 'sel acc-sel' : ''}">${esc(c)}</button>`).join('')}</div>
+      <div class="hint" style="margin-top:8px">Helps people browsing Stargaze find you.</div></div>`;
+  const save = async (body) => {
+    try { st = await api('PUT', `/api/servers/${sid}/discovery`, body); toast('category' in body ? 'Category saved' : st.enabled ? 'Listed on Stargaze' : 'Removed from Stargaze'); }
+    catch (e) { toast(e.message, true); }
+    ssAccess(pane, sid);
+  };
+  pane.querySelector('#acc-on').onchange = (e) => save({ enabled: e.target.checked });
+  pane.querySelectorAll('[data-acc-cat]').forEach((b) => (b.onclick = () => save({ enabled: st.enabled, category: st.category === b.dataset.accCat ? null : b.dataset.accCat })));
+  pane.querySelector('[data-acc-go]')?.addEventListener('click', () => S.openServerSettings?.el.querySelector('[data-tab="overview"]')?.click());
+}

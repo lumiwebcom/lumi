@@ -43,7 +43,7 @@ async function route() {
   } else if (r.type === 'dm') {
     if (!S.dms.find((d) => d.id === r.dmId)) { await refreshDMs(); if (!S.dms.find((d) => d.id === r.dmId)) return navigate('/channels/@me', true); }
     S.view = { type: 'dm', dmId: r.dmId, channelId: r.dmId };
-  } else S.view = { type: r.type === 'feed' || r.type === 'activity' ? r.type : 'home' };
+  } else S.view = { type: ['feed', 'activity', 'stargaze'].includes(r.type) ? r.type : 'home' };
   S.panel = null; S.replyTo = null; S.pending = null; S.editing = null;
   renderAll();
 }
@@ -84,7 +84,7 @@ function railItem({ active, unread, tip, inner, data, badge }) {
 function renderRail() {
   const v = S.view;
   const pending = S.friends.filter((f) => f.type === 'incoming').length;
-  let html = railItem({ active: v.type !== 'server', tip: 'Chats', inner: `<div class="rail-btn home">${LOGO_MARK}</div>`, data: 'data-go="home"', badge: pending });
+  let html = railItem({ active: v.type !== 'server' && v.type !== 'stargaze', tip: 'Chats', inner: `<div class="rail-btn home">${LOGO_MARK}</div>`, data: 'data-go="home"', badge: pending });
   for (const d of S.dms.filter((d) => d.unread > 0).slice(0, 5))
     html += railItem({ tip: dmName(d), inner: `<div class="rail-btn" style="background:none">${dmAvatar(d, 48)}</div>`, data: `data-dm="${d.id}"`, badge: d.unread });
   html += '<div class="sep"></div>';
@@ -94,7 +94,7 @@ function renderRail() {
       inner: `<div class="rail-ring"><div class="rail-btn srv ${s.icon ? 'has-img' : ''}" style="--c:${colorFor(s.id)}">${serverIcon(s)}</div></div>`, data: `data-server="${s.id}"` });
   }
   html += railItem({ tip: 'Create a space', inner: `<div class="rail-btn add">${icon('plus')}</div>`, data: 'data-act="create-server"' });
-  html += railItem({ tip: 'Join with an invite', inner: `<div class="rail-btn add">${icon('compass')}</div>`, data: 'data-act="join-server"' });
+  html += railItem({ active: v.type === 'stargaze', tip: 'Stargaze: discover spaces', inner: `<div class="rail-btn add sg-rail">${icon('compass')}</div>`, data: 'data-act="stargaze"' });
   if (isSiteAdmin()) html += '<div class="rail-spacer"></div>' + railItem({ tip: 'Admin panel', inner: `<div class="rail-btn add admin-btn">${SHIELD_BLUE}</div>`, data: 'data-act="admin-panel"' });
   $('#rail').innerHTML = html;
 }
@@ -105,6 +105,7 @@ function onRailClick(e) {
   if (it.dataset.server) return navigate('/channels/' + it.dataset.server + (S.lastChannel[it.dataset.server] ? '/' + S.lastChannel[it.dataset.server] : ''));
   if (it.dataset.act === 'create-server') return openCreateServer();
   if (it.dataset.act === 'join-server') return openCreateServer('join');
+  if (it.dataset.act === 'stargaze') return navigate('/stargaze');
   if (it.dataset.act === 'admin-panel') return openAdminPanel();
 }
 function onRailContext(e) {
@@ -146,6 +147,7 @@ function removeServerLocal(sid) {
 // ------------------------------------------------------------------ sidebar
 function renderSideTop() {
   const v = S.view, el = $('#side-top');
+  if (v.type === 'stargaze') return renderStargazeSide();
   if (v.type === 'server') {
     const sd = S.serverData[v.serverId]; if (!sd) return (el.innerHTML = '');
     const b = sd.server.banner;
@@ -162,6 +164,7 @@ function renderSideTop() {
 function renderSideBody() {
   const v = S.view, el = $('#side-body'); if (!el) return;
   if (v.type === 'server') return renderServerSide(el);
+  if (v.type === 'stargaze') return renderStargazeSide();
   const q = ($('#dm-search')?.value || '').toLowerCase();
   const pending = S.friends.filter((f) => f.type === 'incoming').length;
   let html = `<div class="nav-item ${v.type === 'home' ? 'active' : ''}" data-go="home">
@@ -294,6 +297,7 @@ function renderMain() {
   const v = S.view, main = $('#main');
   if (v.type === 'home') return renderHome(main);
   if (v.type === 'feed') return renderFeed(main);
+  if (v.type === 'stargaze') return renderStargaze(main);
   if (v.type === 'activity') return renderActivity(main);
   if (v.type === 'dm') return renderChatView(main);
   const sd = S.serverData[v.serverId];

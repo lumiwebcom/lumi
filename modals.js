@@ -166,6 +166,7 @@ async function openServerSettings(sid, tab) {
     can(sd, P.MANAGE_ROLES) && ['roles', 'Roles', 'shield'],
     ['members', 'Members', 'users'],
     can(sd, P.MANAGE_SERVER) && ['invites', 'Invites', 'link'],
+    can(sd, P.MANAGE_SERVER) && ['access', 'Access', 'compass'],
     can(sd, P.BAN_MEMBERS) && ['bans', 'Bans', 'hammer'],
   ].filter(Boolean);
   tab = tab || tabs[0][0];
@@ -176,7 +177,7 @@ async function openServerSettings(sid, tab) {
   const show = async (t) => {
     tab = t; m.el.querySelectorAll('.settings-nav [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
     sd = S.serverData[sid];
-    ({ overview: ssOverview, roles: ssRoles, members: ssMembers, invites: ssInvites, bans: ssBans, delete: ssDelete })[t](pane, sid, m);
+    ({ overview: ssOverview, roles: ssRoles, members: ssMembers, invites: ssInvites, access: ssAccess, bans: ssBans, delete: ssDelete })[t](pane, sid, m);
   };
   m.el.querySelectorAll('.settings-nav [data-tab]').forEach((b) => (b.onclick = () => show(b.dataset.tab)));
   m.refresh = () => show(tab);

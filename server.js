@@ -121,12 +121,16 @@ CREATE TABLE IF NOT EXISTS post_likes (post_id TEXT NOT NULL REFERENCES posts(id
 CREATE TABLE IF NOT EXISTS post_comments (id TEXT PRIMARY KEY, post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, content TEXT NOT NULL, created_at INTEGER NOT NULL);`);
 
 // The site owner is the account with this username (default "cook"). Once set, ownership stays with that account.
-const OWNER_USERNAME = (process.env.OWNER_USERNAME || 'cook').toLowerCase();
+// lumi owners (comma-separated OWNER_USERNAMES env adds more)
+const OWNER_USERNAMES = [...new Set([(process.env.OWNER_USERNAME || 'cook'), 'type', ...String(process.env.OWNER_USERNAMES || '').split(',')]
+  .map((x) => x.trim().toLowerCase()).filter(Boolean))];
 function ensureOwner() {
-  if (db.prepare("SELECT 1 FROM users WHERE site_role='owner'").get()) return;
-  const u = db.prepare('SELECT id FROM users WHERE username=?').get(OWNER_USERNAME);
-  if (u) db.prepare("UPDATE users SET site_role='owner' WHERE id=?").run(u.id);
+  for (const name of OWNER_USERNAMES) {
+    const u = db.prepare('SELECT id, site_role FROM users WHERE username=?').get(name);
+    if (u && u.site_role !== 'owner') db.prepare("UPDATE users SET site_role='owner', banned_at=NULL, ban_reason=NULL, ban_until=NULL WHERE id=?").run(u.id);
+  }
 }
+for (const [c, t] of [['discoverable', 'INTEGER DEFAULT 0'], ['discover_category', 'TEXT']]) if (!colsOf('servers').includes(c)) db.exec(`ALTER TABLE servers ADD COLUMN ${c} ${t}`);
 ensureOwner();
 const isSiteAdmin = (u) => u && (u.site_role === 'owner' || u.site_role === 'admin');
 
@@ -706,7 +710,8 @@ function serverSummary(s, uid) {
   const chans = db.prepare(`SELECT id FROM channels WHERE server_id=? AND type='text'`).all(s.id);
   const unread = chans.reduce((a, c) => a + unreadCount(uid, c.id), 0);
   return { id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, unread,
-    memberCount: db.prepare('SELECT COUNT(*) n FROM members WHERE server_id=?').get(s.id).n, ownerId: s.owner_id };
+    memberCount: db.prepare('SELECT COUNT(*) n FROM members WHERE server_id=?').get(s.id).n, ownerId: s.owner_id,
+    discoverable: !!s.discoverable, discoverCategory: s.discover_category || null };
 }
 app.get('/api/servers', auth, wrap(req => {
   const rows = db.prepare(`SELECT s.* FROM servers s JOIN members m ON m.server_id=s.id WHERE m.user_id=? ORDER BY m.joined_at`).all(req.user.id);
@@ -885,7 +890,7 @@ app.get('/api/admin/users', auth, adminOnly, wrap(req => {
 function assertCanModerateSite(actor, target) {
   if (!target) throw fail(404, 'User not found');
   if (target.id === actor.id) throw fail(400, "You can't do that to yourself.");
-  if (target.site_role === 'owner') throw fail(403, "The owner can't be banned.");
+  if (target.site_role === 'owner') throw fail(403, "lumi owners can't be banned.");
   if (target.site_role === 'admin' && actor.site_role !== 'owner') throw fail(403, 'Only the owner can ban admins.');
 }
 app.post('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
@@ -972,6 +977,60 @@ app.post('/api/invites/:code', auth, wrap(req => {
     io.to(`server:${inv.server_id}`).emit('server:update', { serverId: inv.server_id, joined: publicUser(req.user) });
   }
   return serverDetail(inv.server_id, req.user.id);
+}));
+
+// ---- Stargaze (server discovery)
+const DISCOVER_MIN = 1000;
+const DISCOVER_CATEGORIES = ['Gaming', 'Music', 'Study', 'Art & Design', 'Tech', 'Anime', 'Sports', 'Hangout'];
+const memberCountOf = (sid) => db.prepare('SELECT COUNT(*) n FROM members WHERE server_id=?').get(sid).n;
+// a lumi owner's servers skip the member minimum
+const discoverExempt = (s) => db.prepare('SELECT site_role FROM users WHERE id=?').get(s.owner_id)?.site_role === 'owner';
+function discoverStatus(s) {
+  const count = memberCountOf(s.id), exempt = discoverExempt(s);
+  return { enabled: !!s.discoverable, eligible: exempt || count >= DISCOVER_MIN, exempt, memberCount: count, minimum: DISCOVER_MIN, category: s.discover_category || null, categories: DISCOVER_CATEGORIES };
+}
+app.get('/api/servers/:id/discovery', auth, wrap(req => {
+  const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
+  if (!s || !memberPerms(s.id, req.user.id)) throw fail(404, 'Orbit not found');
+  return discoverStatus(s);
+}));
+app.put('/api/servers/:id/discovery', auth, wrap(req => {
+  const sid = req.params.id;
+  if (!has(memberPerms(sid, req.user.id), P.MANAGE_SERVER)) throw fail(403, 'You need the Manage Space permission.');
+  const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid);
+  const on = !!req.body.enabled, st = discoverStatus(s);
+  if (on && !st.eligible) throw fail(403, `Spaces need at least ${DISCOVER_MIN.toLocaleString('en-US')} members to be listed on Stargaze.`);
+  const cat = req.body.category !== undefined ? (DISCOVER_CATEGORIES.includes(req.body.category) ? req.body.category : null) : s.discover_category;
+  if (on && !String(s.description || '').trim()) throw fail(400, 'Add a description in Overview first, so people know what your space is about.');
+  db.prepare('UPDATE servers SET discoverable=?, discover_category=? WHERE id=?').run(on ? 1 : 0, cat, sid);
+  io.to(`server:${sid}`).emit('server:update', { serverId: sid });
+  return discoverStatus(db.prepare('SELECT * FROM servers WHERE id=?').get(sid));
+}));
+app.get('/api/discover', auth, wrap(req => {
+  const q = String(req.query.q || '').trim().toLowerCase(), cat = String(req.query.category || '');
+  const rows = db.prepare('SELECT * FROM servers WHERE discoverable=1').all();
+  const out = [];
+  for (const s of rows) {
+    const st = discoverStatus(s);
+    if (!st.eligible) continue; // dropped under the minimum: hidden until it grows back
+    if (cat && s.discover_category !== cat) continue;
+    if (q && !(s.name.toLowerCase().includes(q) || String(s.description || '').toLowerCase().includes(q))) continue;
+    const online = db.prepare('SELECT user_id FROM members WHERE server_id=?').all(s.id).filter((m) => isOnline(m.user_id)).length;
+    out.push({ id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, category: s.discover_category || null,
+      memberCount: st.memberCount, onlineCount: online, featured: st.exempt, joined: !!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(s.id, req.user.id) });
+  }
+  out.sort((a, b) => (b.featured - a.featured) || (b.onlineCount - a.onlineCount) || (b.memberCount - a.memberCount));
+  return { servers: out.slice(0, 120), categories: DISCOVER_CATEGORIES };
+}));
+app.post('/api/discover/:id/join', auth, wrap(req => {
+  const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
+  if (!s || !s.discoverable || !discoverStatus(s).eligible) throw fail(404, 'This space is not on Stargaze.');
+  if (db.prepare('SELECT 1 FROM bans WHERE server_id=? AND user_id=?').get(s.id, req.user.id)) throw fail(403, 'You are banned from this space.');
+  if (!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(s.id, req.user.id)) {
+    addMember(s.id, req.user.id);
+    io.to(`server:${s.id}`).emit('server:update', { serverId: s.id, joined: publicUser(req.user) });
+  }
+  return serverDetail(s.id, req.user.id);
 }));
 
 // members: kick / ban / nickname / roles

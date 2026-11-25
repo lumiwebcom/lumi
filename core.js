@@ -28,6 +28,10 @@ const ICONS = {
   userPlus: '<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/>',
   pin: '<path d="M12 17v5M9 10.8V4h6v6.8l3 3.2v2H6v-2z"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  gamepad: '<path d="M6 11h4M8 9v4M15 12h.01M18 10h.01"/><path d="M17.3 5H6.7a4 4 0 0 0-4 3.6l-.6 5.6A3 3 0 0 0 5.1 17.6c1 0 1.9-.5 2.4-1.3L8.6 15h6.8l1.1 1.3c.6.8 1.4 1.3 2.4 1.3a3 3 0 0 0 3-3.4l-.6-5.6A4 4 0 0 0 17.3 5z"/>',
+  music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  book: '<path d="M4 19.5V5a2 2 0 0 1 2-2h14v16H6.5A2.5 2.5 0 0 0 4 21.5 2.5 2.5 0 0 1 6.5 19H20"/>',
+  code: '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   smile: '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
@@ -351,6 +355,7 @@ function parseRoute(p = location.pathname) {
   if ((m = p.match(/^\/channels\/@me\/([\w-]+)/))) return { type: 'dm', dmId: m[1] };
   if ((m = p.match(/^\/channels\/([\w-]+)(?:\/([\w-]+))?/)) && m[1] !== '@me') return { type: 'server', serverId: m[1], channelId: m[2] || null };
   if (/^\/feed\/?$/.test(p)) return { type: 'feed' };
+  if (/^\/stargaze\/?$/.test(p)) return { type: 'stargaze' };
   if (/^\/activity\/?$/.test(p)) return { type: 'activity' };
   return { type: 'home' };
 }

@@ -22,7 +22,7 @@ async function onSignedIn(user) {
   renderShell();
   const pending = sessionStorage.getItem('lumi.pendingInvite');
   if (pending) { sessionStorage.removeItem('lumi.pendingInvite'); history.replaceState({}, '', '/invite/' + pending); }
-  else if (!/^\/(channels|invite|feed|activity)/.test(location.pathname)) history.replaceState({}, '', '/channels/@me');
+  else if (!/^\/(channels|invite|feed|activity|stargaze)/.test(location.pathname)) history.replaceState({}, '', '/channels/@me');
   route();
 }
 
