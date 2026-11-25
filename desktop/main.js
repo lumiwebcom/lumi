@@ -27,7 +27,11 @@ function saveBounds() {
   try { fs.writeFileSync(stateFile(), JSON.stringify({ ...win.getNormalBounds(), maximized: win.isMaximized() })); } catch {}
 }
 
+const LUMI_HOSTS = new Set([new URL(APP_URL).host, 'lumichat.pages.dev', 'lumi-gtih.onrender.com']);
 const isLumi = (url) => { try { return new URL(url).origin === APP_ORIGIN; } catch { return false; } };
+const isLumiLink = (url) => { try { const u = new URL(url); return (u.protocol === 'https:' || u.origin === APP_ORIGIN) && LUMI_HOSTS.has(u.host); } catch { return false; } };
+// any lumi link (an invite, a chat) stays in the app: same path, on the app's own address
+const inApp = (url) => { const u = new URL(url); return APP_ORIGIN + u.pathname + u.search + u.hash; };
 const isGoogle = (url) => { try { return ALLOWED_POPUP_HOSTS.includes(new URL(url).hostname); } catch { return false; } };
 
 function createWindow() {
@@ -43,11 +47,13 @@ function createWindow() {
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (isGoogle(url)) return { action: 'allow', overrideBrowserWindowOptions: { width: 500, height: 640, autoHideMenuBar: true, parent: win } };
+    if (isLumiLink(url)) { win.loadURL(inApp(url)); return { action: 'deny' }; }
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (e, url) => {
     if (isLumi(url) || isGoogle(url) || url.startsWith('file:')) return;
+    if (isLumiLink(url)) { e.preventDefault(); win.loadURL(inApp(url)); return; }
     e.preventDefault(); if (/^https?:/.test(url)) shell.openExternal(url);
   });
   win.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
