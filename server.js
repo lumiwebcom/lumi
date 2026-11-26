@@ -1531,8 +1531,10 @@ server.on('error', (e) => {
 // 4 minutes counts as traffic, so the server never falls asleep.
 const SELF_URL = process.env.KEEPALIVE_URL || process.env.RENDER_EXTERNAL_URL;
 if (SELF_URL) {
+  let firstPing = true;
+  console.log('  Keep-awake: pinging ' + SELF_URL + ' every 4 minutes');
   const ping = () => fetch(SELF_URL.replace(/\/$/, '') + '/api/version', { headers: { 'User-Agent': 'lumi-keepalive' } })
-    .then((r) => { if (!r.ok) console.log('keepalive: got', r.status); })
+    .then((r) => { if (!r.ok) console.log('keepalive: got', r.status); else if (firstPing) { firstPing = false; console.log('  Keep-awake: working'); } })
     .catch((e) => console.log('keepalive failed:', e.message));
   setInterval(ping, 4 * 60 * 1000);
   setTimeout(ping, 30 * 1000);
