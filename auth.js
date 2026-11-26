@@ -111,7 +111,7 @@ function openGoogleSetup() {
     try {
       await api('POST', '/api/setup/google', { clientId: m.el.querySelector('#gid').value });
       S.config = await api('GET', '/api/config');
-      m.close(); toast('Google sign-in is on! 🎉');
+      m.close(); toast('Google sign-in is on');
       const mode = $('[data-mode]')?.dataset.mode === 'login' ? 'signup' : 'login';
       renderAuth(mode);
     } catch (e) { m.el.querySelector('#gerr').textContent = e.message; }

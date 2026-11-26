@@ -104,7 +104,7 @@ function connectSocket() {
   socket.on('friends:update', async (ev) => {
     await refreshFriends();
     if (ev.kind === 'request' && ev.to === S.me.id) { toast(`${ev.from.displayName} sent you a friend request`); playSound('message'); }
-    if (ev.kind === 'accepted' && ev.to === S.me.id && ev.from) toast(`${ev.from.displayName} accepted your friend request 🎉`);
+    if (ev.kind === 'accepted' && ev.to === S.me.id && ev.from) toast(`${ev.from.displayName} accepted your friend request`);
     renderRail(); renderSideBody();
     if (S.view.type === 'home' && S.homeTab !== 'add') renderMain();
     refreshStories().then(() => { if (S.view.type === 'home' && S.homeTab !== 'add' && !svState) renderHomeBody(); });

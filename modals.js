@@ -3,23 +3,23 @@
 
 // ------------------------------------------------------------------ create / join server
 function openCreateServer(start = 'create') {
-  const templates = [['default', '💬', 'Friends'], ['gaming', '🎮', 'Gaming'], ['study', '📚', 'Study group'], ['default', '✨', 'Community']];
+  const templates = [['default', 'users', 'Friends', 'A hangout for your group'], ['gaming', 'gamepad', 'Gaming', 'Squads, clips and voice'], ['study', 'book', 'Study group', 'Questions, notes and focus'], ['default', 'room', 'Something else', 'Start with the basics']];
   let tpl = 'default', iconUrl = null;
   const m = openModal({ title: start === 'join' ? 'Join a community' : 'Create a community', body: '<div id="cs"></div>' });
   const body = m.el.querySelector('#cs');
   const step1 = () => {
     m.el.querySelector('.modal-head span').textContent = 'Create a community';
-    body.innerHTML = `<p class="muted" style="margin:0 0 16px;text-align:center">A community is your own corner for your people: rooms to chat, boards for threads, galleries for photos, and lounges to hang out.</p>
-      <div class="choice-grid">${templates.map(([k, e, l], i) => `<button class="choice" data-i="${i}"><span class="em">${e}</span>${l}</button>`).join('')}</div>
+    body.innerHTML = `<p class="muted" style="margin:0 0 16px">Pick a starting point. You can rename, add or remove anything later.</p>
+      <div class="tpl-list">${templates.map(([k, ic, l, d], i) => `<button class="tpl" data-i="${i}"><span class="tpl-ic">${icon(ic, 'sm')}</span><span class="tpl-t"><b>${l}</b><span>${d}</span></span>${icon('chevron', 'sm').replace('class="i sm"', 'class="i sm tpl-go"')}</button>`).join('')}</div>
       <div class="or">or</div><button class="btn block lg" data-join>Join with an invite</button>`;
-    body.querySelectorAll('.choice').forEach((b) => (b.onclick = () => { tpl = templates[b.dataset.i][0]; step2(templates[b.dataset.i]); }));
+    body.querySelectorAll('.tpl').forEach((b) => (b.onclick = () => { tpl = templates[b.dataset.i][0]; step2(templates[b.dataset.i]); }));
     body.querySelector('[data-join]').onclick = joinStep;
   };
   const step2 = ([, , label]) => {
-    m.el.querySelector('.modal-head span').textContent = 'Make it yours';
-    body.innerHTML = `<p class="muted" style="margin:0 0 18px;text-align:center">Give it a personality with a name and an icon. You can change these later.</p>
+    m.el.querySelector('.modal-head span').textContent = 'Name your community';
+    body.innerHTML = `<p class="muted" style="margin:0 0 18px;text-align:center">Add a name and an icon. You can change both later.</p>
       <div style="display:flex;justify-content:center;margin-bottom:18px"><div class="ring" style="cursor:pointer" id="cs-icon"><div class="av" style="width:88px;height:88px;font-size:88px;background:var(--bg3);color:var(--text2)"><div class="ph" style="--ph:var(--bg3);color:var(--text2);font-size:12px">${icon('image')}<br>Upload</div></div></div></div>
-      <div class="field"><label>Community name</label><input class="input" id="cs-name" value="${esc(S.me.displayName)}'s ${esc(label === 'Friends' ? 'hangout' : label.toLowerCase())}" maxlength="100" autofocus></div>
+      <div class="field"><label>Community name</label><input class="input" id="cs-name" value="${esc(S.me.displayName)}'s ${esc(label === 'Friends' ? 'hangout' : label === 'Something else' ? 'place' : label.toLowerCase())}" maxlength="100" autofocus></div>
       <div style="display:flex;gap:8px;margin-top:20px"><button class="btn" data-back>Back</button><button class="btn grad" style="flex:1" data-create>Create</button></div>`;
     body.querySelector('#cs-icon').onclick = async () => {
       const f = await pickFile(); if (!f) return;
@@ -113,7 +113,7 @@ async function openInviteAccept(code) {
       const sd = await api('POST', `/api/invites/${encodeURIComponent(code)}`);
       S.serverData[sd.server.id] = sd; sd.members.forEach((x) => cacheUser(x.user));
       if (!S.servers.find((x) => x.id === sd.server.id)) S.servers.push({ id: sd.server.id, name: sd.server.name, icon: sd.server.icon, unread: 0 });
-      m.close(); navigate(`/channels/${sd.server.id}`); if (!d.alreadyMember) toast(`Welcome to ${sd.server.name}! 🎉`);
+      m.close(); navigate(`/channels/${sd.server.id}`); if (!d.alreadyMember) toast(`You joined ${sd.server.name}`);
     } catch (e) { toast(e.message, true); }
   };
 }
@@ -377,7 +377,7 @@ async function openProfile(uid, serverId) {
     <div class="pav">${avatar(u, 92, { ring: true, dot: true })}</div>
     <div class="pbody"><div class="pname"><span class="${u.sparks ? 'nm-plate' : ''}"><span ${nameAttrs(u)}>${esc(d.nickname || mem?.nickname || u.displayName)}</span></span>${roleBadge(u)}${sparkMark(u)}</div><div class="puser">@${esc(u.username)}${d.nickname || mem?.nickname ? ` · ${esc(u.displayName)}` : ''}${d.nickname ? ' <span class="nick-note" data-tip="Your nickname for them. Only you see it.">nickname</span>' : ''}</div>
       ${sd && mem ? `<div class="p-level">${lvlChip(mem.xp, { long: true })}<span class="muted small">${mem.xp} xp in ${esc(sd.server.name)}</span></div>` : ''}
-      ${u.customStatus ? `<div class="pstatus">💭 ${esc(u.customStatus)}</div>` : ''}
+      ${u.customStatus ? `<div class="pstatus">${esc(u.customStatus)}</div>` : ''}
       ${u.bio ? `<div class="psec"><h5>About me</h5><div style="white-space:pre-wrap">${esc(u.bio)}</div></div>` : ''}
       ${badgesRow(d.badges)}
       <div class="psec"><h5>Member since</h5><div>${new Date(d.memberSince).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}${mem ? ` · joined ${esc(sd.server.name)} ${new Date(mem.joinedAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}</div></div>
@@ -431,7 +431,7 @@ function usProfile(pane) {
       <div style="display:flex;gap:8px;margin-top:8px"><button class="btn primary" data-av>Change photo</button>${u.avatar ? '<button class="btn ghost" data-rmav>Remove</button>' : ''}</div></div></div>
     <div class="field"><label>Name</label><input class="input" id="p-name" value="${esc(u.displayName)}" maxlength="32"></div>
     <div class="field"><label>Username</label><input class="input" id="p-user" value="${esc(u.username)}" maxlength="24"><div class="hint">Letters, numbers, underscores and periods. Friends add you with this.</div></div>
-    <div class="field"><label>Status</label><input class="input" id="p-status" value="${esc(u.customStatus || '')}" maxlength="80" placeholder="What's happening? 💭"></div>
+    <div class="field"><label>Status</label><input class="input" id="p-status" value="${esc(u.customStatus || '')}" maxlength="80" placeholder="What are you up to?"></div>
     <div class="field"><label>Bio</label><textarea class="textarea" id="p-bio" maxlength="190" placeholder="Tell people a bit about yourself">${esc(u.bio || '')}</textarea><div class="hint" id="bio-count">${(u.bio || '').length} / 190</div></div>
     <div class="save-bar"><span></span><button class="btn primary" data-save>Save</button></div>`;
   pane.querySelector('#p-bio').oninput = (e) => (pane.querySelector('#bio-count').textContent = `${e.target.value.length} / 190`);
@@ -460,7 +460,7 @@ function usAccount(pane) {
 }
 function usAppearance(pane) {
   pane.innerHTML = `<h2>Appearance</h2><h4>Theme</h4><div class="choice-grid" style="grid-template-columns:repeat(3,1fr)">
-    ${[['light', '☀️', 'Light'], ['dark', '🌙', 'Dark'], ['system', '💻', 'Sync with device']].map(([k, e, l]) => `<button class="choice ${S.settings.theme === k ? 'sel' : ''}" data-theme="${k}"><span class="em">${e}</span>${l}</button>`).join('')}</div>
+    ${[['light', 'sun', 'Light'], ['dark', 'moon', 'Dark'], ['system', 'screen', 'Match my device']].map(([k, e, l]) => `<button class="choice ${S.settings.theme === k ? 'sel' : ''}" data-theme="${k}">${icon(e, 'sm')}${l}</button>`).join('')}</div>
     ${sparksAppearance()}`;
   pane.querySelectorAll('[data-theme]').forEach((b) => (b.onclick = () => { S.settings.theme = b.dataset.theme; saveSettings(); applyTheme(); usAppearance(pane); }));
   wireSparksAppearance(pane, () => usAppearance(pane));

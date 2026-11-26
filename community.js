@@ -245,7 +245,7 @@ function openNewThread(sid, cid) {
   el.querySelector('[data-attach]').onclick = async () => {
     const f = await pickFile('image/*,video/*'); if (!f) return;
     el.querySelector('#nt-att').textContent = 'Uploading…';
-    try { att = await uploadFile(f); el.querySelector('#nt-att').textContent = '📎 ' + att.name; } catch (e) { el.querySelector('#nt-att').textContent = ''; toast(e.message, true); }
+    try { att = await uploadFile(f); el.querySelector('#nt-att').textContent = 'Attached: ' + att.name; } catch (e) { el.querySelector('#nt-att').textContent = ''; toast(e.message, true); }
   };
   el.querySelector('[data-ok]').onclick = async () => {
     const title = el.querySelector('#nt-title').value.trim(); if (!title) return toast('Give your thread a title', true);
