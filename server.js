@@ -1081,7 +1081,7 @@ function pickGif(item) {
   return { id: String(item.id ?? item.slug ?? full.url), title: String(item.title || item.content_description || '').slice(0, 100),
     preview: prev.url, url: full.url, w: full.w || prev.w || 1, h: full.h || prev.h || 1 };
 }
-async function gifQuery(kind, q, page, uid) {
+async function gifQuery(kind, q, page, uid, ttl = 15 * 60_000) {
   const prov = gifProvider(); if (!prov) throw fail(503, 'GIFs aren’t switched on yet.');
   const per = 24; let url;
   if (prov === 'klipy') {
@@ -1091,10 +1091,10 @@ async function gifQuery(kind, q, page, uid) {
   } else {
     const qs = new URLSearchParams({ api_key: process.env.GIPHY_API_KEY, limit: String(per), offset: String((page - 1) * per), rating: 'pg', lang: 'en' });
     if (q) qs.set('q', q);
-    url = `https://api.giphy.com/v1/gifs/${kind}?${qs}`;
+    url = `${process.env.GIPHY_API_BASE || 'https://api.giphy.com'}/v1/gifs/${kind}?${qs}`;
   }
   const key = `${kind}|${q}|${page}`, hit = gifCache.get(key);
-  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.data;
+  if (hit && Date.now() - hit.at < ttl) return hit.data;
   const r = await fetch(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
   if (!r || !r.ok) throw fail(502, 'Couldn’t load GIFs right now. Try again in a moment.');
   const body = await r.json().catch(() => ({}));
@@ -1108,7 +1108,8 @@ async function gifQuery(kind, q, page, uid) {
 app.get('/api/gifs/home', auth, wrap(async (req) => {
   const favs = db.prepare('SELECT preview FROM gif_favs WHERE user_id=? ORDER BY at DESC LIMIT 1').get(req.user.id);
   if (!gifProvider()) return { enabled: false, favPreview: favs?.preview || null, categories: [] };
-  const first = async (kind, q) => { try { return (await gifQuery(kind, q, 1, req.user.id)).items[0]?.preview || null; } catch { return null; } };
+  // category pictures barely change: keep them 6 hours so they don't use up the API's hourly limit
+  const first = async (kind, q) => { try { return (await gifQuery(kind, q, 1, req.user.id, 6 * 3600_000)).items[0]?.preview || null; } catch { return null; } };
   const [trending, ...cats] = await Promise.all([first('trending', ''), ...GIF_TERMS.map((t) => first('search', t))]);
   return { enabled: true, favPreview: favs?.preview || null, trending, categories: GIF_TERMS.map((term, i) => ({ term, preview: cats[i] })) };
 }));

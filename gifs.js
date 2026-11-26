@@ -97,7 +97,7 @@ async function gifHome(body) {
     let html = `<div class="gp-tiles">${tile('favorites', `${icon('star', 'sm')} Favorites`, favImg, 'fav')}`;
     if (hm?.enabled) html += tile('trending', `${icon('trend', 'sm')} Trending`, hm.trending) + hm.categories.map((c) => tile('q:' + c.term, esc(c.term), c.preview)).join('');
     html += '</div>';
-    if (hm && !hm.enabled) html += `<div class="gp-note">${icon('info', 'sm')}<div>GIF search isn’t switched on yet. ${S.me.siteRole === 'owner' ? 'Add a free <b>KLIPY_API_KEY</b> in Render to turn it on.' : 'Your favorite GIFs still work.'}</div></div>`;
+    if (hm && !hm.enabled) html += `<div class="gp-note">${icon('info', 'sm')}<div>GIF search isn’t switched on yet. ${S.me.siteRole === 'owner' ? 'Add a free <b>GIPHY_API_KEY</b> in Render to turn it on.' : 'Your favorite GIFs still work.'}</div></div>`;
     if (!hm) html += `<div class="gp-tiles">${Array.from({ length: 6 }, () => '<div class="gp-sk" style="height:96px"></div>').join('')}</div>`;
     body.innerHTML = html;
     body.querySelectorAll('[data-gp-go]').forEach((b) => (b.onclick = () => { const k = b.dataset.gpGo; k.startsWith('q:') ? gifGo('search', k.slice(2)) : gifGo(k); }));
