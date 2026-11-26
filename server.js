@@ -1173,7 +1173,9 @@ app.get('/api/gifs/search', auth, wrap(async (req) => {
   rateLimit('gif:' + req.user.id, 120, 60_000);
   const q = String(req.query.q || '').trim().slice(0, 60), page = Math.max(1, Math.min(20, Number(req.query.page) || 1));
   if (moderation.isNsfwSearch(q)) throw fail(400, 'That search isn’t allowed on lumi.');
-  if (q && (q.match(/[a-z0-9]/gi) || []).length < 3) return { items: [], more: false, short: true };
+  // 2+ letters is fine (gg, ok, hi); a few short starts of bad words are refused outright
+  if (q && (q.match(/[a-z0-9]/gi) || []).length < 2) return { items: [], more: false, short: true };
+  if (/^(se|sx|s3|po|p0|nu|bo|b0|ti|t1|di|d1|pu|cu|xx|ho|ns|tw|nk|as)$/i.test(q.replace(/[^a-z0-9]/gi, ''))) return { items: [], more: false, short: true };
   const r = await gifQuery(q ? 'search' : 'trending', q, page, req.user.id);
   // every result also gets the nudity check in the background; ones that fail are hidden from then on
   for (const g of r.items.slice(0, 12)) if (!gifVerdicts.has(g.url)) gifIsSafe(g.url).catch(() => {});

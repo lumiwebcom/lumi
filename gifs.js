@@ -73,7 +73,7 @@ async function gifGo(view, q = '') {
   const body = panel.querySelector('#gp-body'); body.scrollTop = 0;
   if (view === 'home') return gifHome(body);
   if (view === 'favorites') { if (!Gif.favs) await loadGifFavs(); Gif.items = Gif.favs.map((f) => ({ ...f })); return gifGrid(body); }
-  if (view === 'search' && (q.match(/[a-z0-9]/gi) || []).length < 3) { body.innerHTML = `<div class="gp-empty">Keep typing…</div>`; return; }
+  if (view === 'search' && (q.match(/[a-z0-9]/gi) || []).length < 2) { body.innerHTML = `<div class="gp-empty">Keep typing…</div>`; return; }
   body.innerHTML = gifSkeleton();
   await gifMore(true);
 }
@@ -83,6 +83,7 @@ async function gifMore(first) {
   try {
     const r = await api('GET', `/api/gifs/search?q=${encodeURIComponent(view === 'trending' ? '' : q)}&page=${Gif.page}`);
     if (Gif.view !== view || Gif.q !== q) return;
+    if (r.short && !Gif.items.length) { const b = $('#gp-body'); if (b) b.innerHTML = '<div class="gp-empty">Keep typing…</div>'; return; }
     Gif.items.push(...r.items); Gif.more = r.more; Gif.page++;
     gifGrid($('#gp-body'));
   } catch (e) { const b = $('#gp-body'); if (b && !Gif.items.length) b.innerHTML = `<div class="gp-empty">${esc(e.message)}</div>`; }
