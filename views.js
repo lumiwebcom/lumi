@@ -607,7 +607,7 @@ function renderComposer() {
   const room = sd?.channels.find((c) => c.id === v.channelId);
   const allowed = sd ? canPost(sd, room) : true;
   let ph = 'Message…';
-  if (sd) ph = allowed ? `Message ${room?.name}` : room?.locked && can(sd, P.SEND_MESSAGES) ? 'Only admins can post in this room' : 'You can’t send messages in this room';
+  if (sd) ph = allowed ? `Message ${room?.name}` : room?.ownerPost && can(sd, P.SEND_MESSAGES) ? 'Only the owner can post in this room' : room?.locked && can(sd, P.SEND_MESSAGES) ? 'Only admins can post in this room' : 'You can’t send messages in this room';
   else { const dm = S.dms.find((d) => d.id === v.dmId); ph = `Message ${dmName(dm)}…`; }
   wrap.innerHTML = `<div id="composer-extras"></div><div class="composer ${allowed ? '' : 'disabled'}">
     <button class="icon-btn" data-act="emoji" data-tip="Emoji">${icon('smile')}</button>

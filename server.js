@@ -122,6 +122,7 @@ for (const [c, t] of [['title', 'TEXT'], ['thread_id', 'TEXT']]) if (!colsOf('me
 if (!colsOf('servers').includes('welcome')) db.exec('ALTER TABLE servers ADD COLUMN welcome TEXT');
 if (!colsOf('channels').includes('locked')) db.exec('ALTER TABLE channels ADD COLUMN locked INTEGER DEFAULT 0');
 if (!colsOf('channels').includes('admin_only')) db.exec('ALTER TABLE channels ADD COLUMN admin_only INTEGER DEFAULT 0');
+if (!colsOf('channels').includes('owner_post')) db.exec('ALTER TABLE channels ADD COLUMN owner_post INTEGER DEFAULT 0');
 db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
 CREATE TABLE IF NOT EXISTS friend_nicks (owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, target_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, nick TEXT NOT NULL, PRIMARY KEY (owner_id, target_id));
 CREATE TABLE IF NOT EXISTS daily_tasks (user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, day INTEGER NOT NULL, task TEXT NOT NULL, progress INTEGER NOT NULL DEFAULT 0, done_at INTEGER, PRIMARY KEY (user_id, day, task));
@@ -785,6 +786,7 @@ app.post('/api/channels/:id/messages', auth, gifGuard, wrap(req => {
   if (c.type === 'voice') throw fail(400, 'Lounges don’t have text chat');
   if (c.server_id && !has(memberPerms(c.server_id, req.user.id), P.SEND_MESSAGES)) throw fail(403, 'You can’t send messages in this room.');
   if (c.server_id && c.locked && !has(memberPerms(c.server_id, req.user.id), P.ADMINISTRATOR)) throw fail(403, 'Only admins can post in this room.');
+  if (c.server_id && c.owner_post && db.prepare('SELECT owner_id FROM servers WHERE id=?').get(c.server_id)?.owner_id !== req.user.id) throw fail(403, 'Only the owner can post in this room.');
   if (c.type === 'dm') {
     const other = db.prepare('SELECT user_id FROM channel_members WHERE channel_id=? AND user_id<>?').get(c.id, req.user.id);
     if (other && isBlocked(req.user.id, other.user_id)) throw fail(403, 'You cannot message this user.');
@@ -904,7 +906,7 @@ function serverDetail(sid, uid) {
   const channels = db.prepare('SELECT * FROM channels WHERE server_id=? ORDER BY position, created_at').all(sid)
     .filter((c) => !c.admin_only || has(perms, P.ADMINISTRATOR))
     .map(c => ({ id: c.id, type: c.type, name: c.name, topic: c.topic, position: c.position,
-      categoryId: c.category_id || null, locked: !!c.locked, adminOnly: !!c.admin_only, unread: c.type !== 'voice' ? unreadCount(uid, c.id) : 0 }));
+      categoryId: c.category_id || null, locked: !!c.locked, adminOnly: !!c.admin_only, ownerPost: !!c.owner_post, unread: c.type !== 'voice' ? unreadCount(uid, c.id) : 0 }));
   const categories = db.prepare('SELECT * FROM categories WHERE server_id=? ORDER BY position, created_at').all(sid)
     .map((c) => ({ id: c.id, name: c.name, position: c.position }));
   const roles = db.prepare('SELECT * FROM roles WHERE server_id=? ORDER BY position DESC').all(sid)
@@ -998,8 +1000,8 @@ app.post('/api/servers/:id/channels', auth, wrap(req => {
   const name = sanitizeName(req.body.name, 100) || ({ text: 'New room', voice: 'Lounge', board: 'Board', gallery: 'Gallery' })[type];
   const pos = (db.prepare(`SELECT MAX(position) p FROM channels WHERE server_id=? AND type${type === 'voice' ? "='voice'" : "<>'voice'"}`).get(sid).p ?? (type === 'voice' ? 99 : -1)) + 1;
   const cat = req.body.categoryId && db.prepare('SELECT id FROM categories WHERE id=? AND server_id=?').get(req.body.categoryId, sid);
-  db.prepare('INSERT INTO channels (id,server_id,type,name,topic,position,category_id,created_at,locked,admin_only) VALUES (?,?,?,?,?,?,?,?,?,?)')
-    .run(id(), sid, type, name, String(req.body.topic || '').slice(0, 300), pos, cat ? cat.id : null, now(), type !== 'voice' && req.body.locked ? 1 : 0, req.body.adminOnly ? 1 : 0);
+  db.prepare('INSERT INTO channels (id,server_id,type,name,topic,position,category_id,created_at,locked,admin_only,owner_post) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id(), sid, type, name, String(req.body.topic || '').slice(0, 300), pos, cat ? cat.id : null, now(), type !== 'voice' && req.body.locked ? 1 : 0, req.body.adminOnly ? 1 : 0, type !== 'voice' && req.body.ownerPost ? 1 : 0);
   io.to(`server:${sid}`).emit('server:update', { serverId: sid });
   return { ok: true };
 }));
@@ -1016,7 +1018,8 @@ app.patch('/api/channels/:id', auth, wrap(req => {
   }
   const locked = req.body.locked !== undefined ? (c.type !== 'voice' && req.body.locked ? 1 : 0) : (c.locked || 0);
   const adminOnly = req.body.adminOnly !== undefined ? (req.body.adminOnly ? 1 : 0) : (c.admin_only || 0);
-  db.prepare('UPDATE channels SET name=?, topic=?, position=?, category_id=?, locked=?, admin_only=? WHERE id=?').run(name, topic, position, categoryId, locked, adminOnly, c.id);
+  const ownerPost = req.body.ownerPost !== undefined ? (c.type !== 'voice' && req.body.ownerPost ? 1 : 0) : (c.owner_post || 0);
+  db.prepare('UPDATE channels SET name=?, topic=?, position=?, category_id=?, locked=?, admin_only=?, owner_post=? WHERE id=?').run(name, topic, position, categoryId, locked, adminOnly, ownerPost, c.id);
   // kick non-admins out of a lounge that just became admin-only
   if (adminOnly && !c.admin_only && voiceRooms.get(c.id)) for (const [sockId, p] of voiceRooms.get(c.id)) if (!has(memberPerms(c.server_id, p.userId), P.ADMINISTRATOR)) { const sk = io.sockets.sockets.get(sockId); if (sk) leaveVoice(sk); }
   io.to(`server:${c.server_id}`).emit('server:update', { serverId: c.server_id });
