@@ -1168,7 +1168,10 @@ function mediaLeaves(o, p = '', out = []) {
   if (!o || typeof o !== 'object') return out;
   if (typeof o.url === 'string' && o.url.startsWith('https://')) {
     const ext = (o.url.split('?')[0].match(/\.(gif|webp|mp4|webm|jpe?g|png)$/i) || [])[1]?.toLowerCase();
-    out.push({ url: o.url, w: Number(o.width || o.dims?.[0]) || 0, h: Number(o.height || o.dims?.[1]) || 0, ext, path: p.toLowerCase() });
+    const w = Number(o.width || o.dims?.[0]) || 0, h = Number(o.height || o.dims?.[1]) || 0;
+    out.push({ url: o.url, w, h, ext, path: p.toLowerCase() });
+    // GIPHY lists a smaller WebP copy right next to each GIF
+    if (typeof o.webp === 'string' && o.webp.startsWith('https://')) out.push({ url: o.webp, w, h, ext: 'webp', path: p.toLowerCase() });
   }
   for (const [k, v] of Object.entries(o)) if (v && typeof v === 'object') mediaLeaves(v, p + '/' + k, out);
   return out;
@@ -1207,13 +1210,27 @@ async function gifQuery(kind, q, page, uid, ttl = 15 * 60_000) {
   if (gifCache.size > 500) gifCache.delete(gifCache.keys().next().value);
   return data;
 }
+let gifHomeJob = null;
+function refreshGifHome(uid) {
+  if (gifHomeJob) return gifHomeJob;
+  gifHomeJob = (async () => {
+    const first = async (kind, q) => { try { return (await gifQuery(kind, q, 1, uid, 6 * 3600_000)).items[0]?.preview || null; } catch { return null; } };
+    const [trending, ...cats] = await Promise.all([first('trending', ''), ...GIF_TERMS.map((t) => first('search', t))]);
+    if (trending || cats.some(Boolean)) db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('gif_home', JSON.stringify({ at: Date.now(), trending, categories: GIF_TERMS.map((term, i) => ({ term, preview: cats[i] })) }));
+  })().finally(() => { gifHomeJob = null; });
+  return gifHomeJob;
+}
 app.get('/api/gifs/home', auth, wrap(async (req) => {
   const favs = db.prepare('SELECT preview FROM gif_favs WHERE user_id=? ORDER BY at DESC LIMIT 1').get(req.user.id);
   if (!gifProvider()) return { enabled: false, favPreview: favs?.preview || null, categories: [] };
-  // category pictures barely change: keep them 6 hours so they don't use up the API's hourly limit
-  const first = async (kind, q) => { try { return (await gifQuery(kind, q, 1, req.user.id, 6 * 3600_000)).items[0]?.preview || null; } catch { return null; } };
-  const [trending, ...cats] = await Promise.all([first('trending', ''), ...GIF_TERMS.map((t) => first('search', t))]);
-  return { enabled: true, favPreview: favs?.preview || null, trending, categories: GIF_TERMS.map((term, i) => ({ term, preview: cats[i] })) };
+  // category pictures barely change: they're saved (so updates don't wipe them) and refreshed every 6 hours in the background
+  const saved = JSON.parse(db.prepare("SELECT v FROM meta WHERE k='gif_home'").get()?.v || 'null');
+  if (!saved || Date.now() - saved.at > 6 * 3600_000) {
+    const job = refreshGifHome(req.user.id);
+    if (!saved) await job; // only the very first time do we wait
+  }
+  const home = JSON.parse(db.prepare("SELECT v FROM meta WHERE k='gif_home'").get()?.v || 'null') || { trending: null, categories: [] };
+  return { enabled: true, favPreview: favs?.preview || null, trending: home.trending, categories: home.categories };
 }));
 app.get('/api/gifs/search', auth, wrap(async (req) => {
   rateLimit('gif:' + req.user.id, 120, 60_000);

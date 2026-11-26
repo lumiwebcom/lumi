@@ -42,6 +42,7 @@ async function onSignedIn(user) {
   if (!S.me.email) try { S.me = { ...S.me, ...(await api('GET', '/api/me')).user }; } catch {}
   $('#root').innerHTML = `<div class="splash">${wordmark('lg')}</div>`;
   await Promise.all([refreshServers(), refreshDMs(), refreshFriends(), refreshStories(), loadNicknames(), loadTasks()]);
+  if (typeof preloadGifs === 'function') preloadGifs();
   applySparkTheme();
   connectSocket();
   renderShell();

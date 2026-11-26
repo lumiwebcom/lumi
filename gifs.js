@@ -4,6 +4,20 @@ const GIF_URL = /^https:\/\/([a-z0-9-]+\.)*(klipy\.com|klipy\.co|giphy\.com)\/\S
 const isGifMsg = (text) => GIF_URL.test((text || '').trim());
 const Gif = { open: false, view: 'home', q: '', page: 1, items: [], more: false, loading: false, home: null, favs: null };
 
+// load the GIF home screen in the background (and remember it), so opening GIFs is instant
+function preloadGifs() {
+  try { const c = JSON.parse(localStorage.getItem('lumi.gifhome') || 'null'); if (c && !Gif.home) Gif.home = c; } catch {}
+  const warm = (h) => [h?.favPreview, h?.trending, ...(h?.categories || []).map((c) => c.preview)].filter(Boolean).forEach((u) => { const i = new Image(); i.referrerPolicy = 'no-referrer'; i.src = u; });
+  warm(Gif.home);
+  setTimeout(async () => {
+    try {
+      Gif.home = { ...(await api('GET', '/api/gifs/home')), at: Date.now() };
+      try { localStorage.setItem('lumi.gifhome', JSON.stringify(Gif.home)); } catch {}
+      warm(Gif.home);
+    } catch {}
+    if (!Gif.favs) loadGifFavs();
+  }, 2500);
+}
 async function loadGifFavs() { try { Gif.favs = (await api('GET', '/api/gifs/favorites')).items; } catch { Gif.favs = []; } }
 const isGifFav = (url) => !!Gif.favs?.some((f) => f.url === url);
 async function toggleGifFav(g) {
@@ -106,7 +120,7 @@ async function gifHome(body) {
   };
   draw();
   if (!Gif.home || Date.now() - Gif.home.at > 30 * 60_000) {
-    try { Gif.home = { ...(await api('GET', '/api/gifs/home')), at: Date.now() }; } catch { Gif.home = { enabled: false, categories: [], at: Date.now() }; }
+    try { Gif.home = { ...(await api('GET', '/api/gifs/home')), at: Date.now() }; try { localStorage.setItem('lumi.gifhome', JSON.stringify(Gif.home)); } catch {} } catch { if (!Gif.home) Gif.home = { enabled: false, categories: [], at: Date.now() }; }
     if (Gif.view === 'home' && $('#gp-body') === body) draw();
   }
 }
