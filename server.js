@@ -1526,6 +1526,17 @@ server.on('error', (e) => {
   else console.error(e);
   process.exit(1);
 });
+// ---- stay awake: Render's free plan puts the server to sleep after ~15 minutes with no visitors,
+// and the next visitor gets "Bad Gateway" while it boots. Visiting our own public address every
+// 4 minutes counts as traffic, so the server never falls asleep.
+const SELF_URL = process.env.KEEPALIVE_URL || process.env.RENDER_EXTERNAL_URL;
+if (SELF_URL) {
+  const ping = () => fetch(SELF_URL.replace(/\/$/, '') + '/api/version', { headers: { 'User-Agent': 'lumi-keepalive' } })
+    .then((r) => { if (!r.ok) console.log('keepalive: got', r.status); })
+    .catch((e) => console.log('keepalive failed:', e.message));
+  setInterval(ping, 4 * 60 * 1000);
+  setTimeout(ping, 30 * 1000);
+}
 server.listen(PORT, () => {
   console.log(`\n  ✨ Lumi is running at http://localhost:${PORT}`);
   if (process.env.LUMI_OPEN === '1') {
