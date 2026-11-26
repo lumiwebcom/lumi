@@ -167,7 +167,7 @@ function giveSparksMenu(anchor, u, done) {
 // ------------------------------------------------------------------ daily tasks + badges
 S.tasks = null;
 async function loadTasks() { try { S.tasks = await api('GET', '/api/tasks'); } catch {} }
-const TIER_COLORS = { 1: 'bronze', 2: 'silver', 3: 'gold', 4: 'diamond' };
+const TIER_COLORS = { 1: 'regular', 3: 'gold', 4: 'diamond' };
 // badge art: a hexagonal medal in the tier's metal, with an icon for the task and dots for the tier
 const BADGE_GLYPHS = {
   chat: '<path d="M20.7 16.6A9.5 9.5 0 1 0 17 20.4l4.5 1.1z"/>',
@@ -188,17 +188,23 @@ const BADGE_GLYPHS = {
   join: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5M15 12H3"/>',
   level: '<path d="m3 17 6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
   nickname: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+  week: '<path d="M12 2c1 4 5 5.5 5 10.5a5 5 0 0 1-10 0c0-2.5 1.5-3.5 2-5.5 1 1.5 2 2 2.5 3C12 7 12 4 12 2z"/>',
+  collector: '<rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/>',
+  hustler: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+  unstoppable: '<path d="m3 8 4.5 4L12 5l4.5 7L21 8l-2 11H5z"/>',
+  completionist: '<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/>',
+  mythic: '<path d="M6 3h12l3 6-9 12L3 9z"/><path d="M3 9h18M12 21 8.5 9 11 3M12 21l3.5-12L13 3"/>',
   devotee: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/><path d="m8.5 14.5 2.5 2.5 4.5-5"/>',
 };
-const METALS = { 1: ['#B07444', '#7E4E2B', '#FFE7D2'], 2: ['#A3AEBB', '#6E7987', '#FFFFFF'], 3: ['#DDA82E', '#9E7413', '#FFF7DD'], 4: ['#5CCBF0', '#1E7EA6', '#F3FCFF'] };
+const METALS = { 1: ['#7C4DFF', '#4B22B8', '#F3EEFF'], 3: ['#DDA82E', '#9E7413', '#FFF7DD'], 4: ['#5CCBF0', '#1E7EA6', '#F3FCFF'] };
 const taskGlyph = (id, cls = 'sm') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${BADGE_GLYPHS[id] || BADGE_GLYPHS.glow}</svg>`;
 function badgeIcon(b, size = 40) {
   const m = METALS[b.tier];
   const [fill, rim, ink] = m || ['var(--bg3)', 'var(--border)', 'var(--text3)'];
-  const pips = b.tier ? Array.from({ length: b.tier }, (_, i) => `<circle cx="${24 + (i - (b.tier - 1) / 2) * 4.6}" cy="38.5" r="1.5" fill="${ink}"/>`).join('') : '';
+  const pips = '';
   // diamonds get a facet line across the top
   const facets = b.tier === 4 ? `<path d="M10 15.5 24 24 38 15.5M24 24v16.5" fill="none" stroke="#FFFFFF" stroke-opacity=".22" stroke-width="1"/>` : '';
-  return `<span class="badge-ic ${b.tier ? TIER_COLORS[b.tier] : 'locked'}" style="--s:${size}px" data-tip="${esc(b.name)}${b.tier ? ` · ${b.tierName}` : ' · locked'}"><svg viewBox="0 0 48 48" width="${size}" height="${size}" aria-hidden="true">
+  return `<span class="badge-ic ${b.tier ? TIER_COLORS[b.tier] : 'locked'}" style="--s:${size}px" data-tip="${esc(b.name)}${b.tier ? (b.tierName ? ` · ${b.tierName}` : '') : ' · locked'}"><svg viewBox="0 0 48 48" width="${size}" height="${size}" aria-hidden="true">
     <path d="M24 3.5 41.5 13.5v21L24 44.5 6.5 34.5v-21z" fill="${fill}" stroke="${rim}" stroke-width="2.5" stroke-linejoin="round"/>
     ${m ? `<path d="M24 7.5 38 15.5v17L24 40.5 10 32.5v-17z" fill="none" stroke="${ink}" stroke-opacity=".28" stroke-width="1"/>` : ''}${facets}
     <g transform="translate(14.5 12.5) scale(.79)" fill="none" stroke="${ink}" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">${BADGE_GLYPHS[b.id] || BADGE_GLYPHS.glow}</g>${pips}</svg></span>`;
@@ -214,9 +220,12 @@ function tasksCard() {
 }
 function openBadges() {
   const t = S.tasks; if (!t) return;
-  openModal({ title: 'Badges', cls: 'badges-modal', body: `<p class="muted" style="margin:0 0 14px">Finish daily tasks to earn badges. Each one goes Bronze (1 time), Silver (5), Gold (15), then Diamond (40). They show on your profile.</p>
-    <div class="badge-grid">${t.badges.map((b) => `<div class="bg-item ${b.tier ? '' : 'locked'}">${badgeIcon(b, 46)}<div><b>${esc(b.name)}</b><div class="small muted">${esc(b.how)}</div>
-      <div class="small">${b.tier ? `<span class="tier ${TIER_COLORS[b.tier]}">${b.tierName}</span>` : ''}${b.next ? ` <span class="muted">${b.count}/${b.next} for ${['', 'Bronze', 'Silver', 'Gold', 'Diamond'][b.tier + 1]}</span>` : b.tier ? ' <span class="muted">maxed out</span>' : ''}</div></div></div>`).join('')}</div>` });
+  const item = (b) => `<div class="bg-item ${b.tier ? '' : 'locked'}">${badgeIcon(b, 46)}<div><b>${esc(b.name)}</b><div class="small muted">${esc(b.how)}</div>
+      <div class="small">${b.tier ? `<span class="tier ${TIER_COLORS[b.tier]}">${b.tierName || 'Earned'}</span>` : b.goal > 1 ? `<span class="muted">${b.count}/${b.goal}</span>` : '<span class="muted">Not yet</span>'}</div></div></div>`;
+  const regular = t.badges.filter((b) => (b.rarity || 'normal') === 'normal'), special = t.badges.filter((b) => b.rarity && b.rarity !== 'normal');
+  openModal({ title: 'Badges', cls: 'badges-modal', body: `<p class="muted" style="margin:0 0 14px">Finish a daily task to earn its badge. Gold and Diamond badges are rare ones for big milestones. They all show on your profile.</p>
+    ${special.length ? `<h5 class="bg-sec">Gold & Diamond</h5><div class="badge-grid">${special.map(item).join('')}</div><h5 class="bg-sec">Regular</h5>` : ''}
+    <div class="badge-grid">${regular.map(item).join('')}</div>` });
 }
 function badgesRow(badges) {
   if (!badges?.length) return '';
@@ -233,7 +242,7 @@ function onTasksUpdate({ tasks, completed, completedAll, earned }) {
   }
   for (const b of earned || []) {
     const key = 'b' + b.id + b.tier; if (_seenTask.has(key)) continue; _seenTask.add(key);
-    toast(`New badge: ${b.name} (${b.tierName})`);
+    toast(`New badge: ${b.name}${b.tierName ? ` (${b.tierName})` : ''}`);
     if (S.tasks) { const i = S.tasks.badges.findIndex((y) => y.id === b.id); if (i >= 0) S.tasks.badges[i] = b; }
   }
   if (S.view.type === 'home') renderActiveNow();

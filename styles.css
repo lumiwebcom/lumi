@@ -1266,3 +1266,6 @@ i.on { width: 7px; height: 7px; border-radius: 50%; background: var(--green); di
 img.mark { border-radius: 24%; object-fit: cover; }
 .rail-btn.home, [data-theme="dark"] .rail-btn.home { background: #1B0260; box-shadow: none; }
 .rail-btn.home img.mark { width: 100%; height: 100%; border-radius: 0; }
+.tier.regular { color: #A78BFA; }
+.bg-sec { margin: 4px 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text2); }
+.badge-grid + .bg-sec { margin-top: 18px; }

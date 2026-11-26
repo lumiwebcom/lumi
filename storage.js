@@ -27,6 +27,15 @@ module.exports = { enabled, get, put };
 if (require.main === module && process.argv[2] === 'restore') {
   (async () => {
     const file = process.argv[3];
+    // if an older version is still running (an update), have it save its latest data first
+    const site = process.env.RENDER_EXTERNAL_URL;
+    if (site) {
+      const key = require('crypto').createHash('sha256').update('lumi-flush:' + TOKEN).digest('hex');
+      try {
+        const r = await fetch(site + '/api/internal/flush', { method: 'POST', headers: { 'x-flush-key': key }, signal: AbortSignal.timeout(12_000) });
+        console.log(r.ok ? '  Storage: previous version saved its latest data' : `  Storage: no previous version to hand over from (${r.status})`);
+      } catch { console.log('  Storage: no previous version answered'); }
+    }
     const buf = await get('lumi-db');
     if (!buf) return console.log('  Storage: connected, no saved data yet');
     fs.mkdirSync(path.dirname(file), { recursive: true });

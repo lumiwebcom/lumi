@@ -121,9 +121,11 @@ function ago(ts) {
 }
 
 // ------------------------------------------------------------------ api
-async function api(method, url, body) {
+async function api(method, url, body, tries = 0) {
   const r = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin' });
   let data = {}; try { data = await r.json(); } catch {}
+  // lumi is switching to a new version: wait a moment and send it again
+  if (r.status === 503 && data.updating && tries < 15) { await new Promise((ok) => setTimeout(ok, 3000)); return api(method, url, body, tries + 1); }
   if (data && data._tasks && typeof onTasksUpdate === 'function') { try { onTasksUpdate(data._tasks); } catch {} }
   if (!r.ok) { const e = new Error(data.error || 'Something went wrong'); e.status = r.status; e.data = data; if (data.banned && !url.startsWith('/api/admin')) showBannedScreen({ reason: data.banReason, until: data.bannedUntil }); throw e; }
   return data;

@@ -160,13 +160,15 @@ ensureOwner();
 const isSiteAdmin = (u) => u && (u.site_role === 'owner' || u.site_role === 'admin');
 
 // ---- backups to permanent storage
-let lastBackupChanges = -1, lastBackupAt = 0, backingUp = false;
+let lastBackupChanges = -1, lastBackupAt = 0, backingUp = false, backupDay = 0, backupsToday = 0;
 const dbChanges = () => db.prepare('SELECT total_changes() n').get().n;
 async function backup(force) {
   if (!storage.enabled || backingUp) return;
   const n = dbChanges();
   if (n === lastBackupChanges) return;
-  if (!force && Date.now() - lastBackupAt < 150_000) return; // stay inside KV's free write limits
+  // save ~20s after a change; if it's a very busy day, slow down to stay inside KV's free write limits
+  const day = Math.floor(Date.now() / 86400_000); if (day !== backupDay) { backupDay = day; backupsToday = 0; }
+  if (!force && Date.now() - lastBackupAt < (backupsToday < 400 ? 20_000 : 240_000)) return;
   backingUp = true;
   try {
     const tmp = DB_FILE + '.snap';
@@ -175,11 +177,12 @@ async function backup(force) {
     const gz = zlib.gzipSync(fs.readFileSync(tmp));
     fs.unlinkSync(tmp);
     await storage.put('lumi-db', gz);
-    lastBackupChanges = n; lastBackupAt = Date.now();
+    lastBackupChanges = n; lastBackupAt = Date.now(); backupsToday++;
   } catch (e) { console.error('  Backup failed:', e.message); }
   finally { backingUp = false; }
 }
-if (storage.enabled) { lastBackupChanges = dbChanges(); setInterval(() => backup(false), 30_000); }
+if (storage.enabled) { lastBackupChanges = dbChanges(); setInterval(() => backup(false), 10_000); }
+
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, async () => { await backup(true); process.exit(0); });
 
 const id = () => crypto.randomBytes(9).toString('base64url');
@@ -273,6 +276,22 @@ const server = http.createServer(app);
 const io = new Server(server, { maxHttpBufferSize: 1e6, pingInterval: 20000, pingTimeout: 40000 });
 app.post('/api/stripe/webhook', express.raw({ type: '*/*', limit: '1mb' }), (req, res) => stripeWebhook(req, res));
 app.use(express.json({ limit: '1mb' }));
+// During an update the new server asks this (old) one to save everything and stop taking changes,
+// then loads that save, so nothing done in the last few minutes is lost.
+let readOnly = false;
+const FLUSH_KEY = storage.enabled ? crypto.createHash('sha256').update('lumi-flush:' + process.env.CF_API_TOKEN).digest('hex') : null;
+app.post('/api/internal/flush', async (req, res) => {
+  if (!FLUSH_KEY || req.get('x-flush-key') !== FLUSH_KEY) return res.status(404).end();
+  readOnly = true;
+  while (backingUp) await new Promise((r) => setTimeout(r, 200));
+  await backup(true);
+  console.log('  Handing over to the new version: saved and paused changes');
+  res.json({ ok: true });
+});
+app.use('/api', (req, res, next) => {
+  if (readOnly && req.method !== 'GET') return res.status(503).json({ error: 'lumi is updating. Try again in a few seconds.', updating: true });
+  next();
+});
 const pendingTasks = new Map(); // uid -> task progress made during the current request
 app.use('/api', (req, res, next) => {
   if (req.method === 'GET') return next();
@@ -1479,12 +1498,22 @@ const TASK_GROUPS = { chat: 'talk', dm: 'talk', reply: 'talk', thread: 'rooms', 
   glow: 'feed', moment: 'moments', friend: 'people', nickname: 'people', status: 'me', react: 'react', voice: 'voice',
   stargaze: 'explore', join: 'explore', invite: 'grow', level: 'grow' };
 const DEVOTEE = { label: 'Finish all of a day’s tasks', emoji: '🗓️', badge: 'Daily devotee' };
-const TIER_AT = { task: [1, 5, 15, 40], devotee: [1, 7, 30, 100] };
-const TIER_NAMES = ['', 'Bronze', 'Silver', 'Gold', 'Diamond'];
-const MAX_TIER = 4;
-// lumi owners have every badge at Diamond
+// Regular badges: finish that task once. Gold and Diamond badges are their own milestones.
+const RARITY = { normal: 1, gold: 3, diamond: 4 }, RARITY_NAMES = { 1: '', 3: 'Gold', 4: 'Diamond' };
+const SPECIAL = {
+  week:          { badge: 'Week warrior', label: 'Finish all your daily tasks on 7 days', rarity: 'gold', goal: 7, metric: 'fullDays' },
+  collector:     { badge: 'Collector', label: 'Earn 10 regular badges', rarity: 'gold', goal: 10, metric: 'regular' },
+  hustler:       { badge: 'Hustler', label: 'Complete 50 daily tasks', rarity: 'gold', goal: 50, metric: 'total' },
+  unstoppable:   { badge: 'Unstoppable', label: 'Finish all your daily tasks on 30 days', rarity: 'diamond', goal: 30, metric: 'fullDays' },
+  completionist: { badge: 'Completionist', label: 'Earn every regular badge', rarity: 'diamond', goal: 0, metric: 'regular' },
+  mythic:        { badge: 'Mythic', label: 'Complete 200 daily tasks', rarity: 'diamond', goal: 200, metric: 'total' },
+};
+const REGULAR_KEYS = () => [...Object.keys(TASKS), 'devotee'];
+SPECIAL.completionist.goal = REGULAR_KEYS().length;
+const ALL_BADGE_KEYS = () => [...REGULAR_KEYS(), ...Object.keys(SPECIAL)];
+const badgeDef = (k) => (k === 'devotee' ? { ...DEVOTEE, rarity: 'normal', goal: 1 } : TASKS[k] ? { ...TASKS[k], rarity: 'normal', goal: 1 } : SPECIAL[k]);
+// lumi owners have every badge
 const ownsAllBadges = (uid) => getUser(uid)?.site_role === 'owner';
-const ALL_BADGE_KEYS = () => [...Object.keys(TASKS), 'devotee'];
 const TASKS_PER_DAY = 3;
 const taskDay = () => Math.floor(Date.now() / 86400_000);
 
@@ -1511,10 +1540,11 @@ function pickTasks(uid, day) {
   const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
   // skip anything from the last 2 days and badges already at Diamond; lower badges are more likely to come up
   const recent = new Set(db.prepare('SELECT task FROM daily_tasks WHERE user_id=? AND day>=? AND day<?').all(uid, day - 2, day).map((r) => r.task));
-  const tierOf = (k) => db.prepare('SELECT tier FROM user_badges WHERE user_id=? AND badge=?').get(uid, k)?.tier || 0;
-  const pool = (strict) => Object.keys(TASKS).filter((k) => !strict || (!recent.has(k) && tierOf(k) < MAX_TIER));
+  const has = (k) => !!db.prepare('SELECT 1 FROM user_badges WHERE user_id=? AND badge=?').get(uid, k);
+  const pool = (strict) => Object.keys(TASKS).filter((k) => !strict || !recent.has(k));
   let keys = pool(true); if (keys.length < 8) keys = pool(false);
-  const scored = keys.map((k) => ({ k, s: rnd() * (MAX_TIER + 1 - tierOf(k)) })).sort((a, b) => b.s - a.s);
+  // badges you don't have yet come up more often
+  const scored = keys.map((k) => ({ k, s: rnd() * (has(k) ? 1 : 3) })).sort((a, b) => b.s - a.s);
   const out = [], used = new Set();
   for (const { k } of scored) { if (out.length >= TASKS_PER_DAY) break; if (used.has(TASK_GROUPS[k])) continue; used.add(TASK_GROUPS[k]); out.push(k); }
   return out;
@@ -1532,31 +1562,50 @@ function tasksState(uid) {
   return todaysTasks(uid).map((r) => ({ id: r.task, label: TASKS[r.task].label, goal: TASKS[r.task].goal, emoji: TASKS[r.task].emoji,
     badge: TASKS[r.task].badge, progress: r.progress, done: !!r.done_at }));
 }
-function badgeInfo(key, tier, earnedAt, count) {
-  const def = key === 'devotee' ? DEVOTEE : TASKS[key];
+// tier: 0 = not earned yet, otherwise the badge's color (1 regular, 3 gold, 4 diamond)
+function badgeInfo(key, earned, earnedAt, count) {
+  const def = badgeDef(key);
   if (!def) return null;
-  const at = TIER_AT[key === 'devotee' ? 'devotee' : 'task'];
-  return { id: key, name: def.badge, emoji: def.emoji, how: def.label, tier, tierName: TIER_NAMES[tier] || '', earnedAt: earnedAt || null,
-    count: count || 0, next: at[tier] || null };
+  const r = RARITY[def.rarity];
+  return { id: key, name: def.badge, emoji: def.emoji || '', how: def.label, rarity: def.rarity, tier: earned ? r : 0, tierName: RARITY_NAMES[r],
+    earnedAt: earnedAt || null, count: Math.min(count || 0, def.goal), goal: def.goal };
 }
 function countFor(uid, key) {
+  if (SPECIAL[key]) {
+    const m = SPECIAL[key].metric;
+    if (m === 'fullDays') return countFor(uid, 'devotee');
+    if (m === 'total') return db.prepare('SELECT COALESCE(SUM(n),0) n FROM task_counts WHERE user_id=?').get(uid).n;
+    const keys = REGULAR_KEYS();
+    return db.prepare(`SELECT COUNT(*) n FROM user_badges WHERE user_id=? AND badge IN (${keys.map(() => '?').join(',')})`).get(uid, ...keys).n;
+  }
   return key === 'devotee' ? db.prepare('SELECT COUNT(*) n FROM full_days WHERE user_id=?').get(uid).n
     : db.prepare('SELECT n FROM task_counts WHERE user_id=? AND task=?').get(uid, key)?.n || 0;
 }
 function badgesOf(uid) {
-  if (ownsAllBadges(uid)) return ALL_BADGE_KEYS().map((k) => badgeInfo(k, MAX_TIER, null, countFor(uid, k)));
-  return db.prepare('SELECT * FROM user_badges WHERE user_id=? ORDER BY tier DESC, earned_at').all(uid)
-    .map((b) => badgeInfo(b.badge, b.tier, b.earned_at, countFor(uid, b.badge))).filter(Boolean);
+  const order = (b) => -b.tier;
+  if (ownsAllBadges(uid)) return ALL_BADGE_KEYS().map((k) => badgeInfo(k, true, null, countFor(uid, k))).sort((a, b) => order(a) - order(b));
+  return db.prepare('SELECT * FROM user_badges WHERE user_id=? ORDER BY earned_at').all(uid)
+    .map((b) => badgeInfo(b.badge, true, b.earned_at, countFor(uid, b.badge))).filter(Boolean).sort((a, b) => order(a) - order(b));
 }
+// gives the badge if it's earned and not owned yet; returns it if newly given
 function awardTier(uid, key, count) {
-  const at = TIER_AT[key === 'devotee' ? 'devotee' : 'task'];
-  let tier = 0; at.forEach((t, i) => { if (count >= t) tier = i + 1; });
-  if (!tier) return null;
-  const cur = db.prepare('SELECT tier FROM user_badges WHERE user_id=? AND badge=?').get(uid, key);
-  if (cur && cur.tier >= tier) return null;
-  db.prepare('INSERT OR REPLACE INTO user_badges VALUES (?,?,?,?)').run(uid, key, tier, Date.now());
-  return badgeInfo(key, tier, Date.now(), count);
+  const def = badgeDef(key); if (!def || count < def.goal) return null;
+  if (db.prepare('SELECT 1 FROM user_badges WHERE user_id=? AND badge=?').get(uid, key)) return null;
+  db.prepare('INSERT INTO user_badges VALUES (?,?,?,?)').run(uid, key, RARITY[def.rarity], Date.now());
+  return badgeInfo(key, true, Date.now(), count);
 }
+function awardSpecials(uid) {
+  const out = [];
+  // collector/completionist depend on other badges, so check twice in case one unlocks the next
+  for (let pass = 0; pass < 2; pass++) for (const k of Object.keys(SPECIAL)) { const b = awardTier(uid, k, countFor(uid, k)); if (b) out.push(b); }
+  return out;
+}
+setTimeout(() => { // one-time: badges no longer have levels; hand out the new Gold/Diamond milestones people already reached
+  if (db.prepare("SELECT 1 FROM meta WHERE k='badges_v2'").get()) return;
+  db.prepare('INSERT INTO meta VALUES (?,?)').run('badges_v2', String(Date.now()));
+  db.prepare('UPDATE user_badges SET tier=1').run();
+  for (const r of db.prepare('SELECT DISTINCT user_id FROM task_counts').all()) awardSpecials(r.user_id);
+}, 1500);
 function taskEvent(uid, key, n = 1) {
   try {
     const row = todaysTasks(uid).find((r) => r.task === key);
@@ -1572,6 +1621,7 @@ function taskEvent(uid, key, n = 1) {
         db.prepare('INSERT OR IGNORE INTO full_days VALUES (?,?)').run(uid, day);
         const d = awardTier(uid, 'devotee', countFor(uid, 'devotee')); if (d) earned.push(d);
       }
+      earned.push(...awardSpecials(uid));
       if (earned.length) broadcastUserUpdate(uid, publicUser(getUser(uid)));
     }
     const payload = { tasks: tasksState(uid), completed: done ? key : null, earned };
@@ -1586,7 +1636,7 @@ app.get('/api/tasks', auth, wrap(req => {
   const owner = ownsAllBadges(req.user.id);
   const collection = ALL_BADGE_KEYS().map((k) => {
     const b = db.prepare('SELECT * FROM user_badges WHERE user_id=? AND badge=?').get(req.user.id, k);
-    return badgeInfo(k, owner ? MAX_TIER : b?.tier || 0, b?.earned_at, countFor(req.user.id, k));
+    return badgeInfo(k, owner || !!b, b?.earned_at, countFor(req.user.id, k));
   });
   return { tasks: tasksState(req.user.id), resetsAt: (day + 1) * 86400_000, badges: collection };
 }));
