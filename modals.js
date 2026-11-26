@@ -119,7 +119,7 @@ async function openInviteAccept(code) {
 }
 
 // ------------------------------------------------------------------ channels
-function openChannelModal(sid, cid = null, type = 'text', catId = null) {
+function openChannelModal(sid, cid = null, type = 'text', catId = null, tab = null) {
   const sd = S.serverData[sid]; const ch = cid ? sd.channels.find((c) => c.id === cid) : null;
   if (ch) { type = ch.type; catId = ch.categoryId; }
   const cats = [...(sd.categories || [])].sort((a, b) => a.position - b.position);
@@ -147,6 +147,7 @@ function openChannelModal(sid, cid = null, type = 'text', catId = null) {
     el.querySelectorAll('[data-chpane]').forEach((p) => (p.hidden = p.dataset.chpane !== b.dataset.chtab));
   }));
   el.querySelector('[data-cancel]').onclick = () => m.close();
+  if (tab) el.querySelector(`[data-chtab="${tab}"]`)?.click();
   const save = async () => {
     const name = el.querySelector('#ch-name').value.trim() || ({ text: 'New room', board: 'Board', gallery: 'Gallery', voice: 'Lounge' })[type]; const topic = el.querySelector('#ch-topic').value;
     try {

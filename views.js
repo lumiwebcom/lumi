@@ -546,7 +546,7 @@ function messageMenu(btn, m) {
   const sd = currentServer();
   const canManage = sd ? can(sd, P.MANAGE_MESSAGES) : false;
   const canPin = sd ? canManage : true;
-  const el = btn.closest('.msg'); el.classList.add('menu-open');
+  const el = btn.closest ? btn.closest('.msg') : btn.el; el?.classList.add('menu-open');
   openMenu(btn, [
     { html: `<div class="quick-react">${QUICK.map((q) => `<button>${q}</button>`).join('')}</div>`, mount: (x) => x.querySelectorAll('button').forEach((b) => (b.onclick = () => { closeMenu(); react(m.id, b.textContent); })) },
     { label: 'Reply', icon: 'reply', onClick: () => startReply(m) },
@@ -556,7 +556,7 @@ function messageMenu(btn, m) {
     !mine && { label: 'View profile', icon: 'user', onClick: () => openProfile(m.author.id, S.view.serverId) },
     (mine || canManage) && 'sep',
     (mine || canManage) && { label: 'Delete message', icon: 'trash', danger: true, onClick: () => deleteMessage(m) },
-  ], { onClose: () => el.classList.remove('menu-open') });
+  ], { onClose: () => el?.classList.remove('menu-open') });
 }
 async function deleteMessage(m) {
   if (!(await confirmDialog('Delete message', 'Are you sure you want to delete this message? This can’t be undone.', 'Delete'))) return;
@@ -830,8 +830,8 @@ async function openDM(uid, silent) {
     return r.dm;
   } catch (e) { toast(e.message, true); }
 }
-function groupMenu(anchor) {
-  const dm = S.dms.find((d) => d.id === S.view.dmId);
+function groupMenu(anchor, dmId = S.view.dmId) {
+  const dm = S.dms.find((d) => d.id === dmId);
   openMenu(anchor, [
     { label: 'Rename group', icon: 'edit', onClick: async () => { const n = await promptDialog('Rename group', 'Group name', dm.name || ''); if (n !== null) api('PATCH', `/api/dms/${dm.id}`, { name: n }); } },
     { label: 'Change group photo', icon: 'image', onClick: async () => { const f = await pickFile(); if (!f) return; const u = await uploadFile(f); api('PATCH', `/api/dms/${dm.id}`, { icon: u.url }); } },
@@ -840,3 +840,70 @@ function groupMenu(anchor) {
     { label: 'Leave group', icon: 'logout', danger: true, onClick: async () => { if (await confirmDialog('Leave group', `Leave <b>${esc(dmName(dm))}</b>? You won't get its messages anymore.`, 'Leave')) { await api('DELETE', `/api/dms/${dm.id}`); S.dms = S.dms.filter((d) => d.id !== dm.id); navigate('/channels/@me'); } } },
   ]);
 }
+
+// ------------------------------------------------------------------ right-click menus (like Discord)
+// Right-click (or long-press on a phone) messages, rooms, sections, DMs, friends and people.
+// Text boxes, links and selected text keep the normal browser menu; hold Shift for it anywhere.
+async function roomMenu(anchor, sid, cid) {
+  const sd = S.serverData[sid] || await loadServer(sid); const c = sd.channels.find((x) => x.id === cid); if (!c) return;
+  const manage = can(sd, P.MANAGE_CHANNELS);
+  openMenu(anchor, [
+    c.type === 'voice' ? { label: 'Join lounge', icon: 'waves', onClick: () => joinCall(c.id, { video: false }) } : { label: 'Open room', icon: 'chat', onClick: () => navigate(`/channels/${sid}/${c.id}`) },
+    c.type !== 'voice' && { label: 'Mark as read', icon: 'check', onClick: () => { c.unread = 0; markRead(c.id); renderSideBody(); } },
+    { label: 'Copy link', icon: 'link', onClick: () => copyText(`${location.origin}/channels/${sid}/${c.id}`, 'Link copied') },
+    manage && 'sep',
+    manage && { label: 'Edit room', icon: 'edit', onClick: () => openChannelModal(sid, c.id) },
+    manage && { label: 'Privacy', icon: 'lock', onClick: () => openChannelModal(sid, c.id, 'text', null, 'privacy') },
+    manage && { label: 'Delete room', icon: 'trash', danger: true, onClick: async () => {
+      if (!(await confirmDialog('Delete room', `Delete <b>${esc(c.name)}</b> and everything in it? This can't be undone.`, 'Delete'))) return;
+      try { await api('DELETE', `/api/channels/${c.id}`); } catch (e) { toast(e.message, true); } } },
+  ]);
+}
+function sectionMenu(anchor, sid, catId) {
+  openMenu(anchor, [
+    { label: 'Add a room here', icon: 'plus', onClick: () => openChannelModal(sid, null, 'text', catId) },
+    { label: 'Edit section', icon: 'edit', onClick: () => openCategoryModal(sid, catId) },
+  ]);
+}
+function userMenu(anchor, uid) {
+  const u = S.userCache[uid];
+  const sid = S.view.type === 'server' ? S.view.serverId : null;
+  if (sid && S.serverData[sid]?.members?.some((m) => m.user.id === uid)) return memberModMenu(anchor, sid, uid, () => renderRight());
+  const me = uid === S.me.id, friend = (S.friends || []).some((f) => f.user?.id === uid && f.type === 'friend');
+  openMenu(anchor, [
+    { label: 'View profile', icon: 'user', onClick: () => openProfile(uid) },
+    !me && { label: 'Message', icon: 'chat', onClick: () => openDM(uid) },
+    !me && { label: 'Call', icon: 'phone', onClick: async () => { const d = await openDM(uid); if (d) joinCall(d.id); } },
+    !me && friend && { label: S.nicks?.[uid] ? 'Change nickname' : 'Give a nickname', icon: 'edit', onClick: () => setNickname(uid) },
+    { label: 'Copy username', icon: 'copy', onClick: () => copyText('@' + u.username, 'Username copied') },
+  ]);
+}
+function dmMenu(anchor, dmId) {
+  const dm = S.dms.find((d) => d.id === dmId); if (!dm) return;
+  if (dm.type === 'group') return groupMenu(anchor, dmId);
+  const other = (dm.recipients || []).find((r) => r.id !== S.me.id);
+  openMenu(anchor, [
+    { label: 'Mark as read', icon: 'check', onClick: () => { dm.unread = 0; markRead(dm.id); renderSideBody(); } },
+    other && { label: 'View profile', icon: 'user', onClick: () => openProfile(other.id) },
+    { label: 'Start voice call', icon: 'phone', onClick: () => { navigate('/channels/@me/' + dm.id); joinCall(dm.id, { video: false }); } },
+    { label: 'Start video call', icon: 'video', onClick: () => { navigate('/channels/@me/' + dm.id); joinCall(dm.id, { video: true }); } },
+    other && { label: S.nicks?.[other.id] ? 'Change nickname' : 'Give a nickname', icon: 'edit', onClick: () => setNickname(other.id) },
+  ]);
+}
+document.addEventListener('contextmenu', (e) => {
+  if (e.shiftKey || !S.me) return;
+  const t = e.target;
+  if (t.closest('input, textarea, select, [contenteditable="true"], a[href], .menu')) return;
+  if (String(window.getSelection?.() || '').trim()) return;
+  const at = { x: e.clientX, y: e.clientY };
+  const go = (fn) => { e.preventDefault(); fn(); };
+  const msgEl = t.closest('.msg[data-mid]');
+  if (msgEl && !t.closest('img, video')) { const m = findMsg(msgEl.dataset.mid); if (m) return go(() => messageMenu({ ...at, el: msgEl }, m)); }
+  const fid = t.closest('[data-fid]'); if (fid && S.userCache[fid.dataset.fid]) return go(() => ((S.friends || []).some((f) => f.user?.id === fid.dataset.fid && f.type === 'friend') ? friendMenu(at, fid.dataset.fid) : userMenu(at, fid.dataset.fid)));
+  const sid = S.view.type === 'server' ? S.view.serverId : null;
+  const chan = t.closest('[data-chan]'); if (chan && sid && chan.dataset.chan !== 'lobby') return go(() => roomMenu(at, sid, chan.dataset.chan));
+  const cat = t.closest('[data-cat]'); if (cat && sid && S.serverData[sid] && can(S.serverData[sid], P.MANAGE_CHANNELS)) return go(() => sectionMenu(at, sid, cat.dataset.cat));
+  const dm = t.closest('[data-dm]'); if (dm && S.dms.some((d) => d.id === dm.dataset.dm)) return go(() => dmMenu(at, dm.dataset.dm));
+  const user = t.closest('[data-user]'); if (user && S.userCache[user.dataset.user]) return go(() => userMenu(at, user.dataset.user));
+  const head = t.closest('.cm-head'); if (head && sid) return go(() => serverMenu(sid, at));
+});
