@@ -504,7 +504,7 @@ app.post('/api/upload', auth, upload.single('file'), async (req, res) => {
   // nudity check: anything that looks sexual is thrown away, and clear cases get a permanent ban
   if (type === 'image' || /\.(jpe?g|png|gif|webp|avif|heic|bmp)$/i.test(req.file.filename)) {
     let scores = null;
-    try { scores = await moderation.scanImage(req.file.path); } catch (e) { console.error('  Image check skipped:', e.message); }
+    try { scores = await moderation.checkImage(req.file.path); } catch (e) { console.error('  Image check skipped:', e.message); }
     const score = moderation.nsfwScore(scores);
     if (score >= NSFW_BLOCK) {
       fs.unlink(req.file.path, () => {});
@@ -1083,7 +1083,7 @@ function nsfwStrike(user, sid, kind, scores, ban) {
   }
   return doBan;
 }
-setTimeout(() => moderation.getModel(), 15_000); // warm up so the first upload isn't slow
+setTimeout(() => moderation.warmUp(), 20_000); // starts the separate image-check process
 
 app.delete('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
   const t = getUser(req.params.id);
