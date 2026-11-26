@@ -73,6 +73,7 @@ async function gifGo(view, q = '') {
   const body = panel.querySelector('#gp-body'); body.scrollTop = 0;
   if (view === 'home') return gifHome(body);
   if (view === 'favorites') { if (!Gif.favs) await loadGifFavs(); Gif.items = Gif.favs.map((f) => ({ ...f })); return gifGrid(body); }
+  if (view === 'search' && (q.match(/[a-z0-9]/gi) || []).length < 3) { body.innerHTML = `<div class="gp-empty">Keep typing…</div>`; return; }
   body.innerHTML = gifSkeleton();
   await gifMore(true);
 }

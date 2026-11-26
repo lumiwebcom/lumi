@@ -761,10 +761,23 @@ async function gifIsSafe(url) {
   if (gifVerdicts.size > 5000) gifVerdicts.delete(gifVerdicts.keys().next().value);
   return ok;
 }
-const gifGuard = async (req, res, next) => {
+// GIFs send instantly; the check runs right after, and a GIF that fails is pulled back out of the chat
+const gifGuard = (req, res, next) => {
   const content = String(req.body?.content || '').trim();
   if (!/^https:\/\/\S+$/.test(content) || !isGifUrl(content)) return next();
-  if (!(await gifIsSafe(content))) return res.status(422).json({ error: 'That GIF isn’t allowed on lumi.' });
+  if (gifVerdicts.get(content) === false) return res.status(422).json({ error: 'That GIF isn’t allowed on lumi.' });
+  if (!gifVerdicts.has(content)) {
+    const uid = req.user.id, cid = req.params.id, sentAt = now();
+    gifIsSafe(content).then((ok) => {
+      if (ok) return;
+      const c = db.prepare('SELECT * FROM channels WHERE id=?').get(cid);
+      for (const m of db.prepare('SELECT * FROM messages WHERE channel_id=? AND author_id=? AND content=? AND created_at>=?').all(cid, uid, content, sentAt - 5000)) {
+        db.prepare('DELETE FROM messages WHERE id=?').run(m.id);
+        if (c) for (const r of channelAudience(c)) io.to(r).emit('message:delete', { id: m.id, channelId: c.id, threadId: m.thread_id || null });
+      }
+      io.to(`user:${uid}`).emit('toast', { text: 'That GIF isn’t allowed on lumi, so it was removed.' });
+    }).catch(() => {});
+  }
   next();
 };
 app.post('/api/channels/:id/messages', auth, gifGuard, wrap(req => {
@@ -1138,7 +1151,7 @@ async function gifQuery(kind, q, page, uid, ttl = 15 * 60_000) {
   if (!r || !r.ok) throw fail(502, 'Couldn’t load GIFs right now. Try again in a moment.');
   const body = await r.json().catch(() => ({}));
   const list = Array.isArray(body.data) ? body.data : Array.isArray(body.data?.data) ? body.data.data : Array.isArray(body.results) ? body.results : [];
-  const items = list.filter((x) => (!x.type || /gif/i.test(x.type)) && (!x.rating || /^(g|y)$/i.test(x.rating)) && !moderation.isNsfwSearch(`${x.title || ''} ${x.slug || ''} ${x.content_description || ''}`))
+  const items = list.filter((x) => (!x.type || /gif/i.test(x.type)) && (!x.rating || /^(g|y)$/i.test(x.rating)) && !moderation.isNsfwSearch(`${x.title || ''} ${x.slug || ''} ${x.content_description || ''} ${x.alt_text || ''} ${x.username || ''} ${(x.tags || []).join(' ')}`))
     .map(pickGif).filter(Boolean);
   const data = { items, more: items.length >= per / 2 && page < 20 };
   gifCache.set(key, { at: Date.now(), data });
@@ -1157,7 +1170,11 @@ app.get('/api/gifs/search', auth, wrap(async (req) => {
   rateLimit('gif:' + req.user.id, 120, 60_000);
   const q = String(req.query.q || '').trim().slice(0, 60), page = Math.max(1, Math.min(20, Number(req.query.page) || 1));
   if (moderation.isNsfwSearch(q)) throw fail(400, 'That search isn’t allowed on lumi.');
-  return gifQuery(q ? 'search' : 'trending', q, page, req.user.id);
+  if (q && (q.match(/[a-z0-9]/gi) || []).length < 3) return { items: [], more: false, short: true };
+  const r = await gifQuery(q ? 'search' : 'trending', q, page, req.user.id);
+  // every result also gets the nudity check in the background; ones that fail are hidden from then on
+  for (const g of r.items.slice(0, 12)) if (!gifVerdicts.has(g.url)) gifIsSafe(g.url).catch(() => {});
+  return { ...r, items: r.items.filter((g) => gifVerdicts.get(g.url) !== false) };
 }));
 app.get('/api/gifs/favorites', auth, wrap((req) => ({ items: db.prepare('SELECT url, preview, w, h FROM gif_favs WHERE user_id=? ORDER BY at DESC LIMIT 300').all(req.user.id) })));
 app.put('/api/gifs/favorites', auth, wrap((req) => {

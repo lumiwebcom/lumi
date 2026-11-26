@@ -309,6 +309,7 @@ function wireSparksAppearance(pane, redraw) {
 // ------------------------------------------------------------------ realtime
 function extrasSocket(socket) {
   socket.on('tasks:update', onTasksUpdate);
+  socket.on('toast', ({ text } = {}) => text && toast(text, true));
   // calls and level-ups happen without a request of yours: catch up whenever you come back to the tab
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') loadTasks().then(() => { if (S.view.type === 'home') renderActiveNow(); }); });
   setInterval(() => { if (document.visibilityState === 'visible') loadTasks().then(() => { if (S.view.type === 'home') renderActiveNow(); }); }, 60_000);
