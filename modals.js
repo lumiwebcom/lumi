@@ -41,8 +41,8 @@ function openCreateServer(start = 'create') {
   const joinStep = () => {
     m.el.querySelector('.modal-head span').textContent = 'Join a community';
     body.innerHTML = `<p class="muted" style="margin:0 0 18px;text-align:center">Paste an invite link to join a community.</p>
-      <div class="field"><label>Invite link</label><input class="input" id="js-code" placeholder="${location.origin}/invite/hTKzmak" autofocus></div>
-      <p class="hint">Invites look like <b>hTKzmak</b> or <b>${location.host}/invite/hTKzmak</b></p>
+      <div class="field"><label>Invite link</label><input class="input" id="js-code" placeholder="${location.origin}/invite/bEZthpx" autofocus></div>
+      <p class="hint">Invites look like <b>bEZthpx</b> or <b>${location.host}/invite/bEZthpx</b></p>
       <div style="display:flex;gap:8px;margin-top:20px"><button class="btn" data-back>Back</button><button class="btn primary" style="flex:1" data-go>Join community</button></div>`;
     body.querySelector('[data-back]').onclick = step1;
     const go = () => { const raw = body.querySelector('#js-code').value.trim(); const code = raw.split('/').filter(Boolean).pop(); if (!code) return; m.close(); openInviteAccept(code); };
