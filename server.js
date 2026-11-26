@@ -1631,13 +1631,13 @@ const TASK_GROUPS = { chat: 'talk', dm: 'talk', reply: 'talk', thread: 'rooms', 
   stargaze: 'explore', join: 'explore', invite: 'grow', level: 'grow' };
 const DEVOTEE = { label: 'Finish all of a day’s tasks', emoji: '🗓️', badge: 'Daily devotee' };
 // Regular badges: finish that task once. Gold and Diamond badges are their own milestones.
-const RARITY = { normal: 1, gold: 3, diamond: 4 }, RARITY_NAMES = { 1: '', 3: 'Gold', 4: 'Diamond' };
+const RARITY = { normal: 1, gold: 3, diamond: 4 }, RARITY_NAMES = { 1: 'Bronze', 3: 'Gold', 4: 'Diamond' };
 const SPECIAL = {
   week:          { badge: 'Week warrior', label: 'Finish all your daily tasks on 7 days', rarity: 'gold', goal: 7, metric: 'fullDays' },
-  collector:     { badge: 'Collector', label: 'Earn 10 regular badges', rarity: 'gold', goal: 10, metric: 'regular' },
+  collector:     { badge: 'Collector', label: 'Earn 10 bronze badges', rarity: 'gold', goal: 10, metric: 'regular' },
   hustler:       { badge: 'Hustler', label: 'Complete 50 daily tasks', rarity: 'gold', goal: 50, metric: 'total' },
   unstoppable:   { badge: 'Unstoppable', label: 'Finish all your daily tasks on 30 days', rarity: 'diamond', goal: 30, metric: 'fullDays' },
-  completionist: { badge: 'Completionist', label: 'Earn every regular badge', rarity: 'diamond', goal: 0, metric: 'regular' },
+  completionist: { badge: 'Completionist', label: 'Earn every bronze badge', rarity: 'diamond', goal: 0, metric: 'regular' },
   mythic:        { badge: 'Mythic', label: 'Complete 200 daily tasks', rarity: 'diamond', goal: 200, metric: 'total' },
 };
 const REGULAR_KEYS = () => [...Object.keys(TASKS), 'devotee'];

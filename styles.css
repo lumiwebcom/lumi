@@ -1337,3 +1337,6 @@ img.mark { border-radius: 24%; object-fit: cover; }
 .hide-gifs .gif-msg::before { content: "GIF"; font-weight: 800; font-size: 12px; color: var(--text2); letter-spacing: .05em; }
 .hide-gifs .gif-msg .gif-fav { display: none; }
 .hide-gifs .gif-msg { cursor: pointer; }
+.bg-sec { display: flex; align-items: center; gap: 8px; }
+.bg-sec span { font-weight: 600; color: var(--text3); }
+.bg-sec.bronze { color: #c48a4f; } .bg-sec.gold { color: #E3B341; } .bg-sec.diamond { color: #5CCBF0; }

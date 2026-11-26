@@ -168,7 +168,7 @@ function giveSparksMenu(anchor, u, done) {
 // ------------------------------------------------------------------ daily tasks + badges
 S.tasks = null;
 async function loadTasks() { try { S.tasks = await api('GET', '/api/tasks'); } catch {} }
-const TIER_COLORS = { 1: 'regular', 3: 'gold', 4: 'diamond' };
+const TIER_COLORS = { 1: 'bronze', 3: 'gold', 4: 'diamond' };
 // badge art: a hexagonal medal in the tier's metal, with an icon for the task and dots for the tier
 const BADGE_GLYPHS = {
   chat: '<path d="M20.7 16.6A9.5 9.5 0 1 0 17 20.4l4.5 1.1z"/>',
@@ -197,7 +197,7 @@ const BADGE_GLYPHS = {
   mythic: '<path d="M6 3h12l3 6-9 12L3 9z"/><path d="M3 9h18M12 21 8.5 9 11 3M12 21l3.5-12L13 3"/>',
   devotee: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/><path d="m8.5 14.5 2.5 2.5 4.5-5"/>',
 };
-const METALS = { 1: ['#7C4DFF', '#4B22B8', '#F3EEFF'], 3: ['#DDA82E', '#9E7413', '#FFF7DD'], 4: ['#5CCBF0', '#1E7EA6', '#F3FCFF'] };
+const METALS = { 1: ['#B07444', '#7E4E2B', '#FFE7D2'], 3: ['#DDA82E', '#9E7413', '#FFF7DD'], 4: ['#5CCBF0', '#1E7EA6', '#F3FCFF'] };
 const taskGlyph = (id, cls = 'sm') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${BADGE_GLYPHS[id] || BADGE_GLYPHS.glow}</svg>`;
 function badgeIcon(b, size = 40) {
   const m = METALS[b.tier];
@@ -222,11 +222,11 @@ function tasksCard() {
 function openBadges() {
   const t = S.tasks; if (!t) return;
   const item = (b) => `<div class="bg-item ${b.tier ? '' : 'locked'}">${badgeIcon(b, 46)}<div><b>${esc(b.name)}</b><div class="small muted">${esc(b.how)}</div>
-      <div class="small">${b.tier ? `<span class="tier ${TIER_COLORS[b.tier]}">${b.tierName || 'Earned'}</span>` : b.goal > 1 ? `<span class="muted">${b.count}/${b.goal}</span>` : '<span class="muted">Not yet</span>'}</div></div></div>`;
-  const regular = t.badges.filter((b) => (b.rarity || 'normal') === 'normal'), special = t.badges.filter((b) => b.rarity && b.rarity !== 'normal');
-  openModal({ title: 'Badges', cls: 'badges-modal', body: `<p class="muted" style="margin:0 0 14px">Finish a daily task to earn its badge. Gold and Diamond badges are rare ones for big milestones. They all show on your profile.</p>
-    ${special.length ? `<h5 class="bg-sec">Gold & Diamond</h5><div class="badge-grid">${special.map(item).join('')}</div><h5 class="bg-sec">Regular</h5>` : ''}
-    <div class="badge-grid">${regular.map(item).join('')}</div>` });
+      <div class="small">${b.tier ? `<span class="tier ${TIER_COLORS[b.tier]}">${b.tierName || 'Bronze'}</span>` : b.goal > 1 ? `<span class="muted">${b.count}/${b.goal}</span>` : '<span class="muted">Not yet</span>'}</div></div></div>`;
+  const of = (r) => t.badges.filter((b) => (b.rarity || 'normal') === r);
+  const sec = (title, cls, list) => (list.length ? `<h5 class="bg-sec ${cls}">${title} <span>${list.filter((b) => b.tier).length}/${list.length}</span></h5><div class="badge-grid">${list.map(item).join('')}</div>` : '');
+  openModal({ title: 'Badges', cls: 'badges-modal', body: `<p class="muted" style="margin:0 0 14px">Finish a daily task to earn its Bronze badge. Gold and Diamond badges are rare ones for big milestones. They all show on your profile.</p>
+    ${sec('Bronze', 'bronze', of('normal'))}${sec('Gold', 'gold', of('gold'))}${sec('Diamond', 'diamond', of('diamond'))}` });
 }
 function badgesRow(badges) {
   if (!badges?.length) return '';
