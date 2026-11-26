@@ -107,7 +107,8 @@ async function renderSparks(main) {
           : `<button class="btn lg" disabled>Coming soon</button><span class="muted small">Payments aren’t switched on yet.</span>`}
       </div></section>
     <section class="sp-preview"><div class="lb-h"><span>How you’ll look</span></div>
-      <div class="member" style="max-width:300px">${avatar(S.me, 34, { dot: true })}<div style="min-width:0"><div class="n"><span class="nm-plate"><span class="nm-text gold" ${S.me.nameFont ? `style="font-family:${fontFamily(S.me.nameFont)}"` : ''}>${esc(S.me.displayName)}</span></span>${sparkMark({ ...S.me, sparks: true })}</div><div class="s">${esc(S.me.customStatus || 'Online')}</div></div></div></section>`;
+      <div class="member" style="max-width:300px">${avatar(S.me, 34, { dot: true })}<div style="min-width:0"><div class="n"><span class="nm-plate"><span class="nm-text gold" ${S.me.nameFont ? `style="font-family:${fontFamily(S.me.nameFont)}"` : ''}>${esc(S.me.displayName)}</span></span>${sparkMark({ ...S.me, sparks: true })}</div><div class="s">${esc(S.me.customStatus || 'Online')}</div></div></div></section>
+    <div class="sp-info">${icon('info', 'sm')}<div>If you’ve made a purchase, please tap <b>I sent it</b> so our team can review it.<br>If you still haven’t received Sparks, DM <b>@cook</b> or <b>@type</b>.</div></div>`;
   el.querySelectorAll('[data-sp]').forEach((b) => (b.onclick = async (e) => {
     const k = b.dataset.sp;
     if (k === 'customize') return openUserSettings('appearance');

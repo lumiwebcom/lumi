@@ -1269,3 +1269,6 @@ img.mark { border-radius: 24%; object-fit: cover; }
 .tier.regular { color: #A78BFA; }
 .bg-sec { margin: 4px 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text2); }
 .badge-grid + .bg-sec { margin-top: 18px; }
+.sp-info { display: flex; gap: 10px; align-items: flex-start; margin-top: 16px; padding: 12px 14px; border-radius: 12px; background: var(--bg2); border: 1px solid var(--border); color: var(--text2); font-size: 13.5px; line-height: 1.5; }
+.sp-info svg { flex: none; margin-top: 2px; color: var(--text); }
+.sp-info b { color: var(--text); }

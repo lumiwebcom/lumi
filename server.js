@@ -49,6 +49,7 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // ---------------------------------------------------------------- database
 const storage = require('./storage');
+const moderation = require('./moderation');
 const zlib = require('zlib');
 const DB_FILE = path.join(DATA_DIR, 'lumi.db');
 // Restore the saved database before opening it (blocks startup until done; a failure stops the server
@@ -496,10 +497,21 @@ const upload = multer({
   }),
   limits: { fileSize: 25 * 1024 * 1024 },
 });
-app.post('/api/upload', auth, upload.single('file'), (req, res) => {
+app.post('/api/upload', auth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
   const mt = req.file.mimetype || '';
   const type = mt.startsWith('image/') ? 'image' : mt.startsWith('video/') ? 'video' : mt.startsWith('audio/') ? 'audio' : 'file';
+  // nudity check: anything that looks sexual is thrown away, and clear cases get a permanent ban
+  if (type === 'image' || /\.(jpe?g|png|gif|webp|avif|heic|bmp)$/i.test(req.file.filename)) {
+    let scores = null;
+    try { scores = await moderation.scanImage(req.file.path); } catch (e) { console.error('  Image check skipped:', e.message); }
+    const score = moderation.nsfwScore(scores);
+    if (score >= NSFW_BLOCK) {
+      fs.unlink(req.file.path, () => {});
+      const banned = nsfwStrike(req.user, typeof req.body.serverId === 'string' ? req.body.serverId : null, 'image', scores, score >= NSFW_BAN);
+      return res.status(422).json({ nsfw: true, banned, error: banned ? 'That image has nudity or sexual content. Your account has been permanently banned.' : 'That image looks like nudity or sexual content, which isn’t allowed on lumi.' });
+    }
+  }
   const done = () => res.json({ url: '/uploads/' + req.file.filename, type, name: req.file.originalname.slice(0, 200) });
   if (!storage.enabled) return done();
   storage.put('up:' + req.file.filename, fs.readFileSync(req.file.path)).then(done, (e) => { console.error(e.message); res.status(500).json({ error: 'Upload could not be saved. Try again.' }); });
@@ -867,6 +879,10 @@ function removeFromServerRooms(sid, uid) {
 app.post('/api/servers', auth, wrap(req => {
   const name = sanitizeName(req.body.name, 100);
   if (!name) throw fail(400, 'Give your community a name.');
+  if (moderation.isNsfwText(name, req.body.description)) {
+    const banned = nsfwStrike(req.user, null, 'community name', null, true);
+    throw fail(403, banned ? 'NSFW communities aren’t allowed on lumi. Your account has been permanently banned.' : 'NSFW communities aren’t allowed on lumi.');
+  }
   const sid = id();
   db.prepare('INSERT INTO servers (id,name,icon,description,owner_id,created_at) VALUES (?,?,?,?,?,?)')
     .run(sid, name, req.body.icon || null, '', req.user.id, now());
@@ -889,6 +905,10 @@ app.patch('/api/servers/:id', auth, wrap(req => {
   if (!has(memberPerms(sid, req.user.id), P.MANAGE_SERVER)) throw fail(403, 'You need the Manage Community permission.');
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid);
   const b = req.body;
+  if (moderation.isNsfwText(b.name, b.description, b.welcome)) {
+    const banned = nsfwStrike(req.user, sid, 'community name', null, true);
+    throw fail(403, banned ? 'NSFW communities aren’t allowed on lumi. Your account has been permanently banned.' : 'NSFW communities aren’t allowed on lumi.');
+  }
   db.prepare('UPDATE servers SET name=?, icon=?, banner=?, description=?, welcome=? WHERE id=?').run(
     b.name !== undefined ? sanitizeName(b.name, 100) || s.name : s.name,
     b.icon !== undefined ? b.icon : s.icon, b.banner !== undefined ? b.banner : s.banner,
@@ -1030,6 +1050,41 @@ app.post('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
   broadcastUserUpdate(t.id, publicUser(getUser(t.id)));
   return { ok: true };
 }));
+// ---- automatic NSFW moderation
+db.exec(`CREATE TABLE IF NOT EXISTS mod_events (id TEXT PRIMARY KEY, user_id TEXT, server_id TEXT, kind TEXT, score REAL, action TEXT, at INTEGER)`);
+const NSFW_BLOCK = Number(process.env.NSFW_BLOCK || 0.5), NSFW_BAN = Number(process.env.NSFW_BAN || 0.7), NSFW_SERVER_FLAGS = 3;
+function siteBan(uid, reason, until = null) {
+  db.prepare('UPDATE users SET banned_at=?, ban_reason=?, ban_until=?, site_role=NULL WHERE id=?').run(now(), reason, until, uid);
+  db.prepare('DELETE FROM sessions WHERE user_id=?').run(uid);
+  io.to(`user:${uid}`).emit('account:banned', { reason, until });
+  setTimeout(() => io.in(`user:${uid}`).disconnectSockets(true), 300);
+  broadcastUserUpdate(uid, publicUser(getUser(uid)));
+}
+function takeDownServer(sid, why) {
+  const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid); if (!s) return;
+  io.to(`server:${sid}`).emit('server:removed', { serverId: sid, reason: 'removed' });
+  db.prepare('DELETE FROM servers WHERE id=?').run(sid);
+  console.log(`  Moderation: took down a community (${why})`);
+}
+// returns true if the person was banned
+function nsfwStrike(user, sid, kind, scores, ban) {
+  const staff = user.site_role === 'owner' || user.site_role === 'admin';
+  const s = sid ? db.prepare('SELECT * FROM servers WHERE id=?').get(sid) : null;
+  const doBan = ban && !staff;
+  db.prepare('INSERT INTO mod_events VALUES (?,?,?,?,?,?,?)').run(id(), user.id, s?.id || null, kind, scores ? moderation.nsfwScore(scores) : null, doBan ? 'banned' : 'blocked', now());
+  if (doBan) { siteBan(user.id, 'Posting nudity or sexual content (automatic)'); console.log(`  Moderation: banned a user for NSFW ${kind}`); }
+  if (s && !staff) {
+    // the owner putting NSFW in their own community, or several people doing it, means it's an NSFW community
+    const flagged = db.prepare('SELECT COUNT(DISTINCT user_id) n FROM mod_events WHERE server_id=?').get(s.id).n;
+    if ((s.owner_id === user.id && doBan) || flagged >= NSFW_SERVER_FLAGS) {
+      takeDownServer(s.id, 'NSFW content');
+      if (s.owner_id !== user.id) { const o = getUser(s.owner_id); if (o && o.site_role !== 'owner' && o.site_role !== 'admin' && flagged >= NSFW_SERVER_FLAGS) siteBan(o.id, 'Running an NSFW community (automatic)'); }
+    }
+  }
+  return doBan;
+}
+setTimeout(() => moderation.getModel(), 15_000); // warm up so the first upload isn't slow
+
 app.delete('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
   const t = getUser(req.params.id);
   if (!t) throw fail(404, 'User not found');
