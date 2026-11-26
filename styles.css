@@ -1052,10 +1052,10 @@ html { -webkit-text-size-adjust: 100%; }
 .cm-head { position: relative; cursor: pointer; border-bottom: 1px solid var(--border2); padding-bottom: 12px; }
 .cm-banner { height: 84px; background: var(--c, var(--bg3)) center/cover; position: relative; }
 .cm-banner:not([style*="url"]) { background: color-mix(in srgb, var(--c) 22%, var(--bg)); }
-.cm-id { display: flex; align-items: flex-end; gap: 12px; padding: 0 14px; margin-top: -26px; position: relative; }
+.cm-id { display: flex; align-items: flex-start; gap: 12px; padding: 0 14px; margin-top: -26px; position: relative; }
 .cm-icon { width: 56px; height: 56px; border-radius: 16px; flex: none; display: grid; place-items: center; font-weight: 700; font-size: 18px; color: #fff; background: var(--c); border: 4px solid var(--bg); overflow: hidden; }
 .cm-icon img { width: 100%; height: 100%; object-fit: cover; }
-.cm-meta { min-width: 0; flex: 1; padding-bottom: 2px; }
+.cm-meta { min-width: 0; flex: 1; padding-top: 32px; }
 .cm-meta .row { display: flex; align-items: center; gap: 4px; }
 .cm-meta .name { font-weight: 700; font-size: 16px; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cm-meta .row .i { color: var(--text2); flex: none; }
