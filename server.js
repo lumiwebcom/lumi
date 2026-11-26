@@ -1083,7 +1083,7 @@ function nsfwStrike(user, sid, kind, scores, ban) {
   }
   return doBan;
 }
-setTimeout(() => moderation.warmUp(), 20_000); // starts the separate image-check process
+setTimeout(() => moderation.warmUp(), 60_000); // starts the separate image-check process
 
 app.delete('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
   const t = getUser(req.params.id);

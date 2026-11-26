@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node --no-warnings server.js",
-    "dev": "node --no-warnings --watch server.js"
+    "dev": "node --no-warnings --watch server.js",
+    "postinstall": "node --max-old-space-size=2048 moderation.js extract || echo \"image safety model skipped\""
   },
   "dependencies": {
     "@fontsource-variable/manrope": "^5.2.0",

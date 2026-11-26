@@ -4,6 +4,24 @@
 const path = require('path');
 
 let tf, model, loading, failed = false;
+const MODEL_DIR = path.join(__dirname, '.nsfw-model');
+// `node moderation.js extract` (run by npm install): unpack the small MobileNetV2 model from the
+// nsfwjs package into plain files. This needs lots of memory once, so it happens at build time.
+if (require.main === module && process.argv[2] === 'extract') {
+  (async () => {
+    const fs = require('fs');
+    const mod = require(path.join(path.dirname(require.resolve('nsfwjs')), 'model_imports', 'mobilenet_v2.js'));
+    let json = await (typeof mod.modelJson === 'function' ? mod.modelJson() : mod.modelJson); json = json.default || json;
+    let w = await (typeof mod.weightBundles[0] === 'function' ? mod.weightBundles[0]() : mod.weightBundles[0]); w = w.default || w;
+    fs.mkdirSync(MODEL_DIR, { recursive: true });
+    fs.writeFileSync(path.join(MODEL_DIR, 'model.json'), JSON.stringify(json));
+    fs.writeFileSync(path.join(MODEL_DIR, 'weights.bin'), Buffer.from(w, 'base64'));
+    console.log('Image safety model unpacked');
+  })().catch((e) => { console.error('Could not unpack the image safety model:', e.message); });
+}
+const CLASSES = ['drawing', 'hentai', 'neutral', 'porn', 'sexy'];
+// The model files (MobileNetV2 from nsfwjs, ~2.7 MB) are stored as plain files in nsfw-model/,
+// which loads in a fraction of the memory the npm package's bundled copy needs.
 function getModel() {
   if (model) return Promise.resolve(model);
   if (failed) return Promise.resolve(null);
@@ -11,11 +29,13 @@ function getModel() {
     try {
       tf = require('@tensorflow/tfjs');
       tf.enableProdMode();
-      const base = path.dirname(require.resolve('nsfwjs'));
-      const core = require(path.join(base, 'core.js'));
-      const { MobileNetV2Model } = require(path.join(base, 'models', 'mobilenet_v2.js'));
-      const log = console.log; console.log = () => {}; // the model prints a hosting tip on load
-      try { model = await core.load('MobileNetV2', { modelDefinitions: [MobileNetV2Model] }); } finally { console.log = log; }
+      const fs = require('fs'), dir = MODEL_DIR;
+      if (!fs.existsSync(path.join(dir, 'weights.bin'))) throw new Error('model files missing (they are unpacked by npm install)');
+      const json = JSON.parse(fs.readFileSync(path.join(dir, 'model.json'), 'utf8'));
+      const bin = fs.readFileSync(path.join(dir, 'weights.bin'));
+      model = await tf.loadLayersModel(tf.io.fromMemory({
+        modelTopology: json.modelTopology, weightSpecs: json.weightsManifest[0].weights,
+        weightData: bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength) }));
       console.log('  Image safety check: ready');
       return model;
     } catch (e) {
@@ -37,12 +57,12 @@ function scanImage(file) {
     const { data } = await sharp(file, { animated: false, limitInputPixels: 60e6 })
       .rotate().flatten({ background: '#ffffff' }).resize(224, 224, { fit: 'fill' }).removeAlpha().raw()
       .toBuffer({ resolveWithObject: true });
-    const t = tf.tensor3d(new Uint8Array(data), [224, 224, 3]);
+    const probs = tf.tidy(() => m.predict(tf.tensor3d(new Uint8Array(data), [224, 224, 3]).toFloat().div(255).reshape([1, 224, 224, 3])));
     try {
-      const out = {};
-      for (const p of await m.classify(t, 5)) out[p.className.toLowerCase()] = p.probability;
+      const vals = await probs.data(), out = {};
+      CLASSES.forEach((c, i) => (out[c] = vals[i]));
       return out; // { porn, hentai, sexy, drawing, neutral }
-    } finally { t.dispose(); }
+    } finally { probs.dispose(); }
   });
   queue = run.catch(() => {});
   return run;
@@ -65,12 +85,12 @@ if (require.main === module && process.argv[2] === 'worker') {
 const { fork } = require('child_process');
 let child = null, seq = 0, crashes = 0, pausedUntil = 0;
 const waiting = new Map();
-const ENABLED = process.env.NSFW_IMAGE_CHECK === '1'; // off until it fits in the server's memory
+const ENABLED = process.env.NSFW_IMAGE_CHECK !== '0';
 function worker() {
   if (!ENABLED) return null;
   if (child) return child;
   if (Date.now() < pausedUntil) return null;
-  child = fork(__filename, ['worker'], { execArgv: ['--no-warnings', '--max-old-space-size=320'], stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+  child = fork(__filename, ['worker'], { execArgv: ['--no-warnings', '--max-old-space-size=160'], stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
   child.on('message', (m) => {
     if ('ready' in m) { if (m.ready) crashes = 0; return; }
     const w = waiting.get(m.id); if (!w) return;
