@@ -1462,10 +1462,27 @@ const TIER_NAMES = ['', 'Bronze', 'Silver', 'Gold'];
 const TASKS_PER_DAY = 3;
 const taskDay = () => Math.floor(Date.now() / 86400_000);
 
+// bumping the round gives everyone a fresh set of tasks right away (owners can do this from the admin panel)
+const taskRound = () => Number(db.prepare("SELECT v FROM meta WHERE k='task_round'").get()?.v || 0);
+function resetAllTasks() {
+  db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('task_round', String(taskRound() + 1));
+  db.prepare('DELETE FROM daily_tasks WHERE day=?').run(taskDay());
+  io.emit('tasks:refresh');
+}
+setTimeout(() => { // one-time: new tasks for everyone
+  if (db.prepare("SELECT 1 FROM meta WHERE k='tasks_reset_1'").get()) return;
+  db.prepare('INSERT INTO meta VALUES (?,?)').run('tasks_reset_1', String(Date.now()));
+  // the Stargaze task didn't count for people who opened Stargaze earlier in the same session: credit it
+  for (const r of db.prepare("SELECT user_id FROM daily_tasks WHERE day=? AND task='stargaze' AND done_at IS NULL").all(taskDay())) {
+    db.prepare('INSERT INTO task_counts (user_id, task, n) VALUES (?,?,1) ON CONFLICT(user_id, task) DO UPDATE SET n=n+1').run(r.user_id, 'stargaze');
+    awardTier(r.user_id, 'stargaze', countFor(r.user_id, 'stargaze'));
+  }
+  resetAllTasks();
+}, 1000);
 function pickTasks(uid, day) {
-  // stable shuffle seeded by user + day, so everyone gets a different mix each day
+  // stable shuffle seeded by user + day (+ reset round), so everyone gets a different mix each day
   const keys = Object.keys(TASKS);
-  let seed = 0; for (const ch of uid + ':' + day) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+  let seed = 0; for (const ch of uid + ':' + day + (taskRound() ? ':' + taskRound() : '')) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
   const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
   for (let i = keys.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [keys[i], keys[j]] = [keys[j], keys[i]]; }
   return keys.slice(0, TASKS_PER_DAY);
@@ -1820,6 +1837,7 @@ app.put('/api/admin/venmo', auth, wrap(req => {
   if (h) db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('venmo_handle', h); else db.prepare("DELETE FROM meta WHERE k='venmo_handle'").run();
   return { venmo: h || null };
 }));
+app.post('/api/admin/reset-tasks', auth, ownerOnly, wrap(() => { resetAllTasks(); return { ok: true }; }));
 app.post('/api/admin/sparks-requests/:id', auth, ownerOnly, wrap(req => {
   const r = db.prepare("SELECT * FROM sparks_requests WHERE id=? AND status IN ('pending','auto')").get(req.params.id);
   if (!r) throw fail(404, 'That request was already handled.');

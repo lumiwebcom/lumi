@@ -286,6 +286,7 @@ function wireSparksAppearance(pane, redraw) {
 // ------------------------------------------------------------------ realtime
 function extrasSocket(socket) {
   socket.on('tasks:update', onTasksUpdate);
+  socket.on('tasks:refresh', async () => { await loadTasks(); if (S.view.type === 'home') renderActiveNow(); toast('You have new daily tasks'); });
   socket.on('nicknames:update', ({ userId, nickname }) => applyNickname(userId, nickname));
   socket.on('sparks:requests', ({ quiet } = {}) => { const p = $('#ap-sparks'); if (p && !p.hidden) adminSparksPane(p); else if (S.me.siteRole === 'owner' && !quiet) toast('Someone says they paid for Sparks. Check Admin panel › Sparks.'); });
   socket.on('sparks:update', (st) => { if (S.view.type === 'sparks') setTimeout(() => renderMain(), 50); if (st.denied) toast('Your Venmo payment couldn’t be found. Check it went through, then try again.', true); if (st.active && !S.me.sparks) toast('Sparks is on. Enjoy!'); S.me.sparks = st.active; applySparkTheme(); if (S.view.type === 'sparks') renderMain(); });

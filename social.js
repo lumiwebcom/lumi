@@ -213,7 +213,7 @@ function renderStargazeSide() {
     <div class="sg-side-foot"><button class="btn block" data-sg-invite>${icon('link', 'sm')} Join with an invite</button></div>`;
 }
 function renderStargaze(main) {
-  if (!S._sgPinged) { S._sgPinged = true; api('POST', '/api/tasks/ping', { event: 'stargaze' }).catch(() => {}); }
+  if (!S.tasks || S.tasks.tasks.some((t) => t.id === 'stargaze' && !t.done)) api('POST', '/api/tasks/ping', { event: 'stargaze' }).catch(() => {});
   $('#side-top') && ($('#side-top').innerHTML = '');
   renderStargazeSide();
   main.innerHTML = `<header class="main-head">${mobileBtn()}<div class="t">${icon('compass')} Stargaze</div></header>

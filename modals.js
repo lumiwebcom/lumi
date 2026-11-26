@@ -679,7 +679,7 @@ function openAdminPanel() {
       <button data-f="banned">${icon('hammer', 'sm')} Banned</button>
       <button data-f="owners">${POTION.replace('<svg', '<svg class="i sm"')} Owners</button>
       <button data-f="admins">${SHIELD_BLUE.replace('<svg', '<svg class="i sm"')} Owners & admins</button>
-      ${owner ? `<button data-f="sparks">${icon('gem', 'sm')} Sparks</button>` : ''}
+      ${owner ? `<button data-f="sparks">${icon('gem', 'sm')} Sparks</button><button data-reset-tasks>${icon('glow', 'sm')} New tasks for everyone</button>` : ''}
       <div class="lbl" style="margin-top:14px">You are</div><div style="padding:4px 12px;display:flex;align-items:center;gap:6px;font-weight:600">${owner ? POTION.replace('<svg', '<svg style="width:18px;height:18px"') + ' Owner' : SHIELD_BLUE.replace('<svg', '<svg style="width:18px;height:18px"') + ' Admin'}</div></nav>
     <div class="settings-pane"><h2 id="ap-title">Everyone</h2><input class="input" id="ap-q" placeholder="Search by name or username${owner ? ' or email' : ''}" autocomplete="off" style="margin-bottom:6px"><div class="hint" id="ap-count" style="margin-bottom:10px"></div><div id="ap-list"></div><div id="ap-sparks" hidden></div></div>` });
   const el = m.el;
@@ -734,6 +734,10 @@ function openAdminPanel() {
     el.querySelectorAll('[data-unadmin]').forEach((b) => (b.onclick = () => act(async () => { await api('DELETE', `/api/admin/users/${b.dataset.unadmin}/admin`); toast('Admin removed'); })));
   };
   el.querySelector('#ap-q').oninput = () => { clearTimeout(timer); timer = setTimeout(load, 220); };
+  el.querySelector('[data-reset-tasks]')?.addEventListener('click', async () => {
+    if (!(await confirmDialog('New tasks for everyone?', 'Everyone gets a fresh set of 3 daily tasks right now, even if they already finished today’s. Progress on today’s unfinished tasks is cleared.', 'Give new tasks', false))) return;
+    try { await api('POST', '/api/admin/reset-tasks'); toast('Everyone has new tasks'); } catch (e) { toast(e.message, true); }
+  });
   el.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => {
     filter = b.dataset.f; el.querySelectorAll('[data-f]').forEach((x) => x.classList.toggle('active', x === b));
     el.querySelector('#ap-title').textContent = { all: 'Everyone', banned: 'Banned', owners: 'Owners', admins: 'Owners & admins', sparks: 'Sparks' }[filter]; load();
