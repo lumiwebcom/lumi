@@ -167,15 +167,41 @@ function giveSparksMenu(anchor, u, done) {
 S.tasks = null;
 async function loadTasks() { try { S.tasks = await api('GET', '/api/tasks'); } catch {} }
 const TIER_COLORS = { 1: 'bronze', 2: 'silver', 3: 'gold' };
+// badge art: a hexagonal medal in the tier's metal, with an icon for the task and dots for the tier
+const BADGE_GLYPHS = {
+  chat: '<path d="M20.7 16.6A9.5 9.5 0 1 0 17 20.4l4.5 1.1z"/>',
+  react: '<circle cx="12" cy="12" r="9.5"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9.5h.01M15 9.5h.01"/>',
+  voice: '<path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1v-6h3zM3 19a2 2 0 0 0 2 2h1v-6H3z"/>',
+  post: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  comment: '<path d="M4 5h16v11H9l-5 4z"/><path d="M8.5 9.5h7M8.5 12.5h4"/>',
+  glow: '<path d="M12 2.5l2.9 6 6.6.8-4.9 4.6 1.3 6.5L12 17.2l-5.9 3.2 1.3-6.5L2.5 9.3l6.6-.8z"/>',
+  moment: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  dm: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="m3 7 9 6 9-6"/>',
+  reply: '<path d="m9 14-5-5 5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+  thread: '<rect x="3" y="4" width="18" height="5" rx="1.5"/><rect x="3" y="12" width="18" height="8" rx="1.5"/><path d="M7 15.5h7"/>',
+  gallery: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-5-5L5 21"/>',
+  stargaze: '<circle cx="12" cy="12" r="9.5"/><path d="m16.2 7.8-2.1 6.3-6.3 2.1 2.1-6.3z"/>',
+  friend: '<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/>',
+  status: '<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11.5" r=".9"/><circle cx="10" cy="7.5" r=".9"/><circle cx="15" cy="7.5" r=".9"/>',
+  devotee: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/><path d="m8.5 14.5 2.5 2.5 4.5-5"/>',
+};
+const METALS = { 1: ['#B07444', '#7E4E2B', '#FFE7D2'], 2: ['#A3AEBB', '#6E7987', '#FFFFFF'], 3: ['#DDA82E', '#9E7413', '#FFF7DD'] };
+const taskGlyph = (id, cls = 'sm') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${BADGE_GLYPHS[id] || BADGE_GLYPHS.glow}</svg>`;
 function badgeIcon(b, size = 40) {
-  return `<span class="badge-ic ${b.tier ? TIER_COLORS[b.tier] : 'locked'}" style="--s:${size}px" data-tip="${esc(b.name)}${b.tier ? ` · ${b.tierName}` : ' · locked'}">${b.emoji}</span>`;
+  const m = METALS[b.tier];
+  const [fill, rim, ink] = m || ['var(--bg3)', 'var(--border)', 'var(--text3)'];
+  const pips = b.tier ? Array.from({ length: b.tier }, (_, i) => `<circle cx="${24 + (i - (b.tier - 1) / 2) * 5}" cy="38.5" r="1.6" fill="${ink}"/>`).join('') : '';
+  return `<span class="badge-ic ${b.tier ? TIER_COLORS[b.tier] : 'locked'}" style="--s:${size}px" data-tip="${esc(b.name)}${b.tier ? ` · ${b.tierName}` : ' · locked'}"><svg viewBox="0 0 48 48" width="${size}" height="${size}" aria-hidden="true">
+    <path d="M24 3.5 41.5 13.5v21L24 44.5 6.5 34.5v-21z" fill="${fill}" stroke="${rim}" stroke-width="2.5" stroke-linejoin="round"/>
+    ${m ? `<path d="M24 7.5 38 15.5v17L24 40.5 10 32.5v-17z" fill="none" stroke="${ink}" stroke-opacity=".28" stroke-width="1"/>` : ''}
+    <g transform="translate(14.5 12.5) scale(.79)" fill="none" stroke="${ink}" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">${BADGE_GLYPHS[b.id] || BADGE_GLYPHS.glow}</g>${pips}</svg></span>`;
 }
 function tasksCard() {
   const t = S.tasks; if (!t) return '';
   const done = t.tasks.filter((x) => x.done).length;
   const left = Math.max(0, t.resetsAt - Date.now()), hrs = Math.floor(left / 3600e3), mins = Math.floor((left % 3600e3) / 60e3);
   return `<div class="tasks-card"><div class="tk-h"><b>Today’s tasks</b><span class="muted small">${done}/${t.tasks.length} · new in ${hrs ? `${hrs}h ` : ''}${mins}m</span></div>
-    ${t.tasks.map((x) => `<div class="tk ${x.done ? 'done' : ''}"><span class="em">${x.done ? icon('check', 'sm') : x.emoji}</span><div class="m"><div class="l">${esc(x.label)}</div>
+    ${t.tasks.map((x) => `<div class="tk ${x.done ? 'done' : ''}"><span class="em">${x.done ? icon('check', 'sm') : taskGlyph(x.id)}</span><div class="m"><div class="l">${esc(x.label)}</div>
       <div class="bar"><i style="width:${Math.round((x.progress / x.goal) * 100)}%"></i></div></div><span class="muted small">${x.progress}/${x.goal}</span></div>`).join('')}
     <button class="btn ghost sm block" data-act="open-badges">${icon('glow', 'xs')} Badges · ${t.badges.filter((b) => b.tier).length}/${t.badges.length}</button></div>`;
 }
