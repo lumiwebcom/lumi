@@ -1272,3 +1272,8 @@ img.mark { border-radius: 24%; object-fit: cover; }
 .sp-info { display: flex; gap: 10px; align-items: flex-start; margin-top: 16px; padding: 12px 14px; border-radius: 12px; background: var(--bg2); border: 1px solid var(--border); color: var(--text2); font-size: 13.5px; line-height: 1.5; }
 .sp-info svg { flex: none; margin-top: 2px; color: var(--text); }
 .sp-info b { color: var(--text); }
+/* zooming into someone's stream makes the whole call area big, not just the tile */
+.stage.dm.zoomed { height: calc(100dvh - 150px) !important; max-height: none; resize: none; }
+.stage.zoomed .grid.has-focus { padding-top: 40px; }
+.stage.zoomed .grid.has-focus .tile.focus { border-radius: 14px; }
+.stage.zoomed .grid.has-focus.one .tile.focus, .stage.zoomed .grid.has-focus:not(.one) .tile.focus { width: 100%; height: 100%; }

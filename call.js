@@ -334,6 +334,7 @@ function updateStage() {
   if (Call.focusSid && !Call.tiles.has(Call.focusSid)) Call.focusSid = null;
   for (const [k, el] of Call.tiles) el.classList.toggle('focus', k === Call.focusSid);
   grid.classList.toggle('has-focus', !!Call.focusSid);
+  grid.closest('.stage')?.classList.toggle('zoomed', !!Call.focusSid);
   if (Call.focusSid) { const f = Call.tiles.get(Call.focusSid); if (f && grid.firstChild !== f) grid.prepend(f); }
 }
 function onCallControl(e) {
