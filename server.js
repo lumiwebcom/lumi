@@ -1625,7 +1625,7 @@ function publicOrigin(req) {
 function sparksState(u) {
   const free = u.site_role === 'owner' || u.site_role === 'admin';
   return { active: hasSparks(u), free, until: free ? null : u.sparks_until || null, subscribed: !!u.stripe_sub, manageable: !!u.stripe_customer && !!STRIPE_KEY,
-    canBuy: !!STRIPE_KEY, price: SPARKS_PRICE, venmo: venmoHandle(), pending: !!pendingSparks(u.id) };
+    canBuy: !!STRIPE_KEY, price: SPARKS_PRICE, venmo: venmoHandle(), venmoAuto: venmoBotOn, pending: !!pendingSparks(u.id) };
 }
 const sparksChanged = (uid) => { const u = getUser(uid); if (!u) return; broadcastUserUpdate(uid, publicUser(u)); io.to(`user:${uid}`).emit('sparks:update', sparksState(u)); };
 app.get('/api/sparks', auth, wrap(req => sparksState(req.user)));
@@ -1714,19 +1714,95 @@ function grantSparks(uid, days) {
   sparksChanged(uid);
   return until;
 }
-const tellOwners = () => { for (const o of db.prepare("SELECT id FROM users WHERE site_role='owner'").all()) io.to(`user:${o.id}`).emit('sparks:requests', {}); };
+const tellOwners = (quiet) => { for (const o of db.prepare("SELECT id FROM users WHERE site_role='owner'").all()) io.to(`user:${o.id}`).emit('sparks:requests', { quiet: !!quiet }); };
 app.post('/api/sparks/venmo-sent', auth, wrap(req => {
   if (!venmoHandle()) throw fail(400, 'Venmo payments aren’t set up yet.');
   if (pendingSparks(req.user.id)) return { pending: true };
   if ((req.user.sparks_until || 0) > now() + 5 * 86400_000) throw fail(400, 'You already have Sparks. You can renew in the last few days before it runs out.');
   rateLimit('venmo:' + req.user.id, 5, 24 * 3600_000);
-  // Venmo can't tell us a payment arrived, so an owner checks their Venmo and approves it in the admin panel
+  // the Venmo bot (below) approves it when Venmo's payment email arrives; owners can still approve by hand
   db.prepare('INSERT INTO sparks_requests (id, user_id, created_at) VALUES (?,?,?)').run(id(), req.user.id, now());
-  tellOwners();
-  return { pending: true };
+  if (venmoBotOn) setTimeout(() => venmoBotRun().catch(() => {}), 1500); else tellOwners();
+  matchVenmoPayments();
+  return { pending: !pendingSparks(req.user.id) ? false : true, active: !pendingSparks(req.user.id) };
 }));
+// ---- Venmo bot: reads Venmo's "paid you" emails from the owner's inbox (IMAP) and approves/denies by itself.
+// Set on Render: VENMO_EMAIL (the email Venmo notifies) and VENMO_EMAIL_PASSWORD (a Gmail app password).
+// Optional: VENMO_IMAP_HOST (default imap.gmail.com).
+db.exec(`CREATE TABLE IF NOT EXISTS venmo_payments (msg_id TEXT PRIMARY KEY, username TEXT, amount REAL, payer TEXT, received_at INTEGER, used_by TEXT)`);
+const VENMO_IMAP = { host: process.env.VENMO_IMAP_HOST || 'imap.gmail.com', user: process.env.VENMO_EMAIL, pass: process.env.VENMO_EMAIL_PASSWORD };
+const venmoBotOn = !!(VENMO_IMAP.user && VENMO_IMAP.pass);
+const SPARKS_CENTS = 599;
+let venmoBotStatus = { on: venmoBotOn, lastCheck: null, lastError: null };
+// Pull what we need out of one Venmo email. Only trusts mail that the inbox confirms really came from venmo.com.
+function parseVenmoMail(mail, rawHeaders) {
+  const from = String(mail.from?.value?.[0]?.address || '').toLowerCase();
+  if (!/@(venmo\.com|email\.venmo\.com)$/.test(from)) return null;
+  const auth = String(rawHeaders || '').toLowerCase();
+  if (!/dkim=pass[^;]*header\.(d|i)=@?(email\.)?venmo\.com/.test(auth)) return null; // forged "from venmo" mail fails this
+  const subject = String(mail.subject || '');
+  const text = (subject + '\n' + (mail.text || String(mail.html || '').replace(/<[^>]+>/g, ' '))).replace(/\s+/g, ' ');
+  if (!/paid you/i.test(subject)) return null;
+  const amt = subject.match(/\$\s?([\d,]+(?:\.\d{2})?)/) || text.match(/\+?\s?\$\s?([\d,]+\.\d{2})/);
+  const user = text.match(/lumi\s+sparks\s+for\s+@?([a-z0-9_.]{2,24})/i);
+  return { amount: amt ? Number(amt[1].replace(/,/g, '')) : 0, username: user ? user[1].toLowerCase().replace(/\.$/, '') : null, payer: subject.replace(/\s*paid you.*$/i, '').slice(0, 60) };
+}
+// match stored payments to people: approve anyone who paid enough with their username in the note
+function matchVenmoPayments() {
+  let changed = false;
+  for (const p of db.prepare('SELECT * FROM venmo_payments WHERE used_by IS NULL AND username IS NOT NULL').all()) {
+    if (Math.round(p.amount * 100) < SPARKS_CENTS) continue;
+    const u = db.prepare('SELECT * FROM users WHERE username=?').get(p.username); if (!u) continue;
+    db.prepare('UPDATE venmo_payments SET used_by=? WHERE msg_id=?').run(u.id, p.msg_id);
+    const months = Math.max(1, Math.floor(Math.round(p.amount * 100) / SPARKS_CENTS));
+    grantSparks(u.id, 31 * months); changed = true;
+    db.prepare("UPDATE sparks_requests SET status='approved', decided_at=?, decided_by='venmo-bot' WHERE user_id=? AND status='pending'").run(now(), u.id);
+    console.log(`  Venmo bot: Sparks on for @${u.username} (${months} month${months > 1 ? 's' : ''})`);
+  }
+  // nothing arrived within a day of "I sent it": deny so they can try again
+  for (const r of db.prepare("SELECT * FROM sparks_requests WHERE status='pending' AND created_at<?").all(now() - 24 * 3600_000)) {
+    if (!venmoBotOn) break;
+    db.prepare("UPDATE sparks_requests SET status='denied', decided_at=?, decided_by='venmo-bot' WHERE id=?").run(now(), r.id); changed = true;
+    io.to(`user:${r.user_id}`).emit('sparks:update', { ...sparksState(getUser(r.user_id)), denied: true });
+  }
+  if (changed) tellOwners(true);
+}
+let venmoBotBusy = false;
+async function venmoBotRun() {
+  if (!venmoBotOn || venmoBotBusy) return;
+  venmoBotBusy = true;
+  const { ImapFlow } = require('imapflow'); const { simpleParser } = require('mailparser');
+  const client = new ImapFlow({ host: VENMO_IMAP.host, port: 993, secure: true, auth: { user: VENMO_IMAP.user, pass: VENMO_IMAP.pass }, logger: false });
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock('INBOX');
+    try {
+      const uids = await client.search({ since: new Date(Date.now() - 3 * 86400_000), or: [{ from: 'venmo.com' }, { subject: 'paid you' }] }, { uid: true });
+      if (uids && uids.length) for await (const msg of client.fetch(uids, { source: true, uid: true }, { uid: true })) {
+        const raw = msg.source.toString('utf8'); const headerEnd = raw.indexOf('\r\n\r\n');
+        const mail = await simpleParser(msg.source);
+        const key = mail.messageId || `uid-${msg.uid}`;
+        if (db.prepare('SELECT 1 FROM venmo_payments WHERE msg_id=?').get(key)) continue;
+        const p = parseVenmoMail(mail, (headerEnd > 0 ? raw.slice(0, headerEnd) : raw).match(/^(arc-)?authentication-results:.*(\r\n[ \t].*)*/gim)?.join('\n'));
+        if (!p) continue;
+        db.prepare('INSERT OR IGNORE INTO venmo_payments (msg_id, username, amount, payer, received_at) VALUES (?,?,?,?,?)').run(key, p.username, p.amount, p.payer, now());
+      }
+    } finally { lock.release(); }
+    await client.logout();
+    venmoBotStatus = { on: true, lastCheck: now(), lastError: null };
+  } catch (e) {
+    venmoBotStatus = { on: true, lastCheck: now(), lastError: e.authenticationFailed ? 'Email sign-in failed. Check VENMO_EMAIL and VENMO_EMAIL_PASSWORD on Render.' : e.message };
+    console.log('  Venmo bot:', venmoBotStatus.lastError);
+    try { client.close(); } catch {}
+  } finally { venmoBotBusy = false; }
+  matchVenmoPayments();
+}
+if (venmoBotOn) { console.log('  Venmo bot: watching ' + VENMO_IMAP.user.replace(/^(.).*(@.*)$/, '$1•••$2')); setTimeout(() => venmoBotRun().catch(() => {}), 20_000); setInterval(() => venmoBotRun().catch(() => {}), 60_000); }
+
 app.get('/api/admin/sparks', auth, ownerOnly, wrap(req => ({
-  venmo: venmoHandle(), canEditVenmo: isPrimaryOwner(req.user),
+  venmo: venmoHandle(), canEditVenmo: isPrimaryOwner(req.user), bot: venmoBotStatus,
+  unmatched: db.prepare('SELECT * FROM venmo_payments WHERE used_by IS NULL ORDER BY received_at DESC LIMIT 20').all()
+    .map((p) => ({ id: p.msg_id, payer: p.payer, amount: p.amount, username: p.username, at: p.received_at })),
   recent: db.prepare("SELECT * FROM sparks_requests WHERE status='auto' AND created_at>? ORDER BY created_at DESC").all(now() - 40 * 86400_000)
     .map((r) => ({ id: r.id, createdAt: r.created_at, user: publicUser(getUser(r.user_id)) })).filter((r) => r.user),
   requests: db.prepare("SELECT * FROM sparks_requests WHERE status='pending' ORDER BY created_at").all()

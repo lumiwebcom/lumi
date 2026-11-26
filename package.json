@@ -12,6 +12,8 @@
     "bcryptjs": "^3.0.3",
     "express": "^5.3.0",
     "google-auth-library": "^11.3.4",
+    "imapflow": "^2.12.2",
+    "mailparser": "^3.15.0",
     "multer": "^2.5.0",
     "socket.io": "^4.8.4"
   },

@@ -1247,3 +1247,5 @@ i.on { width: 7px; height: 7px; border-radius: 50%; background: var(--green); di
 .sp-steps { flex-basis: 100%; line-height: 1.6; }
 .sp-wait { display: flex; gap: 8px; align-items: center; color: var(--green); font-weight: 600; }
 .btn.sp-has { color: #E3B341; }
+.bot-st { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 14px; background: var(--bg2); border: 1px solid var(--border2); }
+.bot-st > .i { margin-top: 2px; color: var(--text2); } .bot-st.on > .i { color: var(--green); } .bot-st.bad > .i { color: var(--red); }
