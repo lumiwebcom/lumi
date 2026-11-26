@@ -1241,3 +1241,9 @@ i.on { width: 7px; height: 7px; border-radius: 50%; background: var(--green); di
 .dev .tag.on { background: rgba(95,184,10,.15); color: var(--green); }
 @media (max-width: 1100px) { .lb-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .lb-idrow { padding: 0 16px; } .lb-grid { padding: 16px 16px 0; } .lb-icon { width: 72px; height: 72px; font-size: 24px; } .lb-title h1 { font-size: 21px; } .sp-perks, .badge-grid { grid-template-columns: 1fr; } .gallery { columns: 2 140px; } }
+/* Sparks via Venmo */
+.venmo-btn { background: #008CFF !important; color: #fff !important; text-decoration: none !important; }
+.venmo-btn:hover { background: #0074D4 !important; }
+.sp-steps { flex-basis: 100%; line-height: 1.6; }
+.sp-wait { display: flex; gap: 8px; align-items: center; color: var(--green); font-weight: 600; }
+.btn.sp-has { color: #E3B341; }

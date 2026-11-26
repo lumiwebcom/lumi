@@ -677,11 +677,15 @@ function openAdminPanel() {
       <button data-f="banned">${icon('hammer', 'sm')} Banned</button>
       <button data-f="owners">${POTION.replace('<svg', '<svg class="i sm"')} Owners</button>
       <button data-f="admins">${SHIELD_BLUE.replace('<svg', '<svg class="i sm"')} Owners & admins</button>
+      ${owner ? `<button data-f="sparks">${icon('gem', 'sm')} Sparks</button>` : ''}
       <div class="lbl" style="margin-top:14px">You are</div><div style="padding:4px 12px;display:flex;align-items:center;gap:6px;font-weight:600">${owner ? POTION.replace('<svg', '<svg style="width:18px;height:18px"') + ' Owner' : SHIELD_BLUE.replace('<svg', '<svg style="width:18px;height:18px"') + ' Admin'}</div></nav>
-    <div class="settings-pane"><h2 id="ap-title">Everyone</h2><input class="input" id="ap-q" placeholder="Search by name or username${owner ? ' or email' : ''}" autocomplete="off" style="margin-bottom:6px"><div class="hint" id="ap-count" style="margin-bottom:10px"></div><div id="ap-list"></div></div>` });
+    <div class="settings-pane"><h2 id="ap-title">Everyone</h2><input class="input" id="ap-q" placeholder="Search by name or username${owner ? ' or email' : ''}" autocomplete="off" style="margin-bottom:6px"><div class="hint" id="ap-count" style="margin-bottom:10px"></div><div id="ap-list"></div><div id="ap-sparks" hidden></div></div>` });
   const el = m.el;
   let timer;
   const load = async () => {
+    const sp = filter === 'sparks';
+    ['#ap-q', '#ap-count', '#ap-list'].forEach((s) => el.querySelector(s).hidden = sp); el.querySelector('#ap-sparks').hidden = !sp;
+    if (sp) return adminSparksPane(el.querySelector('#ap-sparks'), load);
     const q = el.querySelector('#ap-q').value;
     let r; try { r = await api('GET', `/api/admin/users?q=${encodeURIComponent(q)}&filter=${filter}`); } catch (e) { return toast(e.message, true); }
     el.querySelector('#ap-count').textContent = `${r.total} accounts · ${r.bannedCount} banned${r.users.length === 100 ? ' · showing first 100 matches' : ''}`;
@@ -690,6 +694,7 @@ function openAdminPanel() {
       const me = u.id === S.me.id;
       const canBan = !me && u.siteRole !== 'owner' && (owner || u.siteRole !== 'admin');
       const acts = [];
+      if (owner && !u.siteRole && !u.bannedAt) acts.push(`<button class="btn ${u.sparksUntil ? 'sp-has' : ''}" data-give-sparks="${u.id}" data-tip="${u.sparksUntil ? 'Has Sparks' : 'Give Sparks'}">${icon('gem', 'sm')}</button>`);
       if (u.bannedAt) acts.push(`<button class="btn" data-unban="${u.id}">Unban</button>`);
       else if (canBan) acts.push(`<button class="btn danger" data-ban="${u.id}">${icon('hammer', 'sm')} Ban</button>`);
       const role = u.siteRole || 'member';
@@ -711,6 +716,7 @@ function openAdminPanel() {
       const r = await banDialog(u); if (!r) return;
       act(async () => { await api('POST', `/api/admin/users/${u.id}/ban`, r); toast(`@${u.username} was banned ${r.minutes ? 'for ' + fmtBanLeft(r.minutes * 60000) : 'permanently'}`); });
     }));
+    el.querySelectorAll('[data-give-sparks]').forEach((b) => (b.onclick = () => giveSparksMenu(b, r.users.find((x) => x.id === b.dataset.giveSparks), load)));
     el.querySelectorAll('[data-unban]').forEach((b) => (b.onclick = () => act(async () => { await api('DELETE', `/api/admin/users/${b.dataset.unban}/ban`); toast('Unbanned'); })));
     el.querySelectorAll('[data-role]').forEach((sel) => (sel.onchange = async () => {
       const u = S.userCache[sel.dataset.role], to = sel.value, from = u.siteRole || 'member';
@@ -728,7 +734,7 @@ function openAdminPanel() {
   el.querySelector('#ap-q').oninput = () => { clearTimeout(timer); timer = setTimeout(load, 220); };
   el.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => {
     filter = b.dataset.f; el.querySelectorAll('[data-f]').forEach((x) => x.classList.toggle('active', x === b));
-    el.querySelector('#ap-title').textContent = { all: 'Everyone', banned: 'Banned', owners: 'Owners', admins: 'Owners & admins' }[filter]; load();
+    el.querySelector('#ap-title').textContent = { all: 'Everyone', banned: 'Banned', owners: 'Owners', admins: 'Owners & admins', sparks: 'Sparks' }[filter]; load();
   }));
   load();
 }

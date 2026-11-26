@@ -971,7 +971,7 @@ app.get('/api/admin/users', auth, adminOnly, wrap(req => {
   if (req.query.filter === 'owners') where += " AND site_role='owner'";
   const rows = db.prepare(`SELECT * FROM users WHERE ${where} ORDER BY (site_role='owner') DESC, (site_role='admin') DESC, created_at DESC LIMIT 100`).all(...params);
   return {
-    users: rows.map((u) => ({ ...publicUser(u), email: owner ? u.email : undefined, createdAt: u.created_at, bannedAt: u.banned_at, banReason: u.ban_reason, bannedUntil: u.ban_until || null, primary: isPrimaryOwner(u) })),
+    users: rows.map((u) => ({ ...publicUser(u), email: owner ? u.email : undefined, sparksUntil: u.sparks_until && u.sparks_until > now() ? u.sparks_until : null, createdAt: u.created_at, bannedAt: u.banned_at, banReason: u.ban_reason, bannedUntil: u.ban_until || null, primary: isPrimaryOwner(u) })),
     total: db.prepare('SELECT COUNT(*) n FROM users').get().n,
     bannedCount: db.prepare('SELECT COUNT(*) n FROM users WHERE banned_at IS NOT NULL').get().n,
     viewerPrimary: isPrimaryOwner(req.user), primaryOwner: PRIMARY_OWNER,
@@ -1625,7 +1625,7 @@ function publicOrigin(req) {
 function sparksState(u) {
   const free = u.site_role === 'owner' || u.site_role === 'admin';
   return { active: hasSparks(u), free, until: free ? null : u.sparks_until || null, subscribed: !!u.stripe_sub, manageable: !!u.stripe_customer && !!STRIPE_KEY,
-    canBuy: !!STRIPE_KEY, price: SPARKS_PRICE };
+    canBuy: !!STRIPE_KEY, price: SPARKS_PRICE, venmo: venmoHandle(), pending: !!pendingSparks(u.id) };
 }
 const sparksChanged = (uid) => { const u = getUser(uid); if (!u) return; broadcastUserUpdate(uid, publicUser(u)); io.to(`user:${uid}`).emit('sparks:update', sparksState(u)); };
 app.get('/api/sparks', auth, wrap(req => sparksState(req.user)));
@@ -1691,6 +1691,74 @@ function stripeWebhook(req, res) {
   let ev; try { ev = JSON.parse(payload); } catch { return res.status(400).end(); }
   onStripeEvent(ev).then(() => res.json({ received: true }), (e) => { console.error('stripe webhook:', e.message); res.status(500).end(); });
 }
+
+
+// ---------------------------------------------------------------- Sparks through Venmo (checked by hand)
+// People pay the main owner on Venmo, tap "I sent it", and an owner approves it in the admin panel.
+// The Venmo username is set in the admin panel (stored in the database, not in the code).
+db.exec(`CREATE TABLE IF NOT EXISTS sparks_requests (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', decided_at INTEGER, decided_by TEXT)`);
+const venmoHandle = () => db.prepare("SELECT v FROM meta WHERE k='venmo_handle'").get()?.v || null;
+const pendingSparks = (uid) => db.prepare("SELECT * FROM sparks_requests WHERE user_id=? AND status='pending'").get(uid);
+function ownerOnly(req, res, next) { if (req.user.site_role !== 'owner') return res.status(403).json({ error: 'Owners only' }); next(); }
+function grantSparks(uid, days) {
+  const u = getUser(uid); if (!u) throw fail(404, 'User not found');
+  const until = days > 0 ? Math.max(Date.now(), u.sparks_until || 0) + days * 86400_000 : Date.now();
+  db.prepare('UPDATE users SET sparks_until=? WHERE id=?').run(until, uid);
+  sparksChanged(uid);
+  return until;
+}
+const tellOwners = () => { for (const o of db.prepare("SELECT id FROM users WHERE site_role='owner'").all()) io.to(`user:${o.id}`).emit('sparks:requests', {}); };
+app.post('/api/sparks/venmo-sent', auth, wrap(req => {
+  if (!venmoHandle()) throw fail(400, 'Venmo payments aren’t set up yet.');
+  if (pendingSparks(req.user.id)) return { pending: true };
+  if ((req.user.sparks_until || 0) > now() + 5 * 86400_000) throw fail(400, 'You already have Sparks. You can renew in the last few days before it runs out.');
+  rateLimit('venmo:' + req.user.id, 5, 24 * 3600_000);
+  // auto-approve: Sparks turns on right away; owners can spot-check and take it back if no payment shows up
+  db.prepare('INSERT INTO sparks_requests (id, user_id, created_at, status) VALUES (?,?,?,?)').run(id(), req.user.id, now(), 'auto');
+  grantSparks(req.user.id, 31);
+  tellOwners();
+  return { active: true };
+}));
+app.get('/api/admin/sparks', auth, ownerOnly, wrap(req => ({
+  venmo: venmoHandle(), canEditVenmo: isPrimaryOwner(req.user),
+  recent: db.prepare("SELECT * FROM sparks_requests WHERE status='auto' AND created_at>? ORDER BY created_at DESC").all(now() - 40 * 86400_000)
+    .map((r) => ({ id: r.id, createdAt: r.created_at, user: publicUser(getUser(r.user_id)) })).filter((r) => r.user),
+  requests: db.prepare("SELECT * FROM sparks_requests WHERE status='pending' ORDER BY created_at").all()
+    .map((r) => ({ id: r.id, createdAt: r.created_at, user: publicUser(getUser(r.user_id)) })).filter((r) => r.user),
+  members: db.prepare('SELECT * FROM users WHERE sparks_until>? ORDER BY sparks_until DESC LIMIT 200').all(now())
+    .map((u) => ({ user: publicUser(u), until: u.sparks_until, paid: !!u.stripe_sub })),
+})));
+app.put('/api/admin/venmo', auth, wrap(req => {
+  if (!isPrimaryOwner(req.user)) throw fail(403, 'Only the main owner can change this.');
+  const h = String(req.body.handle || '').trim().replace(/^@/, '');
+  if (h && !/^[A-Za-z0-9_-]{5,30}$/.test(h)) throw fail(400, 'That doesn’t look like a Venmo username.');
+  if (h) db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('venmo_handle', h); else db.prepare("DELETE FROM meta WHERE k='venmo_handle'").run();
+  return { venmo: h || null };
+}));
+app.post('/api/admin/sparks-requests/:id', auth, ownerOnly, wrap(req => {
+  const r = db.prepare("SELECT * FROM sparks_requests WHERE id=? AND status IN ('pending','auto')").get(req.params.id);
+  if (!r) throw fail(404, 'That request was already handled.');
+  if (r.status === 'auto' && req.body.action === 'deny') { // took Sparks without paying
+    db.prepare("UPDATE sparks_requests SET status='denied', decided_at=?, decided_by=? WHERE id=?").run(now(), req.user.id, r.id);
+    grantSparks(r.user_id, 0);
+    io.to(`user:${r.user_id}`).emit('sparks:update', { ...sparksState(getUser(r.user_id)), denied: true });
+    tellOwners();
+    return { ok: true };
+  }
+  if (r.status === 'auto') { db.prepare("UPDATE sparks_requests SET status='approved', decided_at=?, decided_by=? WHERE id=?").run(now(), req.user.id, r.id); tellOwners(); return { ok: true }; }
+  const ok = req.body.action === 'approve';
+  db.prepare('UPDATE sparks_requests SET status=?, decided_at=?, decided_by=? WHERE id=?').run(ok ? 'approved' : 'denied', now(), req.user.id, r.id);
+  if (ok) grantSparks(r.user_id, 31);
+  else io.to(`user:${r.user_id}`).emit('sparks:update', { ...sparksState(getUser(r.user_id)), denied: true });
+  tellOwners();
+  return { ok: true };
+}));
+app.post('/api/admin/users/:id/sparks', auth, ownerOnly, wrap(req => {
+  const days = Number(req.body.days);
+  if (![0, 7, 31, 365, 36500].includes(days)) throw fail(400, 'Pick how long.');
+  return { until: grantSparks(req.params.id, days) };
+}));
 
 // Simple privacy + terms pages (linked from Google's sign-in screen)
 const legalPage = (title, body) => `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} · lumi</title>
