@@ -102,7 +102,7 @@ async function renderSparks(main) {
           : st.pending ? `<div class="sp-wait">${icon('check', 'sm')} Payment sent. Sparks switches on as soon as the lumi team confirms it, usually within a day.</div>`
           : st.venmo ? `<a class="btn primary lg venmo-btn" data-sp="venmo" href="${esc(venmoLink(st.venmo))}" target="_blank" rel="noopener">Pay ${esc(st.price)} with Venmo</a>
               <button class="btn lg" data-sp="sent" ${S._venmoOpened ? '' : 'hidden'}>I sent it</button>
-              <div class="sp-steps muted small">1. Pay ${esc(st.price)} to @${esc(st.venmo)} on Venmo (the note is filled in for you).<br>2. Come back and tap <b>I sent it</b>. Sparks turns on right away for a month.<br>Payments are checked, and Sparks is removed if no payment arrives.</div>`
+              <div class="sp-steps muted small">1. Pay ${esc(st.price)} to @${esc(st.venmo)} on Venmo (the note is filled in for you).<br>2. Come back and tap <b>I sent it</b>.<br>3. Sparks turns on for a month as soon as your payment is confirmed.</div>`
           : `<button class="btn lg" disabled>Coming soon</button><span class="muted small">Payments aren’t switched on yet.</span>`}
       </div></section>
     <section class="sp-preview"><div class="lb-h"><span>How you’ll look</span></div>
@@ -112,8 +112,8 @@ async function renderSparks(main) {
     if (k === 'customize') return openUserSettings('appearance');
     if (k === 'venmo') { S._venmoOpened = true; el.querySelector('[data-sp=sent]')?.removeAttribute('hidden'); return; } // the link opens Venmo
     if (k === 'sent') {
-      if (!(await confirmDialog('Did you send the payment?', 'Only tap this after the Venmo payment went through. Every payment is checked, and Sparks is removed if it never arrived.', 'Yes, I sent it', false))) return;
-      try { await api('POST', '/api/sparks/venmo-sent'); S.me.sparks = true; applySparkTheme(); toast('Sparks is on. Thanks for supporting lumi!'); renderSparks($('#main')); } catch (err) { toast(err.message, true); }
+      if (!(await confirmDialog('Did you send the payment?', 'Only tap this after the Venmo payment went through. Sparks turns on once the payment is confirmed.', 'Yes, I sent it', false))) return;
+      try { await api('POST', '/api/sparks/venmo-sent'); toast('Thanks! Sparks turns on as soon as your payment is confirmed.'); renderSparks($('#main')); } catch (err) { toast(err.message, true); }
       return;
     }
     b.disabled = true;
@@ -132,13 +132,12 @@ async function adminSparksPane(pane, reload) {
   let r; try { r = await api('GET', '/api/admin/sparks'); } catch (e) { pane.innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
   const until = (t) => (t > Date.now() + 50 * 365 * 86400_000 ? 'forever' : 'until ' + new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }));
   pane.innerHTML = `
-    <h4 style="margin-top:0">Venmo payments — ${r.recent.length}</h4>
-    <p class="hint" style="margin-top:-6px">Sparks turns on as soon as someone taps “I sent it”. Match these with your Venmo; if a payment never came, take Sparks back.</p>
-    ${r.recent.length ? r.recent.map((q) => `<div class="row-line">${avatar(q.user, 40)}<div class="meta"><div class="bold">${esc(q.user.displayName)} <span class="muted" style="font-weight:400">@${esc(q.user.username)}</span></div>
-      <div class="small muted">${ago(q.createdAt) === 'now' ? 'just now' : ago(q.createdAt) + ' ago'} · look for “lumi Sparks for @${esc(q.user.username)}”</div></div>
-      <button class="btn" data-approve="${q.id}" data-tip="Hide from this list">Got it</button><button class="btn danger" data-deny="${q.id}">Didn’t pay</button></div>`).join('')
-      : '<p class="muted small">No Venmo payments yet.</p>'}
-    ${r.requests.length ? `<h4>Waiting — ${r.requests.length}</h4>${r.requests.map((q) => `<div class="row-line">${avatar(q.user, 40)}<div class="meta"><div class="bold">@${esc(q.user.username)}</div></div><button class="btn" data-deny="${q.id}">Not received</button><button class="btn primary" data-approve="${q.id}">Approve</button></div>`).join('')}` : ''}
+    <h4 style="margin-top:0">Venmo payments to check — ${r.requests.length}</h4>
+    <p class="hint" style="margin-top:-6px">Open your Venmo and look for the note. Approve only if the $5.99 actually arrived.</p>
+    ${r.requests.length ? r.requests.map((q) => `<div class="row-line">${avatar(q.user, 40)}<div class="meta"><div class="bold">${esc(q.user.displayName)} <span class="muted" style="font-weight:400">@${esc(q.user.username)}</span></div>
+      <div class="small muted">Says they paid ${ago(q.createdAt) === 'now' ? 'just now' : ago(q.createdAt) + ' ago'} · look for “lumi Sparks for @${esc(q.user.username)}”</div></div>
+      <button class="btn" data-deny="${q.id}">Not received</button><button class="btn primary" data-approve="${q.id}">Approve · 1 month</button></div>`).join('')
+      : '<p class="muted small">Nothing to check. When someone says they paid, it shows up here.</p>'}
     <h4>Venmo account</h4>
     ${r.canEditVenmo ? `<form class="acc-genre" id="venmo-form"><input class="input" name="h" placeholder="your Venmo username" value="${esc(r.venmo || '')}" autocomplete="off"><button class="btn" type="submit">Save</button></form>
       <div class="hint" style="margin-top:6px">People paying for Sparks send money to this Venmo. Anyone who pays will see this username in Venmo; that’s how Venmo works. Leave it empty to turn Venmo payments off.</div>`
@@ -147,8 +146,8 @@ async function adminSparksPane(pane, reload) {
     ${r.members.map((x) => `<div class="row-line">${avatar(x.user, 34)}<div class="meta"><div class="bold">${esc(x.user.displayName)} <span class="muted" style="font-weight:400">@${esc(x.user.username)}</span></div><div class="small muted">${x.user.siteRole ? 'Free as lumi team' : until(x.until)}${x.paid ? ' · paying by card' : ''}</div></div></div>`).join('') || '<p class="muted small">No one yet.</p>'}
     <p class="hint">To give someone Sparks for free, find them under Everyone and use the Sparks button.</p>`;
   const act = async (fn, msg) => { try { await fn(); if (msg) toast(msg); adminSparksPane(pane, reload); } catch (e) { toast(e.message, true); } };
-  pane.querySelectorAll('[data-approve]').forEach((b) => (b.onclick = () => act(() => api('POST', `/api/admin/sparks-requests/${b.dataset.approve}`, { action: 'approve' }))));
-  pane.querySelectorAll('[data-deny]').forEach((b) => (b.onclick = async () => { if (await confirmDialog('No payment came in?', 'This takes their Sparks away and tells them the payment couldn’t be found.', 'Take Sparks back')) act(() => api('POST', `/api/admin/sparks-requests/${b.dataset.deny}`, { action: 'deny' }), 'Sparks removed'); }));
+  pane.querySelectorAll('[data-approve]').forEach((b) => (b.onclick = () => act(() => api('POST', `/api/admin/sparks-requests/${b.dataset.approve}`, { action: 'approve' }), 'Approved: Sparks is on for a month')));
+  pane.querySelectorAll('[data-deny]').forEach((b) => (b.onclick = async () => { if (await confirmDialog('Payment not received?', 'They’ll be told the payment couldn’t be found, and can try again.', 'Not received')) act(() => api('POST', `/api/admin/sparks-requests/${b.dataset.deny}`, { action: 'deny' })); }));
   pane.querySelector('#venmo-form')?.addEventListener('submit', (e) => { e.preventDefault(); act(() => api('PUT', '/api/admin/venmo', { handle: e.target.h.value }), 'Saved'); });
 }
 function giveSparksMenu(anchor, u, done) {
@@ -257,7 +256,7 @@ function wireSparksAppearance(pane, redraw) {
 function extrasSocket(socket) {
   socket.on('tasks:update', onTasksUpdate);
   socket.on('nicknames:update', ({ userId, nickname }) => applyNickname(userId, nickname));
-  socket.on('sparks:requests', () => { const p = $('#ap-sparks'); if (p && !p.hidden) adminSparksPane(p); });
+  socket.on('sparks:requests', () => { const p = $('#ap-sparks'); if (p && !p.hidden) adminSparksPane(p); else if (S.me.siteRole === 'owner') toast('Someone says they paid for Sparks. Check Admin panel › Sparks.'); });
   socket.on('sparks:update', (st) => { if (st.denied) toast('Your Venmo payment couldn’t be found. Check it went through, then try again.', true); if (st.active && !S.me.sparks) toast('Sparks is on. Enjoy!'); S.me.sparks = st.active; applySparkTheme(); if (S.view.type === 'sparks') renderMain(); });
   socket.on('session:revoked', () => { S.me = null; try { socket.disconnect(); } catch {} renderAuth('login'); toast('You were signed out from another device.'); });
   socket.on('member:xp', onXp);

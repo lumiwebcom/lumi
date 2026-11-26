@@ -1698,6 +1698,12 @@ function stripeWebhook(req, res) {
 // The Venmo username is set in the admin panel (stored in the database, not in the code).
 db.exec(`CREATE TABLE IF NOT EXISTS sparks_requests (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', decided_at INTEGER, decided_by TEXT)`);
+// one-time cleanup: Sparks handed out by the old auto-approve is removed (card subscribers keep theirs)
+if (!db.prepare("SELECT 1 FROM meta WHERE k='sparks_reset_1'").get()) {
+  db.prepare('UPDATE users SET sparks_until=NULL WHERE stripe_sub IS NULL').run();
+  db.prepare("UPDATE sparks_requests SET status='denied', decided_at=? WHERE status='auto'").run(Date.now());
+  db.prepare('INSERT INTO meta VALUES (?,?)').run('sparks_reset_1', String(Date.now()));
+}
 const venmoHandle = () => db.prepare("SELECT v FROM meta WHERE k='venmo_handle'").get()?.v || null;
 const pendingSparks = (uid) => db.prepare("SELECT * FROM sparks_requests WHERE user_id=? AND status='pending'").get(uid);
 function ownerOnly(req, res, next) { if (req.user.site_role !== 'owner') return res.status(403).json({ error: 'Owners only' }); next(); }
@@ -1714,11 +1720,10 @@ app.post('/api/sparks/venmo-sent', auth, wrap(req => {
   if (pendingSparks(req.user.id)) return { pending: true };
   if ((req.user.sparks_until || 0) > now() + 5 * 86400_000) throw fail(400, 'You already have Sparks. You can renew in the last few days before it runs out.');
   rateLimit('venmo:' + req.user.id, 5, 24 * 3600_000);
-  // auto-approve: Sparks turns on right away; owners can spot-check and take it back if no payment shows up
-  db.prepare('INSERT INTO sparks_requests (id, user_id, created_at, status) VALUES (?,?,?,?)').run(id(), req.user.id, now(), 'auto');
-  grantSparks(req.user.id, 31);
+  // Venmo can't tell us a payment arrived, so an owner checks their Venmo and approves it in the admin panel
+  db.prepare('INSERT INTO sparks_requests (id, user_id, created_at) VALUES (?,?,?)').run(id(), req.user.id, now());
   tellOwners();
-  return { active: true };
+  return { pending: true };
 }));
 app.get('/api/admin/sparks', auth, ownerOnly, wrap(req => ({
   venmo: venmoHandle(), canEditVenmo: isPrimaryOwner(req.user),
