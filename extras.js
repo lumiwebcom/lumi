@@ -19,13 +19,13 @@ function applyNickname(uid, nick) {
 
 // ------------------------------------------------------------------ Sparks: name fonts, gold nameplate, themes
 const NAME_FONTS = {
-  grotesk: ['Grotesk', '"Space Grotesk"', 'Space+Grotesk:wght@500;700'],
-  serif: ['Serif', '"Fraunces"', 'Fraunces:opsz,wght@9..144,600'],
-  mono: ['Mono', '"JetBrains Mono"', 'JetBrains+Mono:wght@600'],
-  hand: ['Handwritten', '"Caveat"', 'Caveat:wght@600;700'],
-  pixel: ['Pixel', '"Pixelify Sans"', 'Pixelify+Sans:wght@500'],
-  round: ['Rounded', '"Nunito"', 'Nunito:wght@700;800'],
-  slab: ['Slab', '"Roboto Slab"', 'Roboto+Slab:wght@600'],
+  grotesk: ['Grotesk', "'Space Grotesk', 'Arial Black', sans-serif", 'Space+Grotesk:wght@500;700'],
+  serif: ['Serif', "'Fraunces', Georgia, 'Times New Roman', serif", 'Fraunces:opsz,wght@9..144,600'],
+  mono: ['Mono', "'JetBrains Mono', Consolas, 'Courier New', monospace", 'JetBrains+Mono:wght@600'],
+  hand: ['Handwritten', "'Caveat', 'Segoe Print', 'Comic Sans MS', cursive", 'Caveat:wght@600;700'],
+  pixel: ['Pixel', "'Pixelify Sans', 'Lucida Console', monospace", 'Pixelify+Sans:wght@500'],
+  round: ['Rounded', "'Nunito', 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif", 'Nunito:wght@700;800'],
+  slab: ['Slab', "'Roboto Slab', Rockwell, 'Courier New', serif", 'Roboto+Slab:wght@600'],
 };
 const loadedFonts = new Set();
 function ensureFont(key) {
@@ -33,7 +33,7 @@ function ensureFont(key) {
   loadedFonts.add(key);
   document.head.appendChild(h(`<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=${f[2]}&display=swap">`));
 }
-const fontFamily = (key) => (NAME_FONTS[key] ? `${NAME_FONTS[key][1]}, var(--font)` : '');
+const fontFamily = (key) => (NAME_FONTS[key] ? NAME_FONTS[key][1] : '');
 // attributes for a person's name: their Sparks font, and the gold plate class
 function nameAttrs(u, extra = '') {
   const x = (u && S.userCache[u.id]) || u || {};
@@ -71,7 +71,7 @@ function applySparkTheme() {
     if (th.bg) { const [app, bg, bg2, bg3, bg4, border, border2] = th.bg; css += `[data-theme="dark"]{--app-bg:${app};--bg:${bg};--bg2:${bg2};--bg3:${bg3};--bg4:${bg4};--border:${border};--border2:${border2}}`; }
   }
   const font = on && APP_FONTS[S.settings.appFont] && S.settings.appFont !== 'default' ? S.settings.appFont : null;
-  if (font) { ensureFont(font); css += `:root{--font:${APP_FONTS[font][1]}, "Manrope", -apple-system, "Segoe UI", sans-serif}`; }
+  if (font) { ensureFont(font); css += `:root{--font:${APP_FONTS[font][1]}}`; }
   el.textContent = css;
 }
 
