@@ -18,7 +18,7 @@ function updateTitle() {
   let t = 'lumi';
   const v = S.view;
   if (v.type === 'dm') t = dmName(S.dms.find((d) => d.id === v.dmId)) + ' • lumi';
-  if (v.type === 'server') { const sd = S.serverData[v.serverId]; const c = sd?.channels.find((c) => c.id === v.channelId); if (sd) t = `${c ? (c.type === 'text' ? '#' : '') + c.name + ' | ' : ''}${sd.server.name} • lumi`; }
+  if (v.type === 'server') { const sd = S.serverData[v.serverId]; const c = sd?.channels.find((c) => c.id === v.channelId); if (sd) t = `${v.channelId === 'lobby' ? 'Lobby | ' : c ? c.name + ' | ' : ''}${sd.server.name} • lumi`; }
   document.title = (unread ? `(${unread}) ` : '') + t;
 }
 
@@ -32,18 +32,19 @@ async function route() {
     let sd = S.serverData[r.serverId];
     if (!sd) { try { sd = await loadServer(r.serverId); } catch { return navigate('/channels/@me', true); } }
     let cid = r.channelId;
-    if (!cid || !sd.channels.find((c) => c.id === cid)) {
+    if (cid !== 'lobby' && (!cid || !sd.channels.find((c) => c.id === cid))) {
       const last = S.lastChannel[r.serverId];
-      cid = (last && sd.channels.find((c) => c.id === last && c.type === 'text') ? last : (sd.channels.find((c) => c.type === 'text') || sd.channels[0])?.id) || null;
-      if (cid) history.replaceState({}, '', `/channels/${r.serverId}/${cid}`);
+      cid = last && (last === 'lobby' || sd.channels.find((c) => c.id === last && isChatRoom(c))) ? last : 'lobby';
+      history.replaceState({}, '', `/channels/${r.serverId}/${cid}`);
     }
     const ch = sd.channels.find((c) => c.id === cid);
-    if (ch?.type === 'text') { S.lastChannel[r.serverId] = cid; localStorage.setItem('lumi.lastChannel', JSON.stringify(S.lastChannel)); }
+    if (cid === 'lobby' || isChatRoom(ch)) { S.lastChannel[r.serverId] = cid; localStorage.setItem('lumi.lastChannel', JSON.stringify(S.lastChannel)); }
+    if (S.thread && S.thread.channelId !== cid) S.thread = null;
     S.view = { type: 'server', serverId: r.serverId, channelId: cid };
   } else if (r.type === 'dm') {
     if (!S.dms.find((d) => d.id === r.dmId)) { await refreshDMs(); if (!S.dms.find((d) => d.id === r.dmId)) return navigate('/channels/@me', true); }
     S.view = { type: 'dm', dmId: r.dmId, channelId: r.dmId };
-  } else S.view = { type: ['feed', 'activity', 'stargaze'].includes(r.type) ? r.type : 'home' };
+  } else { S.thread = null; S.view = { type: ['feed', 'activity', 'stargaze', 'sparks'].includes(r.type) ? r.type : 'home' }; }
   S.panel = null; S.replyTo = null; S.pending = null; S.editing = null;
   renderAll();
 }
@@ -65,8 +66,8 @@ async function refreshStories() { try { const r = await api('GET', '/api/stories
 
 function dmName(dm) {
   if (!dm) return 'Direct Message';
-  if (dm.type === 'group') return dm.name || dm.recipients.map((r) => r.displayName).join(', ') || 'Just you';
-  return dm.recipients[0]?.displayName || 'Deleted user';
+  if (dm.type === 'group') return dm.name || dm.recipients.map((r) => nameOf(r)).join(', ') || 'Just you';
+  return dm.recipients[0] ? nameOf(dm.recipients[0]) : 'Deleted user';
 }
 function dmAvatar(dm, size = 48) {
   if (dm.type !== 'group') { const u = S.userCache[dm.recipients[0]?.id] || dm.recipients[0]; return avatar(u, size, { dot: true }); }
@@ -93,7 +94,7 @@ function renderRail() {
     html += railItem({ active: v.serverId === s.id, unread: s.unread > 0, tip: s.name + (inVoice ? ' • in a lounge' : ''),
       inner: `<div class="rail-ring"><div class="rail-btn srv ${s.icon ? 'has-img' : ''}" style="--c:${colorFor(s.id)}">${serverIcon(s)}</div></div>`, data: `data-server="${s.id}"` });
   }
-  html += railItem({ tip: 'Create a space', inner: `<div class="rail-btn add">${icon('plus')}</div>`, data: 'data-act="create-server"' });
+  html += railItem({ tip: 'Create a community', inner: `<div class="rail-btn add">${icon('plus')}</div>`, data: 'data-act="create-server"' });
   html += railItem({ active: v.type === 'stargaze', tip: 'Stargaze', inner: `<div class="rail-btn add sg-rail">${icon('compass')}</div>`, data: 'data-act="stargaze"' });
   if (isSiteAdmin()) html += '<div class="rail-spacer"></div>' + railItem({ tip: 'Admin panel', inner: `<div class="rail-btn add admin-btn">${SHIELD_BLUE}</div>`, data: 'data-act="admin-panel"' });
   $('#rail').innerHTML = html;
@@ -117,14 +118,15 @@ async function serverMenu(sid, anchor) {
   const owner = sd.server.ownerId === S.me.id;
   openMenu(anchor, [
     can(sd, P.CREATE_INVITE) && { label: 'Invite people', icon: 'userPlus', onClick: () => openInvite(sid) },
+    { label: 'Go to the lobby', icon: 'home', onClick: () => navigate(`/channels/${sid}/lobby`) },
     { label: 'Mark as read', icon: 'check', onClick: () => markServerRead(sid) },
     (can(sd, P.MANAGE_SERVER) || can(sd, P.MANAGE_ROLES) || can(sd, P.KICK_MEMBERS) || can(sd, P.BAN_MEMBERS)) && { label: 'Community settings', icon: 'settings', onClick: () => openServerSettings(sid) },
     can(sd, P.MANAGE_CHANNELS) && { label: 'New room', icon: 'plus', onClick: () => openChannelModal(sid) },
-    can(sd, P.MANAGE_CHANNELS) && { label: 'New category', icon: 'menu', onClick: () => openCategoryModal(sid) },
+    can(sd, P.MANAGE_CHANNELS) && { label: 'New section', icon: 'menu', onClick: () => openCategoryModal(sid) },
     { label: 'Edit my community profile', icon: 'edit', onClick: () => editNickname(sid, S.me.id) },
     'sep',
-    !owner && { label: 'Leave space', icon: 'logout', danger: true, onClick: () => leaveServer(sid) },
-    owner && can(sd, P.MANAGE_SERVER) && { label: 'Delete space', icon: 'trash', danger: true, onClick: () => openServerSettings(sid, 'delete') },
+    !owner && { label: 'Leave community', icon: 'logout', danger: true, onClick: () => leaveServer(sid) },
+    owner && can(sd, P.MANAGE_SERVER) && { label: 'Delete community', icon: 'trash', danger: true, onClick: () => openServerSettings(sid, 'delete') },
   ]);
 }
 async function markServerRead(sid) {
@@ -136,7 +138,7 @@ async function markServerRead(sid) {
 async function leaveServer(sid) {
   const sd = S.serverData[sid];
   if (!(await confirmDialog(`Leave '${sd?.server.name}'`, `Are you sure you want to leave <b>${esc(sd?.server.name)}</b>? You won't be able to rejoin unless you are re-invited.`, 'Leave'))) return;
-  try { await api('POST', `/api/servers/${sid}/leave`); removeServerLocal(sid); toast('You left the space'); } catch (e) { toast(e.message, true); }
+  try { await api('POST', `/api/servers/${sid}/leave`); removeServerLocal(sid); toast('You left the community'); } catch (e) { toast(e.message, true); }
 }
 function removeServerLocal(sid) {
   if (Call.active && S.serverData[sid]?.channels.some((c) => c.id === Call.active.channelId)) leaveCall();
@@ -150,10 +152,7 @@ function renderSideTop() {
   if (v.type === 'stargaze') return renderStargazeSide();
   if (v.type === 'server') {
     const sd = S.serverData[v.serverId]; if (!sd) return (el.innerHTML = '');
-    const b = sd.server.banner;
-    el.innerHTML = `<div class="server-head ${b ? 'has-banner' : ''}" data-act="server-menu">
-      ${b ? `<div class="banner" style="background-image:url('${esc(b)}')"></div>` : ''}
-      <div class="row"><span class="name">${esc(sd.server.name)}</span>${icon('chevron', 'sm')}</div></div>`;
+    el.innerHTML = communityHead(sd);
   } else {
     el.innerHTML = `<div class="side-head"><div class="title">${esc(S.me.username)}</div>
       <button class="icon-btn" data-act="new-group" data-tip="New message">${icon('edit')}</button></div>
@@ -191,9 +190,9 @@ function renderServerSide(el) {
   const sd = S.serverData[S.view.serverId]; if (!sd) return (el.innerHTML = '');
   const manage = can(sd, P.MANAGE_CHANNELS);
   const collapsed = S.collapsedCats || (S.collapsedCats = new Set(JSON.parse(localStorage.getItem('lumi.collapsed') || '[]')));
-  const order = (a, b) => (a.type === b.type ? 0 : a.type === 'text' ? -1 : 1) || a.position - b.position;
-  const chanRow = (c) => `<div class="nav-item chan ${S.view.channelId === c.id ? 'active' : ''} ${c.unread && S.view.channelId !== c.id ? 'unread' : ''}" data-chan="${c.id}">
-      ${icon(c.type === 'text' ? 'room' : 'waves', 'sm')}<span class="n" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span>
+  const order = (a, b) => ((a.type === 'voice') - (b.type === 'voice')) || a.position - b.position;
+  const chanRow = (c) => `<div class="nav-item chan t-${c.type} ${S.view.channelId === c.id ? 'active' : ''} ${c.unread && S.view.channelId !== c.id ? 'unread' : ''}" data-chan="${c.id}">
+      ${roomIcon(c)}<span class="n" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span>
       <span class="tools">${can(sd, P.CREATE_INVITE) ? `<button data-act="invite" data-tip="Create invite">${icon('userPlus', 'xs')}</button>` : ''}${manage ? `<button data-act="edit-chan" data-tip="Edit">${icon('settings', 'xs')}</button>` : ''}</span>
       ${c.unread && S.view.channelId !== c.id ? '<span class="unread-dot"></span>' : ''}</div>`;
   const voiceUsers = (c) => {
@@ -206,18 +205,18 @@ function renderServerSide(el) {
   const cats = [...(sd.categories || [])].sort((a, b) => a.position - b.position);
   const catIds = new Set(cats.map((c) => c.id));
   const loose = sd.channels.filter((c) => !c.categoryId || !catIds.has(c.categoryId));
-  let html = loose.length ? `<div style="height:8px"></div>${rows(loose)}` : '';
+  let html = `<div class="lobby-wrap">${lobbyNavItem(sd)}</div>` + (loose.length ? rows(loose) : '');
   for (const cat of cats) {
     const list = sd.channels.filter((c) => c.categoryId === cat.id);
     const isCol = collapsed.has(cat.id);
     const hasUnread = list.some((c) => c.unread && c.id !== S.view.channelId);
-    html += `<div class="side-section cat cat-head" data-cat="${cat.id}"><span class="cat-name">${icon('chevron', 'xs').replace('class="i xs"', `class="i xs" style="transition:transform .15s;${isCol ? 'transform:rotate(-90deg)' : ''}"`)} ${esc(cat.name)}${isCol && hasUnread ? ' <span class="unread-dot" style="display:inline-block"></span>' : ''}</span>
-      ${manage ? `<span class="cat-tools"><button class="icon-btn" data-act="new-chan-in" data-tip="Add a room or lounge">${icon('plus', 'xs')}</button><button class="icon-btn" data-act="edit-cat" data-tip="Edit category">${icon('settings', 'xs')}</button></span>` : ''}</div>`;
+    html += `<div class="side-section cat cat-head sec" data-cat="${cat.id}"><span class="cat-name">${esc(cat.name)}${isCol && hasUnread ? ' <span class="unread-dot" style="display:inline-block"></span>' : ''}</span><span class="sec-rule"></span>
+      ${manage ? `<span class="cat-tools"><button class="icon-btn" data-act="new-chan-in" data-tip="Add a room">${icon('plus', 'xs')}</button><button class="icon-btn" data-act="edit-cat" data-tip="Edit section">${icon('settings', 'xs')}</button></span>` : ''}<span class="sec-fold">${icon('chevron', 'xs').replace('class="i xs"', `class="i xs" style="transition:transform .15s;${isCol ? 'transform:rotate(-90deg)' : ''}"`)}</span></div>`;
     if (isCol) html += rows(list.filter((c) => c.id === S.view.channelId || (S.voice[c.id] || []).length));
     else html += list.length ? rows(list) : `<div class="muted small" style="padding:4px 14px 6px">${manage ? 'Empty — add a room with +' : 'Nothing here yet'}</div>`;
   }
   if (!sd.channels.length && !cats.length) html += `<div class="muted small" style="padding:14px">No rooms yet.</div>`;
-  if (manage) html += `<button class="btn ghost" data-act="new-cat" style="margin:14px 6px 0;font-weight:500;color:var(--text2)">${icon('plus', 'sm')} New category</button>`;
+  if (manage) html += `<button class="btn ghost" data-act="new-cat" style="margin:14px 6px 0;font-weight:500;color:var(--text2)">${icon('plus', 'sm')} New section</button>`;
   el.innerHTML = html;
 }
 function renderSideFoot() {
@@ -235,7 +234,7 @@ function renderSideFoot() {
   }
   const muted = Call.active ? Call.active.muted : S.selfMute, deaf = Call.active ? Call.active.deafened : S.selfDeaf;
   html += `<div class="me-panel">${avatar(S.me, 36, { dot: true })}
-    <div class="who" data-act="my-profile"><div class="n">${esc(S.me.displayName)}${roleBadge(S.me)}</div><div class="u">${esc(S.me.customStatus || '@' + S.me.username)}</div></div>
+    <div class="who" data-act="my-profile"><div class="n"><span ${nameAttrs(S.me)}>${esc(S.me.displayName)}</span>${roleBadge(S.me)}</div><div class="u">${esc(S.me.customStatus || '@' + S.me.username)}</div></div>
     <button class="icon-btn ${muted ? 'off' : ''}" data-act="toggle-mute" data-tip="${muted ? 'Unmute' : 'Mute'}">${icon(muted ? 'micOff' : 'mic', 'sm')}</button>
     <button class="icon-btn ${deaf ? 'off' : ''}" data-act="toggle-deafen" data-tip="${deaf ? 'Undeafen' : 'Deafen'}">${icon(deaf ? 'headphonesOff' : 'headphones', 'sm')}</button>
     <button class="icon-btn" data-act="user-settings" data-tip="Settings">${icon('settings', 'sm')}</button></div>`;
@@ -268,6 +267,8 @@ function onSideClick(e) {
   if (t.dataset.dm) return navigate('/channels/@me/' + t.dataset.dm);
   if (t.dataset.user) return openProfile(t.dataset.user, S.view.serverId);
   if (t.dataset.chan) {
+    S.thread = null;
+    if (t.dataset.chan === 'lobby') return navigate(`/channels/${S.view.serverId}/lobby`);
     const sd = S.serverData[S.view.serverId]; const c = sd.channels.find((c) => c.id === t.dataset.chan);
     navigate(`/channels/${S.view.serverId}/${c.id}`);
     if (c.type === 'voice' && Call.active?.channelId !== c.id) joinCall(c.id);
@@ -283,11 +284,11 @@ function gotoCall() {
 // ------------------------------------------------------------------ member info
 function memberInfo(sd, uid) {
   const u = S.userCache[uid] || {};
-  if (!sd) return { name: u.displayName || u.username || 'Unknown', color: null, roles: [] };
+  if (!sd) return { name: S.nicks[uid] || u.displayName || u.username || 'Unknown', color: null, roles: [] };
   const m = sd.members.find((m) => m.user.id === uid);
   const roles = m ? sd.roles.filter((r) => !r.isDefault && m.roleIds.includes(r.id)) : [];
   const colored = roles.find((r) => r.color && r.color.toLowerCase() !== '#8e8e8e');
-  return { name: m?.nickname || u.displayName || u.username || 'Unknown', color: colored?.color || null, roles, member: m, owner: sd.server.ownerId === uid };
+  return { name: S.nicks[uid] || m?.nickname || u.displayName || u.username || 'Unknown', color: colored?.color || null, roles, member: m, owner: sd.server.ownerId === uid };
 }
 const currentServer = () => (S.view.type === 'server' ? S.serverData[S.view.serverId] : null);
 
@@ -299,8 +300,10 @@ function renderMain() {
   if (v.type === 'feed') return renderFeed(main);
   if (v.type === 'stargaze') return renderStargaze(main);
   if (v.type === 'activity') return renderActivity(main);
+  if (v.type === 'sparks') return renderSparks(main);
   if (v.type === 'dm') return renderChatView(main);
   const sd = S.serverData[v.serverId];
+  if (sd && v.channelId === 'lobby') return renderLobby(main, sd);
   const ch = sd?.channels.find((c) => c.id === v.channelId);
   if (!ch) {
     main.innerHTML = `<header class="main-head">${mobileBtn()}</header><div class="empty" style="flex:1"><div class="art">${icon('hash')}</div><h3>No rooms here yet</h3>
@@ -309,6 +312,7 @@ function renderMain() {
     return;
   }
   if (ch.type === 'voice') return renderVoiceView(main, sd, ch);
+  if (ch.type === 'board' || ch.type === 'gallery') return renderRoomView(main, sd, ch);
   renderChatView(main);
 }
 
@@ -357,7 +361,7 @@ function renderHomeBody() {
   if (tab === 'all') list = list.filter((f) => f.type === 'friend');
   if (tab === 'pending') list = list.filter((f) => f.type === 'incoming' || f.type === 'outgoing');
   if (tab === 'blocked') list = list.filter((f) => f.type === 'blocked');
-  list = [...list].sort((a, b) => (isOnline(b.user.id) - isOnline(a.user.id)) || a.user.displayName.localeCompare(b.user.displayName));
+  list = [...list].sort((a, b) => (isOnline(b.user.id) - isOnline(a.user.id)) || nameOf(a.user).localeCompare(nameOf(b.user)));
   const label = { online: 'Online', all: 'All friends', pending: 'Pending', blocked: 'Blocked' }[tab];
   if (!list.length) {
     const msgs = { online: ["No one's around right now", 'Your friends will show up here when they come online.'], all: ['No friends yet', 'Add someone by their username to get started.'],
@@ -373,7 +377,7 @@ function renderHomeBody() {
       if (f.type === 'incoming') acts = `<button class="icon-btn ok" data-act="accept" data-tip="Accept">${icon('check', 'sm')}</button><button class="icon-btn no" data-act="decline" data-tip="Ignore">${icon('x', 'sm')}</button>`;
       if (f.type === 'outgoing') acts = `<button class="icon-btn no" data-act="decline" data-tip="Cancel">${icon('x', 'sm')}</button>`;
       if (f.type === 'blocked') acts = `<button class="btn" data-act="unblock">Unblock</button>`;
-      html += `<div class="friend" data-fid="${u.id}">${avatar(u, 48, { dot: f.type === 'friend' })}<div class="meta"><div class="n">${esc(u.displayName)}${roleBadge(u)} <span class="muted" style="font-weight:400">@${esc(u.username)}</span></div><div class="s">${esc(sub)}</div></div><div class="acts">${acts}</div></div>`;
+      html += `<div class="friend" data-fid="${u.id}">${avatar(u, 48, { dot: f.type === 'friend' })}<div class="meta"><div class="n"><span ${nameAttrs(u)}>${esc(nameOf(u))}</span>${roleBadge(u)} <span class="muted" style="font-weight:400">@${esc(u.username)}</span></div><div class="s">${esc(sub)}</div></div><div class="acts">${acts}</div></div>`;
     }
     html += '</div>';
   }
@@ -383,10 +387,10 @@ function renderActiveNow() {
   const el = $('#active-now'); if (!el) return;
   const friends = S.friends.filter((f) => f.type === 'friend' && isOnline(f.user.id)).map((f) => S.userCache[f.user.id] || f.user);
   const calls = S.dms.filter((d) => (S.voice[d.id] || []).length && Call.active?.channelId !== d.id);
-  let html = '<h3>Around now</h3>';
+  let html = tasksCard() + '<h3>Around now</h3>';
   for (const d of calls) html += `<div class="active-card" data-dm="${d.id}"><div style="display:flex;gap:10px;align-items:center">${dmAvatar(d, 40)}<div><div class="bold">${esc(dmName(d))}</div><div class="small" style="color:var(--green)">● In a call — tap to join</div></div></div></div>`;
   if (!friends.length && !calls.length) html += `<div class="active-card" style="cursor:default;text-align:center"><div class="bold">It's quiet for now…</div><div class="muted small" style="margin-top:6px">When friends are online or start a call, you'll see them here.</div></div>`;
-  for (const u of friends.slice(0, 12)) html += `<div class="active-card" data-user="${u.id}"><div style="display:flex;gap:10px;align-items:center">${avatar(u, 40, { dot: true })}<div style="min-width:0"><div class="bold">${esc(u.displayName)}</div><div class="small muted" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.customStatus || 'Online')}</div></div></div></div>`;
+  for (const u of friends.slice(0, 12)) html += `<div class="active-card" data-user="${u.id}"><div style="display:flex;gap:10px;align-items:center">${avatar(u, 40, { dot: true })}<div style="min-width:0"><div class="bold">${esc(nameOf(u))}</div><div class="small muted" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.customStatus || 'Online')}</div></div></div></div>`;
   el.innerHTML = html;
 }
 
@@ -408,7 +412,7 @@ function renderChatView(main) {
     const dm = S.dms.find((d) => d.id === cid);
     const u = dm.type === 'dm' ? S.userCache[dm.recipients[0]?.id] || dm.recipients[0] : null;
     const sub = u ? (isOnline(u.id) ? 'Active now' : '@' + u.username) : `${dm.members.length} members`;
-    head = `<div class="who" data-act="${u ? 'profile' : 'group-settings'}" ${u ? `data-user="${u.id}"` : ''}>${dmAvatar(dm, 40)}<div><div class="t">${esc(dmName(dm))}${u ? roleBadge(u) : ''}</div><div class="sub">${esc(sub)}</div></div></div>`;
+    head = `<div class="who" data-act="${u ? 'profile' : 'group-settings'}" ${u ? `data-user="${u.id}"` : ''}>${dmAvatar(dm, 40)}<div><div class="t"><span ${u ? nameAttrs(u) : ''}>${esc(dmName(dm))}</span>${u ? roleBadge(u) : ''}</div><div class="sub">${esc(sub)}</div></div></div>`;
     tools = `<button class="icon-btn" data-act="call-voice" data-tip="Start voice call">${icon('phone')}</button>
       <button class="icon-btn" data-act="call-video-start" data-tip="Start video call">${icon('video')}</button>
       <button class="icon-btn ${S.panel?.type === 'pins' ? 'active' : ''}" data-act="pins" data-tip="Pinned messages">${icon('pin', 'sm')}</button>
@@ -467,7 +471,7 @@ function introHtml() {
     const dm = S.dms.find((d) => d.id === v.dmId);
     const u = dm.type === 'dm' ? dm.recipients[0] : null;
     return `<div class="chat-intro">${dmAvatar(dm, 96)}<div class="big">${esc(dmName(dm))}</div>
-      ${u ? `<div class="muted">@${esc(u.username)} · on lumi</div><div class="muted small">This is the beginning of your messages with ${esc(u.displayName)}.</div>
+      ${u ? `<div class="muted">@${esc(u.username)} · on lumi</div><div class="muted small">This is the beginning of your messages with ${esc(nameOf(u))}.</div>
       <button class="btn" style="margin-top:8px" data-act="profile" data-user="${u.id}">View profile</button>` : `<div class="muted small">Welcome to the beginning of the group.</div>`}</div>`;
   }
   const sd = currentServer(); const ch = sd.channels.find((c) => c.id === v.channelId);
@@ -503,7 +507,7 @@ function groupHtml(g) {
   const topRole = mi.roles[0];
   return `<div class="msg-group ${me ? 'me' : ''}">
     ${!me ? `<div class="gav" data-user="${author.id}">${avatar(author, 28)}</div>` : ''}
-    <div class="stack">${showAuthor ? `<div class="author" data-user="${author.id}"><b style="${mi.color ? `color:${mi.color}` : ''}">${esc(mi.name)}</b>${roleBadge(author)}${mi.owner ? `<span style="color:var(--yellow)">${icon('crown', 'xs')}</span>` : ''}${topRole ? `<span class="role-tag" style="background:${esc(topRole.color)}">${esc(topRole.name)}</span>` : ''}<span>${fmtTime(g.msgs[0].createdAt)}</span></div>` : ''}
+    <div class="stack">${showAuthor ? `<div class="author" data-user="${author.id}"><b ${nameAttrs(author, mi.color ? `color:${mi.color}` : '')}>${esc(mi.name)}</b>${roleBadge(author)}${sd ? lvlChip(memberXp(sd, author.id)) : ''}${mi.owner ? `<span style="color:var(--yellow)">${icon('crown', 'xs')}</span>` : ''}${topRole ? `<span class="role-tag" style="background:${esc(topRole.color)}">${esc(topRole.name)}</span>` : ''}<span>${fmtTime(g.msgs[0].createdAt)}</span></div>` : ''}
     ${g.msgs.map((m, i) => msgHtml(m, i === 0, i === g.msgs.length - 1)).join('')}</div></div>`;
 }
 function msgHtml(m, first, last) {
@@ -516,8 +520,8 @@ function msgHtml(m, first, last) {
     else if (a.type === 'audio') att = `<div class="attach"><audio src="${esc(a.url)}" controls></audio></div>`;
     else att = `<div class="attach"><a class="file" href="${esc(a.url)}" target="_blank" download="${esc(a.name || 'file')}">${icon('file')}<span>${esc(a.name || 'file')}</span>${icon('back', 'sm').replace('class="i sm"', 'class="i sm" style="transform:rotate(-90deg)"')}</a></div>`;
   }
-  const reply = m.reply ? `<div class="reply-ref" data-jump="${m.reply.id}"><span>${icon('reply', 'xs')} ${m.author.id === S.me.id ? 'You' : esc(m.author.displayName)} replied to ${m.reply.author?.id === S.me.id ? 'you' : esc(m.reply.author?.displayName || 'a message')}</span><div class="q">${esc(m.reply.content || (m.reply.attachmentType ? '📎 Attachment' : ''))}</div></div>` : '';
-  const reacts = m.reactions.length ? `<div class="reacts">${m.reactions.map((r) => `<button class="react ${r.users.includes(S.me.id) ? 'mine' : ''}" data-react="${esc(r.emoji)}" data-tip="${esc(r.users.map((u) => S.userCache[u]?.displayName || 'someone').slice(0, 5).join(', '))}">${r.emoji}${r.users.length > 1 ? `<b>${r.users.length}</b>` : ''}</button>`).join('')}</div>` : '';
+  const reply = m.reply ? `<div class="reply-ref" data-jump="${m.reply.id}"><span>${icon('reply', 'xs')} ${m.author.id === S.me.id ? 'You' : esc(nameOf(m.author))} replied to ${m.reply.author?.id === S.me.id ? 'you' : esc(m.reply.author ? nameOf(m.reply.author) : 'a message')}</span><div class="q">${esc(m.reply.content || (m.reply.attachmentType ? '📎 Attachment' : ''))}</div></div>` : '';
+  const reacts = m.reactions.length ? `<div class="reacts">${m.reactions.map((r) => `<button class="react ${r.users.includes(S.me.id) ? 'mine' : ''}" data-react="${esc(r.emoji)}" data-tip="${esc(r.users.map((u) => (S.userCache[u] ? nameOf(S.userCache[u]) : 'someone')).slice(0, 5).join(', '))}">${r.emoji}${r.users.length > 1 ? `<b>${r.users.length}</b>` : ''}</button>`).join('')}</div>` : '';
   return `<div class="msg ${first ? 'first' : ''} ${last ? 'last' : ''} ${mentioned ? 'mentioned' : ''}" data-mid="${m.id}">
     ${reply}${m.pinned ? `<div class="pinned-tag">${icon('pin', 'xs')} Pinned</div>` : ''}${att}
     ${m.content ? `<div class="bubble ${isJumbo(m.content) ? 'jumbo' : ''}">${md(m.content)}</div>` : ''}
@@ -637,7 +641,7 @@ function renderComposerRight() {
 function renderComposerExtras() {
   const el = $('#composer-extras'); if (!el) return;
   let html = '';
-  if (S.replyTo) html += `<div class="reply-bar">${icon('reply', 'sm')}<span class="q">Replying to <b>${esc(S.replyTo.author.displayName)}</b> — ${esc(S.replyTo.content || 'Attachment')}</span><button class="icon-btn" data-act="cancel-reply" style="width:28px;height:28px">${icon('x', 'sm')}</button></div>`;
+  if (S.replyTo) html += `<div class="reply-bar">${icon('reply', 'sm')}<span class="q">Replying to <b>${esc(nameOf(S.replyTo.author))}</b> — ${esc(S.replyTo.content || 'Attachment')}</span><button class="icon-btn" data-act="cancel-reply" style="width:28px;height:28px">${icon('x', 'sm')}</button></div>`;
   if (S.pending) {
     const p = S.pending;
     const prev = p.type === 'image' ? `<img src="${esc(p.preview)}">` : p.type === 'video' ? `<video src="${esc(p.preview)}"></video>` : `<div style="width:48px;height:48px;display:grid;place-items:center;background:var(--bg3);border-radius:10px">${icon('file')}</div>`;
@@ -697,7 +701,7 @@ function renderRight() {
   if (S.panel) {
     const p = S.panel;
     slot.innerHTML = `<div class="panel"><div class="panel-head"><span>${p.type === 'pins' ? 'Pinned' : `Results for “${esc(p.q)}”`}</span><button class="icon-btn" data-act="close-panel">${icon('x', 'sm')}</button></div>
-      <div class="panel-body">${p.loading ? '<div class="muted" style="padding:12px">Loading…</div>' : p.items.length ? p.items.map((m) => `<div class="panel-item" data-jump="${m.id}"><div class="h">${avatar(m.author, 22)}<b>${esc(m.author.displayName)}</b><span class="muted small">${fmtDay(m.createdAt)} ${fmtTime(m.createdAt)}</span></div><div class="b">${m.content ? md(m.content) : '📎 Attachment'}</div></div>`).join('') : `<div class="empty" style="padding:40px 10px"><div class="art">${icon(p.type === 'pins' ? 'pin' : 'search')}</div><p>${p.type === 'pins' ? 'No pinned messages yet. Pin important stuff from the message menu.' : 'No messages matched.'}</p></div>`}</div></div>`;
+      <div class="panel-body">${p.loading ? '<div class="muted" style="padding:12px">Loading…</div>' : p.items.length ? p.items.map((m) => `<div class="panel-item" data-jump="${m.id}"><div class="h">${avatar(m.author, 22)}<b>${esc(nameOf(m.author))}</b><span class="muted small">${fmtDay(m.createdAt)} ${fmtTime(m.createdAt)}</span></div><div class="b">${m.content ? md(m.content) : '📎 Attachment'}</div></div>`).join('') : `<div class="empty" style="padding:40px 10px"><div class="art">${icon(p.type === 'pins' ? 'pin' : 'search')}</div><p>${p.type === 'pins' ? 'No pinned messages yet. Pin important stuff from the message menu.' : 'No messages matched.'}</p></div>`}</div></div>`;
     return;
   }
   const sd = currentServer();
@@ -727,7 +731,7 @@ function renderRight() {
 function memberRow(u, sd, owner) {
   const mi = memberInfo(sd, u.id); const on = isOnline(u.id);
   const inVoice = sd && sd.channels.some((c) => c.type === 'voice' && (S.voice[c.id] || []).some((p) => p.userId === u.id));
-  return `<div class="member ${on ? '' : 'off'}" data-user="${u.id}">${avatar(u, 34, { dot: true })}<div style="min-width:0"><div class="n"><span style="${mi.color ? `color:${mi.color}` : ''};overflow:hidden;text-overflow:ellipsis">${esc(mi.name)}</span>${roleBadge(u)}${owner ? `<span class="crown" data-tip="Owner">${icon('crown', 'xs')}</span>` : ''}</div>
+  return `<div class="member ${on ? '' : 'off'} ${u.sparks ? 'plated' : ''}" data-user="${u.id}">${avatar(u, 34, { dot: true })}<div style="min-width:0;flex:1"><div class="n"><span ${nameAttrs(u, `${mi.color ? `color:${mi.color};` : ''}overflow:hidden;text-overflow:ellipsis`)}>${esc(mi.name)}</span>${roleBadge(u)}${owner ? `<span class="crown" data-tip="Owner">${icon('crown', 'xs')}</span>` : ''}${sd ? lvlChip(memberXp(sd, u.id)) : ''}</div>
     <div class="s">${inVoice ? `<span style="color:var(--green)">${icon('waves', 'xs')} In a lounge</span>` : esc(u.customStatus || '')}</div></div></div>`;
 }
 async function openPins() {
@@ -743,6 +747,7 @@ async function searchMessages(q) {
 
 // ---------- main click delegation
 async function onMainClick(e) {
+  if (S.view.type === 'server' && await communityClick(e)) return;
   const t = e.target.closest('[data-act],[data-tab],[data-user],[data-react],[data-jump],[data-zoom],[data-story],[data-fid],[data-dm]');
   if (!t) return;
   const act = t.dataset.act;
@@ -777,6 +782,7 @@ async function onMainClick(e) {
     case 'add-to-group': return openNewGroup(S.view.dmId);
     case 'group-settings': return groupMenu(t);
     case 'copy-username': return copyText(S.me.username, 'Username copied');
+    case 'open-badges': return openBadges();
   }
   const fidEl = e.target.closest('[data-fid]');
   if (fidEl) {
@@ -797,8 +803,9 @@ function friendMenu(anchor, uid) {
   openMenu(anchor, [
     { label: 'Start video call', icon: 'video', onClick: async () => { const d = await openDM(uid, true); if (d) joinCall(d.id, { video: true }); } },
     { label: 'View profile', icon: 'user', onClick: () => openProfile(uid) },
+    { label: S.nicks[uid] ? 'Change nickname' : 'Give a nickname', icon: 'edit', onClick: () => setNickname(uid) },
     'sep',
-    { label: 'Remove friend', icon: 'x', danger: true, onClick: async () => { if (await confirmDialog(`Remove '${u.displayName}'`, `Are you sure you want to remove <b>${esc(u.displayName)}</b> from your friends?`, 'Remove Friend')) api('DELETE', `/api/friends/${uid}`); } },
+    { label: 'Remove friend', icon: 'x', danger: true, onClick: async () => { if (await confirmDialog(`Remove '${nameOf(u)}'`, `Are you sure you want to remove <b>${esc(nameOf(u))}</b> from your friends?`, 'Remove Friend')) api('DELETE', `/api/friends/${uid}`); } },
     { label: 'Block', icon: 'block', danger: true, onClick: () => blockUser(uid) },
   ], { align: 'right' });
 }

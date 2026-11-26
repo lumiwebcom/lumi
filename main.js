@@ -4,7 +4,7 @@
 let socket = null;
 
 // ---- live updates: when a new version of lumi is deployed, show an Update button (top right)
-const ASSETS = ['/', '/styles.css', ...['core', 'auth', 'views', 'social', 'modals', 'call', 'main'].map((f) => `/js/${f}.js`)];
+const ASSETS = ['/', '/styles.css', ...['core', 'auth', 'views', 'social', 'extras', 'community', 'modals', 'call', 'main'].map((f) => `/js/${f}.js`)];
 async function checkForUpdate() {
   try {
     const { build } = await fetch('/api/version', { cache: 'no-store' }).then((r) => r.json());
@@ -41,18 +41,20 @@ async function onSignedIn(user) {
   S.me = user; cacheUser(user);
   if (!S.me.email) try { S.me = { ...S.me, ...(await api('GET', '/api/me')).user }; } catch {}
   $('#root').innerHTML = `<div class="splash">${wordmark('lg')}</div>`;
-  await Promise.all([refreshServers(), refreshDMs(), refreshFriends(), refreshStories()]);
+  await Promise.all([refreshServers(), refreshDMs(), refreshFriends(), refreshStories(), loadNicknames(), loadTasks()]);
+  applySparkTheme();
   connectSocket();
   renderShell();
   const pending = sessionStorage.getItem('lumi.pendingInvite');
   if (pending) { sessionStorage.removeItem('lumi.pendingInvite'); history.replaceState({}, '', '/invite/' + pending); }
-  else if (!/^\/(channels|invite|feed|activity|stargaze)/.test(location.pathname)) history.replaceState({}, '', '/channels/@me');
+  else if (!/^\/(channels|invite|feed|activity|stargaze|sparks)/.test(location.pathname)) history.replaceState({}, '', '/channels/@me');
   route();
 }
 
 function connectSocket() {
   socket = io({ transports: ['websocket', 'polling'] });
   socialSocket(socket);
+  extrasSocket(socket);
   socket.on('connect_error', (e) => { if (e.message === 'unauthorized') location.reload(); });
   socket.on('connect', () => { if (S._wasConnected) { resync(); if (Call.active) rejoinCall(); } S._wasConnected = true; });
   // a dropped server connection doesn't end the call: audio/video are peer-to-peer. Rejoin when it comes back.
@@ -60,11 +62,12 @@ function connectSocket() {
 
   socket.on('message:new', ({ message: m, serverId }) => {
     cacheUser(m.author);
-    upsertMessage(m);
+    const roomPost = communityOnMessage(m); // board threads, gallery posts and thread replies
+    if (!roomPost) upsertMessage(m);
     const mine = m.author.id === S.me.id;
     const viewing = S.view.channelId === m.channelId;
     const typ = S.typing[m.channelId]; if (typ?.has(m.author.id)) { clearTimeout(typ.get(m.author.id)); typ.delete(m.author.id); if (viewing) renderTyping(); }
-    if (viewing) { renderMessages(); if (!mine && document.visibilityState === 'visible') markRead(m.channelId); }
+    if (viewing) { if (!roomPost) renderMessages(); if (!mine && document.visibilityState === 'visible') markRead(m.channelId); }
     const mention = !mine && new RegExp(`(^|\\s)@(${S.me.username.replace('.', '\\.')}|everyone|here)\\b`, 'i').test(m.content);
     if (!serverId) {
       let d = S.dms.find((x) => x.id === m.channelId);
@@ -79,8 +82,8 @@ function connectSocket() {
     }
     renderRail(); if (!viewing || !serverId) renderSideBody(); updateTitle();
   });
-  socket.on('message:update', ({ message: m }) => { cacheUser(m.author); upsertMessage(m); if (S.view.channelId === m.channelId) renderMessages(); if (S.panel?.type === 'pins' && S.view.channelId === m.channelId) { S.panel = null; openPins(); } });
-  socket.on('message:delete', ({ id, channelId }) => { const st = S.messages[channelId]; if (st) st.list = st.list.filter((x) => x.id !== id); if (S.view.channelId === channelId) renderMessages(); });
+  socket.on('message:update', ({ message: m }) => { cacheUser(m.author); communityOnUpdate(m); if (m.threadId) return; upsertMessage(m); if (S.view.channelId === m.channelId) renderMessages(); if (S.panel?.type === 'pins' && S.view.channelId === m.channelId) { S.panel = null; openPins(); } });
+  socket.on('message:delete', ({ id, channelId, threadId }) => { communityOnDelete({ id, channelId, threadId }); const st = S.messages[channelId]; if (st) st.list = st.list.filter((x) => x.id !== id); if (S.view.channelId === channelId) renderMessages(); });
   socket.on('typing', ({ channelId, userId }) => {
     const map = S.typing[channelId] ||= new Map();
     clearTimeout(map.get(userId));
@@ -93,7 +96,7 @@ function connectSocket() {
     if (S.view.type === 'dm') { const d = S.dms.find((x) => x.id === S.view.dmId); if (d?.recipients[0]?.id === userId) { const sub = $('.main-head .who .sub'); if (sub) sub.textContent = online ? 'Active now' : '@' + d.recipients[0].username; } }
   });
   socket.on('user:update', ({ user }) => {
-    cacheUser(user); if (user.id === S.me.id) { const was = S.me.siteRole; S.me = { ...S.me, ...user }; if (was !== S.me.siteRole) { const t = S.me.siteRole === 'admin' ? 'You are now a lumi admin' : !S.me.siteRole ? 'Your admin access was removed' : ''; if (t) toast(t); } renderRail(); }
+    cacheUser(user); if (user.id === S.me.id) { const was = S.me.siteRole, hadSparks = S.me.sparks; S.me = { ...S.me, ...user }; if (hadSparks !== S.me.sparks) applySparkTheme(); if (was !== S.me.siteRole) { const t = S.me.siteRole === 'admin' ? 'You are now a lumi admin' : !S.me.siteRole ? 'Your admin access was removed' : ''; if (t) toast(t); } renderRail(); }
     for (const d of S.dms) d.members = d.members.map((m) => (m.id === user.id ? { ...m, ...user } : m)), d.recipients = d.recipients.map((m) => (m.id === user.id ? { ...m, ...user } : m));
     for (const sd of Object.values(S.serverData)) sd.members.forEach((m) => { if (m.user.id === user.id) Object.assign(m.user, user); });
     renderRail(); renderSideBody(); renderSideFoot();
@@ -116,7 +119,7 @@ function connectSocket() {
       const focused = document.activeElement?.id === 'msg-input';
       renderSideTop(); renderSideBody(); renderRight();
       const ch = S.serverData[serverId].channels.find((c) => c.id === S.view.channelId);
-      const head = $('.main-head .t'); if (ch && head && !focused) renderMain(); else if (ch && head) head.innerHTML = `${icon(ch.type === 'text' ? 'hash' : 'volume', 'sm')} ${esc(ch.name)}`;
+      const head = $('.main-head .t'); if (S.view.channelId === 'lobby') renderMain(); else if (ch && head && !focused && !S.thread) renderMain(); else if (ch && head && !S.thread) head.innerHTML = `${roomIcon(ch)} ${esc(ch.name)}`;
     }
     renderRail();
     if (S.openServerSettings?.sid === serverId) S.openServerSettings.refresh?.();
@@ -152,7 +155,7 @@ function connectSocket() {
   });
 }
 async function resync() {
-  await Promise.all([refreshServers(), refreshDMs(), refreshFriends()]).catch(() => {});
+  await Promise.all([refreshServers(), refreshDMs(), refreshFriends(), loadNicknames(), loadTasks()]).catch(() => {});
   for (const id of Object.keys(S.serverData)) await loadServer(id).catch(() => {});
   S.messages = {};
   renderAll();
@@ -174,5 +177,5 @@ document.addEventListener('click', (e) => {
     if (!S.me) { sessionStorage.setItem('lumi.pendingInvite', inv[1]); return renderAuth('signup'); }
     return openInviteAccept(inv[1]);
   }
-  if (/^\/(channels|feed|activity|stargaze)(\/|$)/.test(u.pathname) && S.me) { e.preventDefault(); navigate(u.pathname); }
+  if (/^\/(channels|feed|activity|stargaze|sparks)(\/|$)/.test(u.pathname) && S.me) { e.preventDefault(); navigate(u.pathname); }
 }, true);

@@ -10,7 +10,9 @@ function socialNavItems(v) {
       <div style="width:48px;display:grid;place-items:center">${icon('feed')}</div><div class="meta"><div class="n bold">Feed</div></div></div>
     <div class="nav-item ${v.type === 'activity' ? 'active' : ''}" data-snav="/activity">
       <div style="width:48px;display:grid;place-items:center">${icon('bell')}</div><div class="meta"><div class="n bold">Activity</div></div>
-      ${S.activityUnread ? `<span class="count">${S.activityUnread}</span>` : ''}</div>`;
+      ${S.activityUnread ? `<span class="count">${S.activityUnread}</span>` : ''}</div>
+    <div class="nav-item ${v.type === 'sparks' ? 'active' : ''}" data-snav="/sparks">
+      <div style="width:48px;display:grid;place-items:center" class="sp-nav">${icon('gem')}</div><div class="meta"><div class="n bold">Sparks</div></div>${S.me?.sparks ? '' : '<span class="sp-new">$5.99</span>'}</div>`;
 }
 
 // ---------- post card
@@ -204,13 +206,14 @@ function renderStargazeSide() {
   const top = $('#side-top'), body = $('#side-body'); if (!top || !body) return;
   if (!$('#sg-q')) {
     top.innerHTML = `<div class="side-head"><div class="title">Stargaze</div></div>
-      <div class="side-search"><input id="sg-q" placeholder="Search spaces" autocomplete="off" value="${esc(S.star.q)}"></div>`;
+      <div class="side-search"><input id="sg-q" placeholder="Search communities" autocomplete="off" value="${esc(S.star.q)}"></div>`;
     let t; $('#sg-q').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { S.star.q = e.target.value.trim(); loadStargaze(); }, 250); };
   }
-  body.innerHTML = `<div class="nav-item sg-cat active" data-sg-all><div class="sg-ci">${icon('compass', 'sm')}</div><div class="meta"><div class="n">All spaces</div></div></div>
+  body.innerHTML = `<div class="nav-item sg-cat active" data-sg-all><div class="sg-ci">${icon('compass', 'sm')}</div><div class="meta"><div class="n">All communities</div></div></div>
     <div class="sg-side-foot"><button class="btn block" data-sg-invite>${icon('link', 'sm')} Join with an invite</button></div>`;
 }
 function renderStargaze(main) {
+  if (!S._sgPinged) { S._sgPinged = true; api('POST', '/api/tasks/ping', { event: 'stargaze' }).catch(() => {}); }
   $('#side-top') && ($('#side-top').innerHTML = '');
   renderStargazeSide();
   main.innerHTML = `<header class="main-head">${mobileBtn()}<div class="t">${icon('compass')} Stargaze</div></header>
@@ -235,18 +238,18 @@ function sgCard(s) {
     <div class="sg-icon">${s.icon ? `<img src="${esc(s.icon)}" alt="">` : esc(initials(s.name).toUpperCase())}</div>
     <div class="sg-body"><h3>${esc(s.name)}</h3><p>${esc(s.description || 'No description yet.')}</p>
       <div class="sg-meta"><span class="on"><i></i>${fmtCount(s.onlineCount)} online</span><span><i></i>${fmtCount(s.memberCount)} ${s.memberCount === 1 ? 'member' : 'members'}</span>${s.category ? `<span class="sg-tag">${esc(s.category)}</span>` : ''}</div>
-      <button class="btn ${s.joined ? '' : 'primary'} sm sg-join" data-sg-join="${s.id}">${s.joined ? 'Open' : 'Join space'}</button></div>
+      <button class="btn ${s.joined ? '' : 'primary'} sm sg-join" data-sg-join="${s.id}">${s.joined ? 'Open' : 'Join'}</button></div>
   </article>`;
 }
 function renderStargazeList() {
   const el = $('#sg-list'); if (!el) return;
   const L = S.star.list;
   if (!L) { el.innerHTML = '<div class="muted small" style="padding:30px;text-align:center">Loading…</div>'; return; }
-  const title = S.star.q ? `Results for “${esc(S.star.q)}”` : 'All spaces';
-  const head = `<div class="sg-top"><h2>${title}</h2><span>${L.length} ${L.length === 1 ? 'space' : 'spaces'}</span></div>
-    ${S.star.q ? '' : '<p class="sg-note">Spaces show up here once they have 1,000 members and turn it on in Community settings › Access.</p>'}`;
+  const title = S.star.q ? `Results for “${esc(S.star.q)}”` : 'All communities';
+  const head = `<div class="sg-top"><h2>${title}</h2><span>${L.length} ${L.length === 1 ? 'community' : 'communities'}</span></div>
+    ${S.star.q ? '' : '<p class="sg-note">Communities show up here once they have 1,000 members and turn it on in Community settings › Access.</p>'}`;
   if (!L.length) {
-    el.innerHTML = `${head}<div class="empty"><div class="art">${icon('compass')}</div><h3>No spaces here yet</h3><p>${S.star.q ? 'Try a different search.' : 'Spaces show up here once they reach 1,000 members and turn on Stargaze in their settings.'}</p></div>`;
+    el.innerHTML = `${head}<div class="empty"><div class="art">${icon('compass')}</div><h3>No communities here yet</h3><p>${S.star.q ? 'Try a different search.' : 'Communities show up here once they reach 1,000 members and turn on Stargaze in their settings.'}</p></div>`;
     return;
   }
   const feat = !S.star.q ? L.filter((s) => s.featured) : [];
@@ -280,17 +283,17 @@ async function ssAccess(pane, sid) {
   pane.innerHTML = `<h2>Access</h2>
     <div class="acc-card ${st.enabled ? 'on' : ''}">
       <div class="acc-top"><div class="acc-ic">${icon('compass')}</div>
-        <div class="acc-t"><b>List on Stargaze</b><span>Anyone on lumi can find this space on Stargaze and join without an invite.</span></div>
+        <div class="acc-t"><b>List on Stargaze</b><span>Anyone on lumi can find this community on Stargaze and join without an invite.</span></div>
         <label class="switch"><input type="checkbox" id="acc-on" ${st.enabled ? 'checked' : ''} ${locked ? 'disabled' : ''}><span></span></label></div>
-      ${st.exempt ? `<div class="acc-perk">${POTION.replace('<svg', '<svg style="width:16px;height:16px"')} This space is run by a lumi owner, so the ${st.minimum.toLocaleString()}-member minimum doesn't apply.</div>`
+      ${st.exempt ? `<div class="acc-perk">${st.viaSparks ? icon('gem', 'sm') : POTION.replace('<svg', '<svg style="width:16px;height:16px"')} ${st.viaSparks ? 'The owner has Sparks' : 'This community is run by a lumi owner'}, so the ${st.minimum.toLocaleString()}-member minimum doesn't apply.</div>`
         : `<div class="acc-req"><div class="acc-req-h"><span>Members</span><b>${st.memberCount.toLocaleString()} / ${st.minimum.toLocaleString()}</b></div>
           <div class="acc-bar"><i style="width:${pct}%"></i></div>
-          <div class="hint">${st.eligible ? 'This space meets the member minimum.' : `Spaces need at least ${st.minimum.toLocaleString()} members to go on Stargaze. ${(st.minimum - st.memberCount).toLocaleString()} to go.`}</div></div>`}
-      ${!hasDesc ? `<div class="hint" style="margin-top:10px">Add a description in <a data-acc-go="overview">Overview</a> first, so people know what your space is about.</div>` : ''}
+          <div class="hint">${st.eligible ? 'This community meets the member minimum.' : `Communities need at least ${st.minimum.toLocaleString()} members to go on Stargaze. ${(st.minimum - st.memberCount).toLocaleString()} to go.`}</div></div>`}
+      ${!hasDesc ? `<div class="hint" style="margin-top:10px">Add a description in <a data-acc-go="overview">Overview</a> first, so people know what your community is about.</div>` : ''}
     </div>
     <div class="field" style="margin-top:20px"><label>Genre</label>
       <form class="acc-genre" id="acc-genre"><input class="input" name="g" maxlength="24" placeholder="e.g. Indie games, Lo-fi, Study group" value="${esc(st.category || '')}" autocomplete="off"><button class="btn" type="submit">Save</button></form>
-      <div class="hint" style="margin-top:8px">A few words that describe your space. Shown on its Stargaze card and used in search.</div></div>`;
+      <div class="hint" style="margin-top:8px">A few words that describe your community. Shown on its Stargaze card and used in search.</div></div>`;
   const save = async (body) => {
     try { st = await api('PUT', `/api/servers/${sid}/discovery`, body); toast('category' in body ? 'Genre saved' : st.enabled ? 'Listed on Stargaze' : 'Removed from Stargaze'); }
     catch (e) { toast(e.message, true); }

@@ -5,11 +5,11 @@
 function openCreateServer(start = 'create') {
   const templates = [['default', '💬', 'Friends'], ['gaming', '🎮', 'Gaming'], ['study', '📚', 'Study group'], ['default', '✨', 'Community']];
   let tpl = 'default', iconUrl = null;
-  const m = openModal({ title: start === 'join' ? 'Join a space' : 'Create a space', body: '<div id="cs"></div>' });
+  const m = openModal({ title: start === 'join' ? 'Join a community' : 'Create a community', body: '<div id="cs"></div>' });
   const body = m.el.querySelector('#cs');
   const step1 = () => {
-    m.el.querySelector('.modal-head span').textContent = 'Create a space';
-    body.innerHTML = `<p class="muted" style="margin:0 0 16px;text-align:center">A space is your own corner for your people: rooms to chat, lounges to hang out.</p>
+    m.el.querySelector('.modal-head span').textContent = 'Create a community';
+    body.innerHTML = `<p class="muted" style="margin:0 0 16px;text-align:center">A community is your own corner for your people: rooms to chat, boards for threads, galleries for photos, and lounges to hang out.</p>
       <div class="choice-grid">${templates.map(([k, e, l], i) => `<button class="choice" data-i="${i}"><span class="em">${e}</span>${l}</button>`).join('')}</div>
       <div class="or">or</div><button class="btn block lg" data-join>Join with an invite</button>`;
     body.querySelectorAll('.choice').forEach((b) => (b.onclick = () => { tpl = templates[b.dataset.i][0]; step2(templates[b.dataset.i]); }));
@@ -19,7 +19,7 @@ function openCreateServer(start = 'create') {
     m.el.querySelector('.modal-head span').textContent = 'Make it yours';
     body.innerHTML = `<p class="muted" style="margin:0 0 18px;text-align:center">Give it a personality with a name and an icon. You can change these later.</p>
       <div style="display:flex;justify-content:center;margin-bottom:18px"><div class="ring" style="cursor:pointer" id="cs-icon"><div class="av" style="width:88px;height:88px;font-size:88px;background:var(--bg3);color:var(--text2)"><div class="ph" style="--ph:var(--bg3);color:var(--text2);font-size:12px">${icon('image')}<br>Upload</div></div></div></div>
-      <div class="field"><label>Space name</label><input class="input" id="cs-name" value="${esc(S.me.displayName)}'s ${esc(label === 'Friends' ? 'hangout' : label.toLowerCase())}" maxlength="100" autofocus></div>
+      <div class="field"><label>Community name</label><input class="input" id="cs-name" value="${esc(S.me.displayName)}'s ${esc(label === 'Friends' ? 'hangout' : label.toLowerCase())}" maxlength="100" autofocus></div>
       <div style="display:flex;gap:8px;margin-top:20px"><button class="btn" data-back>Back</button><button class="btn grad" style="flex:1" data-create>Create</button></div>`;
     body.querySelector('#cs-icon').onclick = async () => {
       const f = await pickFile(); if (!f) return;
@@ -27,7 +27,7 @@ function openCreateServer(start = 'create') {
     };
     body.querySelector('[data-back]').onclick = step1;
     const go = async () => {
-      const name = body.querySelector('#cs-name').value.trim(); if (!name) return toast('Name your space', true);
+      const name = body.querySelector('#cs-name').value.trim(); if (!name) return toast('Name your community', true);
       try {
         const d = await api('POST', '/api/servers', { name, icon: iconUrl, template: tpl });
         S.serverData[d.server.id] = d; S.servers.push({ id: d.server.id, name: d.server.name, icon: d.server.icon, unread: 0 });
@@ -39,11 +39,11 @@ function openCreateServer(start = 'create') {
     setTimeout(() => body.querySelector('#cs-name').select(), 30);
   };
   const joinStep = () => {
-    m.el.querySelector('.modal-head span').textContent = 'Join a space';
-    body.innerHTML = `<p class="muted" style="margin:0 0 18px;text-align:center">Paste an invite link to join a space.</p>
+    m.el.querySelector('.modal-head span').textContent = 'Join a community';
+    body.innerHTML = `<p class="muted" style="margin:0 0 18px;text-align:center">Paste an invite link to join a community.</p>
       <div class="field"><label>Invite link</label><input class="input" id="js-code" placeholder="${location.origin}/invite/hTKzmak" autofocus></div>
       <p class="hint">Invites look like <b>hTKzmak</b> or <b>${location.host}/invite/hTKzmak</b></p>
-      <div style="display:flex;gap:8px;margin-top:20px"><button class="btn" data-back>Back</button><button class="btn primary" style="flex:1" data-go>Join space</button></div>`;
+      <div style="display:flex;gap:8px;margin-top:20px"><button class="btn" data-back>Back</button><button class="btn primary" style="flex:1" data-go>Join community</button></div>`;
     body.querySelector('[data-back]').onclick = step1;
     const go = () => { const raw = body.querySelector('#js-code').value.trim(); const code = raw.split('/').filter(Boolean).pop(); if (!code) return; m.close(); openInviteAccept(code); };
     body.querySelector('[data-go]').onclick = go;
@@ -107,7 +107,7 @@ async function openInviteAccept(code) {
     <p class="muted" style="margin:12px 0 2px">${esc(d.inviter?.displayName || 'Someone')} invited you to join</p>
     <h2 style="margin:0">${esc(s.name)}</h2>${s.description ? `<p class="muted small" style="margin:6px 0 0">${esc(s.description)}</p>` : ''}
     <div class="counts"><span class="on">${s.onlineCount} Online</span><span>${s.memberCount} Members</span></div>
-    <button class="btn grad block lg" data-accept>${d.alreadyMember ? 'Open space' : 'Join space'}</button></div>` });
+    <button class="btn grad block lg" data-accept>${d.alreadyMember ? 'Open community' : 'Join community'}</button></div>` });
   m.el.querySelector('[data-accept]').onclick = async () => {
     try {
       const sd = await api('POST', `/api/invites/${encodeURIComponent(code)}`);
@@ -123,19 +123,19 @@ function openChannelModal(sid, cid = null, type = 'text', catId = null) {
   const sd = S.serverData[sid]; const ch = cid ? sd.channels.find((c) => c.id === cid) : null;
   if (ch) { type = ch.type; catId = ch.categoryId; }
   const cats = [...(sd.categories || [])].sort((a, b) => a.position - b.position);
-  const m = openModal({ title: ch ? (type === 'text' ? 'Edit room' : 'Edit lounge') : 'Create', body: `
-    ${ch ? '' : `<div class="field"><label>What are you making?</label><div class="choice-grid">
-      <button class="choice ${type === 'text' ? 'sel' : ''}" data-type="text">${icon('room')}<div><div>Room</div><div class="small muted" style="font-weight:400">Messages, photos, files</div></div></button>
-      <button class="choice ${type === 'voice' ? 'sel' : ''}" data-type="voice">${icon('waves')}<div><div>Lounge</div><div class="small muted" style="font-weight:400">Drop-in voice & video</div></div></button></div></div>`}
-    <div class="field"><label>Name</label><input class="input" id="ch-name" value="${esc(ch?.name || '')}" placeholder="${type === 'text' ? 'e.g. Memes' : 'e.g. Chill zone'}" maxlength="100" autofocus></div>
+  const PH = { text: 'e.g. Memes', board: 'e.g. Ideas & plans', gallery: 'e.g. Photos', voice: 'e.g. Chill zone' };
+  const m = openModal({ title: ch ? `Edit ${ROOM_TYPES[type].label.toLowerCase()}` : 'Add a room', body: `
+    ${ch ? '' : `<div class="field"><label>What kind of room?</label><div class="choice-grid room-kinds">
+      ${['text', 'board', 'gallery', 'voice'].map((k) => `<button class="choice ${type === k ? 'sel' : ''}" data-type="${k}">${icon(ROOM_TYPES[k].icon)}<div><div>${ROOM_TYPES[k].label}</div><div class="small muted" style="font-weight:400">${ROOM_TYPES[k].desc}</div></div></button>`).join('')}</div></div>`}
+    <div class="field"><label>Name</label><input class="input" id="ch-name" value="${esc(ch?.name || '')}" placeholder="${PH[type]}" maxlength="100" autofocus></div>
     <div class="field" id="topic-field" ${type === 'voice' ? 'style="display:none"' : ''}><label>Topic</label><textarea class="textarea" id="ch-topic" maxlength="300" placeholder="What’s this room for?">${esc(ch?.topic || '')}</textarea></div>
-    ${cats.length ? `<div class="field"><label>Category</label><select class="select" id="ch-cat"><option value="">No category</option>${cats.map((c) => `<option value="${c.id}" ${c.id === catId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>` : ''}`,
+    ${cats.length ? `<div class="field"><label>Section</label><select class="select" id="ch-cat"><option value="">No section</option>${cats.map((c) => `<option value="${c.id}" ${c.id === catId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>` : ''}`,
     foot: `${ch ? `<button class="btn danger" data-del style="margin-right:auto">${icon('trash', 'sm')} Delete</button>` : ''}<button class="btn" data-cancel>Cancel</button><button class="btn primary" data-save>${ch ? 'Save' : 'Create'}</button>` });
   const el = m.el;
-  el.querySelectorAll('[data-type]').forEach((b) => (b.onclick = () => { type = b.dataset.type; el.querySelectorAll('[data-type]').forEach((x) => x.classList.toggle('sel', x === b)); el.querySelector('#topic-field').style.display = type === 'voice' ? 'none' : ''; el.querySelector('#ch-name').placeholder = type === 'text' ? 'e.g. Memes' : 'e.g. Chill zone'; }));
+  el.querySelectorAll('[data-type]').forEach((b) => (b.onclick = () => { type = b.dataset.type; el.querySelectorAll('[data-type]').forEach((x) => x.classList.toggle('sel', x === b)); el.querySelector('#topic-field').style.display = type === 'voice' ? 'none' : ''; el.querySelector('#ch-name').placeholder = PH[type]; }));
   el.querySelector('[data-cancel]').onclick = () => m.close();
   const save = async () => {
-    const name = el.querySelector('#ch-name').value.trim() || (type === 'text' ? 'New room' : 'Lounge'); const topic = el.querySelector('#ch-topic').value;
+    const name = el.querySelector('#ch-name').value.trim() || ({ text: 'New room', board: 'Board', gallery: 'Gallery', voice: 'Lounge' })[type]; const topic = el.querySelector('#ch-topic').value;
     try {
       const categoryId = el.querySelector('#ch-cat')?.value || null;
       if (ch) await api('PATCH', `/api/channels/${ch.id}`, { name, topic, categoryId });
@@ -172,7 +172,7 @@ async function openServerSettings(sid, tab) {
   tab = tab || tabs[0][0];
   const m = openModal({ title: sd.server.name, cls: 'wide', body: `<nav class="settings-nav"><div class="lbl">${esc(sd.server.name)}</div>
     ${tabs.map(([k, l, i]) => `<button data-tab="${k}">${icon(i, 'sm')} ${l}</button>`).join('')}
-    ${owner ? `<div class="lbl" style="margin-top:12px">Danger zone</div><button data-tab="delete" class="dz">${icon('trash', 'sm')} Delete space</button>` : ''}</nav><div class="settings-pane" id="ss-pane"></div>` });
+    ${owner ? `<div class="lbl" style="margin-top:12px">Danger zone</div><button data-tab="delete" class="dz">${icon('trash', 'sm')} Delete community</button>` : ''}</nav><div class="settings-pane" id="ss-pane"></div>` });
   const pane = m.el.querySelector('#ss-pane');
   const show = async (t) => {
     tab = t; m.el.querySelectorAll('.settings-nav [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
@@ -191,9 +191,10 @@ function ssOverview(pane, sid) {
   pane.innerHTML = `<h2>Overview</h2>
     <div class="banner-up" id="ss-banner" style="${s.banner ? `background-image:url('${esc(s.banner)}')` : ''}"></div>
     <div class="upload-av"><div class="ring"><div class="av" id="ss-icon" style="width:88px;height:88px;font-size:88px;border:3px solid var(--bg);box-sizing:content-box;background:var(--bg3);color:var(--text)">${s.icon ? `<img src="${esc(s.icon)}">` : `<div class="ph">${esc(initials(s.name))}</div>`}</div></div>
-      <div><div class="bold">Space icon</div><div class="hint">We recommend at least 512×512.</div><div style="display:flex;gap:8px;margin-top:8px"><button class="btn" data-up-icon>Upload image</button>${s.icon ? '<button class="btn ghost" data-rm-icon>Remove</button>' : ''}</div></div></div>
-    <div class="field"><label>Space name</label><input class="input" id="ss-name" value="${esc(s.name)}" maxlength="100"></div>
-    <div class="field"><label>Description</label><textarea class="textarea" id="ss-desc" maxlength="300" placeholder="What’s this space about?">${esc(s.description || '')}</textarea></div>
+      <div><div class="bold">Community icon</div><div class="hint">We recommend at least 512×512.</div><div style="display:flex;gap:8px;margin-top:8px"><button class="btn" data-up-icon>Upload image</button>${s.icon ? '<button class="btn ghost" data-rm-icon>Remove</button>' : ''}</div></div></div>
+    <div class="field"><label>Community name</label><input class="input" id="ss-name" value="${esc(s.name)}" maxlength="100"></div>
+    <div class="field"><label>Description</label><textarea class="textarea" id="ss-desc" maxlength="300" placeholder="What’s this community about?">${esc(s.description || '')}</textarea></div>
+    <div class="field"><label>Welcome note</label><textarea class="textarea" id="ss-welcome" maxlength="1000" placeholder="Shown at the top of the Lobby: rules, where to start, anything new people should know.">${esc(s.welcome || '')}</textarea></div>
     ${owner ? `<div class="field"><label>Transfer ownership</label><select class="select" id="ss-owner">${sd.members.map((m) => `<option value="${m.user.id}" ${m.user.id === s.ownerId ? 'selected' : ''}>${esc(m.user.displayName)} (@${esc(m.user.username)})</option>`).join('')}</select><div class="hint">The new owner gets full control. You'll keep your roles.</div></div>` : ''}
     <div class="save-bar"><span>Careful — you have unsaved changes!</span><button class="btn ghost" data-reset>Reset</button><button class="btn primary" data-save>Save changes</button></div>`;
   const bar = pane.querySelector('.save-bar'); bar.style.visibility = 'hidden';
@@ -204,10 +205,10 @@ function ssOverview(pane, sid) {
   pane.querySelector('#ss-banner').onclick = async () => { const f = await pickFile(); if (!f) return; try { s.banner = (await uploadFile(f)).url; pane.querySelector('#ss-banner').style.backgroundImage = `url('${s.banner}')`; dirty(); } catch (e) { toast(e.message, true); } };
   pane.querySelector('[data-reset]').onclick = () => ssOverview(pane, sid);
   pane.querySelector('[data-save]').onclick = async () => {
-    const body = { name: pane.querySelector('#ss-name').value, description: pane.querySelector('#ss-desc').value, icon: s.icon, banner: s.banner };
+    const body = { name: pane.querySelector('#ss-name').value, description: pane.querySelector('#ss-desc').value, welcome: pane.querySelector('#ss-welcome').value, icon: s.icon, banner: s.banner };
     const newOwner = pane.querySelector('#ss-owner')?.value;
     if (newOwner && newOwner !== s.ownerId) {
-      if (!(await confirmDialog('Transfer ownership', 'You will no longer be the owner of this space. This cannot be undone by you.', 'Transfer'))) return;
+      if (!(await confirmDialog('Transfer ownership', 'You will no longer be the owner of this community. This cannot be undone by you.', 'Transfer'))) return;
       body.ownerId = newOwner;
     }
     try { const d = await api('PATCH', `/api/servers/${sid}`, body); S.serverData[sid] = d; toast('Saved'); bar.style.visibility = 'hidden'; await loadServer(sid); renderAll(); } catch (e) { toast(e.message, true); }
@@ -343,11 +344,11 @@ async function ssBans(pane, sid) {
 }
 function ssDelete(pane, sid, modal) {
   const sd = S.serverData[sid];
-  pane.innerHTML = `<h2 style="color:var(--red)">Delete '${esc(sd.server.name)}'</h2><p>This permanently deletes the space, its rooms, lounges, messages, roles and invites. <b>This can't be undone.</b></p>
-    <div class="field"><label>Type the space name to confirm</label><input class="input" id="del-name" placeholder="${esc(sd.server.name)}"></div><button class="btn danger" data-del disabled>Delete space</button>`;
+  pane.innerHTML = `<h2 style="color:var(--red)">Delete '${esc(sd.server.name)}'</h2><p>This permanently deletes the community, its rooms, boards, galleries, lounges, messages, roles and invites. <b>This can't be undone.</b></p>
+    <div class="field"><label>Type the community name to confirm</label><input class="input" id="del-name" placeholder="${esc(sd.server.name)}"></div><button class="btn danger" data-del disabled>Delete community</button>`;
   const inp = pane.querySelector('#del-name'), btn = pane.querySelector('[data-del]');
   inp.oninput = () => (btn.disabled = inp.value !== sd.server.name);
-  btn.onclick = async () => { try { await api('DELETE', `/api/servers/${sid}`); modal.close(); removeServerLocal(sid); toast('Space deleted'); } catch (e) { toast(e.message, true); } };
+  btn.onclick = async () => { try { await api('DELETE', `/api/servers/${sid}`); modal.close(); removeServerLocal(sid); toast('Community deleted'); } catch (e) { toast(e.message, true); } };
 }
 
 // ------------------------------------------------------------------ profile
@@ -374,13 +375,15 @@ async function openProfile(uid, serverId) {
   const m = openModal({ title: null, cls: 'profile', body: `
     <div class="pbanner" style="${u.banner ? `background-image:url('${esc(u.banner)}')` : u.accent ? `background:${esc(u.accent)}` : ''}"></div>
     <div class="pav">${avatar(u, 92, { ring: true, dot: true })}</div>
-    <div class="pbody"><div class="pname">${esc(mem?.nickname || u.displayName)}${roleBadge(u)}</div><div class="puser">@${esc(u.username)}${mem?.nickname ? ` · ${esc(u.displayName)}` : ''}</div>
+    <div class="pbody"><div class="pname"><span class="${u.sparks ? 'nm-plate' : ''}"><span ${nameAttrs(u)}>${esc(d.nickname || mem?.nickname || u.displayName)}</span></span>${roleBadge(u)}${sparkMark(u)}</div><div class="puser">@${esc(u.username)}${d.nickname || mem?.nickname ? ` · ${esc(u.displayName)}` : ''}${d.nickname ? ' <span class="nick-note" data-tip="Your nickname for them. Only you see it.">nickname</span>' : ''}</div>
+      ${sd && mem ? `<div class="p-level">${lvlChip(mem.xp, { long: true })}<span class="muted small">${mem.xp} xp in ${esc(sd.server.name)}</span></div>` : ''}
       ${u.customStatus ? `<div class="pstatus">💭 ${esc(u.customStatus)}</div>` : ''}
       ${u.bio ? `<div class="psec"><h5>About me</h5><div style="white-space:pre-wrap">${esc(u.bio)}</div></div>` : ''}
+      ${badgesRow(d.badges)}
       <div class="psec"><h5>Member since</h5><div>${new Date(d.memberSince).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}${mem ? ` · joined ${esc(sd.server.name)} ${new Date(mem.joinedAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}</div></div>
       ${sd && mem ? `<div class="psec"><h5>Roles</h5><div>${mi.roles.map((r) => `<span class="role-chip"><span class="role-dot" style="background:${esc(r.color)};width:9px;height:9px"></span>${esc(r.name)}${canRoles && r.position < sd.myTopPosition ? `<button data-rmrole="${r.id}">${icon('x', 'xs')}</button>` : ''}</span>`).join('') || (canRoles ? '' : '<span class="muted small">No roles</span>')}
         ${canRoles && assignable.length ? `<button class="role-chip" data-addrole style="cursor:pointer">${icon('plus', 'xs')} Add role</button>` : ''}</div></div>` : ''}
-      ${!me && d.mutualServers.length ? `<div class="psec"><h5>Spaces in common — ${d.mutualServers.length}</h5><div class="mutual">${d.mutualServers.map((s) => `<span>${esc(s.name)}</span>`).join('')}</div></div>` : ''}
+      ${!me && d.mutualServers.length ? `<div class="psec"><h5>Communities in common — ${d.mutualServers.length}</h5><div class="mutual">${d.mutualServers.map((s) => `<span>${esc(s.name)}</span>`).join('')}</div></div>` : ''}
       <div class="pacts">${acts}</div></div>` });
   const el = m.el;
   el.querySelector('[data-edit]')?.addEventListener('click', () => { m.close(); openUserSettings('profile'); });
@@ -391,10 +394,11 @@ async function openProfile(uid, serverId) {
   el.querySelector('[data-accept]')?.addEventListener('click', async () => { await api('POST', `/api/friends/${uid}/accept`); m.close(); openProfile(uid, serverId); });
   el.querySelector('[data-unblock]')?.addEventListener('click', async () => { await api('DELETE', `/api/friends/${uid}/block`); m.close(); openProfile(uid, serverId); });
   el.querySelector('[data-more]')?.addEventListener('click', (e) => openMenu(e.currentTarget, [
+    rel === 'friend' && { label: d.nickname ? 'Change nickname' : 'Give a nickname', icon: 'edit', onClick: () => { m.close(); setNickname(uid); } },
     rel === 'friend' && { label: 'Remove friend', icon: 'x', danger: true, onClick: async () => { await api('DELETE', `/api/friends/${uid}`); m.close(); } },
     { label: 'Block', icon: 'block', danger: true, onClick: () => { m.close(); blockUser(uid); } },
     sd && mem && 'sep',
-    ...(sd && mem ? [{ label: 'Space actions…', icon: 'shield', onClick: () => memberModMenu(e.target, serverId, uid, () => m.close()) }] : []),
+    ...(sd && mem ? [{ label: 'Community actions…', icon: 'shield', onClick: () => memberModMenu(e.target, serverId, uid, () => m.close()) }] : []),
     { label: 'Copy username', icon: 'copy', onClick: () => copyText('@' + u.username) },
   ]));
   const setRoles = async (ids) => { try { await api('PATCH', `/api/servers/${serverId}/members/${uid}`, { roleIds: ids }); await loadServer(serverId); m.close(); openProfile(uid, serverId); renderAll(); } catch (e) { toast(e.message, true); } };
@@ -406,14 +410,15 @@ async function openProfile(uid, serverId) {
 
 // ------------------------------------------------------------------ user settings
 function openUserSettings(tab = 'profile') {
-  const tabs = [['profile', 'Edit profile', 'user'], ['account', 'Account', 'lock'], ['appearance', 'Appearance', 'moon'], ['notifications', 'Notifications', 'bell'], ['voice', 'Voice & video', 'mic']];
+  const tabs = [['profile', 'Edit profile', 'user'], ['account', 'Account', 'lock'], ['devices', 'Devices', 'screen'], ['appearance', 'Appearance', 'moon'], ['sparks', 'Sparks', 'gem'], ['notifications', 'Notifications', 'bell'], ['voice', 'Voice & video', 'mic']];
   const m = openModal({ title: 'Settings', cls: 'wide', body: `<nav class="settings-nav"><div class="lbl">User settings</div>${tabs.map(([k, l, i]) => `<button data-tab="${k}">${icon(i, 'sm')} ${l}</button>`).join('')}
     <div class="lbl" style="margin-top:12px"></div><button data-tab="logout" class="dz">${icon('logout', 'sm')} Log out</button></nav><div class="settings-pane" id="us-pane"></div>` });
   const pane = m.el.querySelector('#us-pane');
   const show = (t) => {
     if (t === 'logout') return logout();
+    if (t === 'sparks') { m.close(); return navigate('/sparks'); }
     m.el.querySelectorAll('.settings-nav [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
-    ({ profile: usProfile, account: usAccount, appearance: usAppearance, notifications: usNotifications, voice: usVoice })[t](pane, m);
+    ({ profile: usProfile, account: usAccount, devices: usDevices, appearance: usAppearance, notifications: usNotifications, voice: usVoice })[t](pane, m);
   };
   m.el.querySelectorAll('.settings-nav [data-tab]').forEach((b) => (b.onclick = () => show(b.dataset.tab)));
   show(tab);
@@ -455,8 +460,10 @@ function usAccount(pane) {
 }
 function usAppearance(pane) {
   pane.innerHTML = `<h2>Appearance</h2><h4>Theme</h4><div class="choice-grid" style="grid-template-columns:repeat(3,1fr)">
-    ${[['light', '☀️', 'Light'], ['dark', '🌙', 'Dark'], ['system', '💻', 'Sync with device']].map(([k, e, l]) => `<button class="choice ${S.settings.theme === k ? 'sel' : ''}" data-theme="${k}"><span class="em">${e}</span>${l}</button>`).join('')}</div>`;
+    ${[['light', '☀️', 'Light'], ['dark', '🌙', 'Dark'], ['system', '💻', 'Sync with device']].map(([k, e, l]) => `<button class="choice ${S.settings.theme === k ? 'sel' : ''}" data-theme="${k}"><span class="em">${e}</span>${l}</button>`).join('')}</div>
+    ${sparksAppearance()}`;
   pane.querySelectorAll('[data-theme]').forEach((b) => (b.onclick = () => { S.settings.theme = b.dataset.theme; saveSettings(); applyTheme(); usAppearance(pane); }));
+  wireSparksAppearance(pane, () => usAppearance(pane));
 }
 function usNotifications(pane) {
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
@@ -619,11 +626,11 @@ function openCategoryModal(sid, catId = null) {
   const cats = [...(sd.categories || [])].sort((a, b) => a.position - b.position);
   const cat = catId ? cats.find((c) => c.id === catId) : null;
   const idx = cat ? cats.indexOf(cat) : -1;
-  const m = openModal({ title: cat ? 'Edit category' : 'New category', body: `
-    <div class="field"><label>Category name</label><input class="input" id="cat-name" value="${esc(cat?.name || '')}" placeholder="e.g. Gaming" maxlength="60" autofocus></div>
+  const m = openModal({ title: cat ? 'Edit section' : 'New section', body: `
+    <div class="field"><label>Section name</label><input class="input" id="cat-name" value="${esc(cat?.name || '')}" placeholder="e.g. Gaming" maxlength="60" autofocus></div>
     ${cat ? `<div class="field"><label>Order</label><div style="display:flex;gap:8px"><button class="btn" data-move="up" ${idx <= 0 ? 'disabled' : ''}>${icon('up', 'sm')} Move up</button><button class="btn" data-move="down" ${idx >= cats.length - 1 ? 'disabled' : ''}>${icon('chevron', 'sm')} Move down</button></div></div>
-      <p class="hint">Deleting a category keeps its rooms and lounges — they move to the top of the list.</p>` : '<p class="hint">After creating it, use the + next to the category to add rooms and lounges, or move existing ones in from their settings.</p>'}`,
-    foot: `${cat ? `<button class="btn danger" data-del style="margin-right:auto">${icon('trash', 'sm')} Delete</button>` : ''}<button class="btn" data-cancel>Cancel</button><button class="btn primary" data-save>${cat ? 'Save' : 'Create category'}</button>` });
+      <p class="hint">Deleting a section keeps its rooms — they move to the top of the list.</p>` : '<p class="hint">After creating it, use the + next to the section to add rooms, or move existing ones in from their settings.</p>'}`,
+    foot: `${cat ? `<button class="btn danger" data-del style="margin-right:auto">${icon('trash', 'sm')} Delete</button>` : ''}<button class="btn" data-cancel>Cancel</button><button class="btn primary" data-save>${cat ? 'Save' : 'Create section'}</button>` });
   const el = m.el;
   const refresh = async () => { await loadServer(sid); renderAll(); };
   el.querySelector('[data-cancel]').onclick = () => m.close();
@@ -635,7 +642,7 @@ function openCategoryModal(sid, catId = null) {
   el.querySelector('#cat-name').onkeydown = (e) => { if (e.key === 'Enter') save(); };
   el.querySelectorAll('[data-move]').forEach((b) => (b.onclick = async () => { try { await api('PATCH', `/api/categories/${cat.id}`, { move: b.dataset.move }); m.close(); await refresh(); openCategoryModal(sid, cat.id); } catch (e) { toast(e.message, true); } }));
   el.querySelector('[data-del]')?.addEventListener('click', async () => {
-    if (!(await confirmDialog('Delete category', `Delete <b>${esc(cat.name)}</b>? Its rooms and lounges are kept.`, 'Delete'))) return;
+    if (!(await confirmDialog('Delete section', `Delete <b>${esc(cat.name)}</b>? Its rooms are kept.`, 'Delete'))) return;
     try { await api('DELETE', `/api/categories/${cat.id}`); m.close(); refresh(); } catch (e) { toast(e.message, true); }
   });
 }
@@ -707,7 +714,7 @@ function openAdminPanel() {
     el.querySelectorAll('[data-unban]').forEach((b) => (b.onclick = () => act(async () => { await api('DELETE', `/api/admin/users/${b.dataset.unban}/ban`); toast('Unbanned'); })));
     el.querySelectorAll('[data-role]').forEach((sel) => (sel.onchange = async () => {
       const u = S.userCache[sel.dataset.role], to = sel.value, from = u.siteRole || 'member';
-      const text = { owner: `Owners have every power: the admin panel, banning anyone except other owners, and listing their spaces on Stargaze without the 1,000-member minimum.`, admin: 'Admins can open this panel, search everyone, and ban or unban regular members.', member: `@${u.username} will lose their ${from} powers.` }[to];
+      const text = { owner: `Owners have every power: the admin panel, banning anyone except other owners, and listing their communities on Stargaze without the 1,000-member minimum.`, admin: 'Admins can open this panel, search everyone, and ban or unban regular members.', member: `@${u.username} will lose their ${from} powers.` }[to];
       if (!(await confirmDialog(`Make @${u.username} ${to === 'member' ? 'a regular member' : to === 'admin' ? 'an admin' : 'an owner'}?`, text, 'Change role', to === 'member'))) { sel.value = from; return; }
       act(async () => { await api('POST', `/api/admin/users/${u.id}/role`, { role: to }); toast(`@${u.username} is now ${to === 'member' ? 'a member' : to === 'admin' ? 'an admin' : 'an owner'}`); });
     }));

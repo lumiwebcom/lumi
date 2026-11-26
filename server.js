@@ -114,6 +114,21 @@ if (!colsOf('channels').includes('category_id')) db.exec('ALTER TABLE channels A
 db.exec(`CREATE TABLE IF NOT EXISTS categories (id TEXT PRIMARY KEY, server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
   name TEXT NOT NULL, position INTEGER DEFAULT 0, created_at INTEGER NOT NULL)`);
 
+// sparks, devices, threads, nicknames, daily tasks, badges, community levels
+for (const [c, t] of [['sparks_until', 'INTEGER'], ['stripe_customer', 'TEXT'], ['stripe_sub', 'TEXT'], ['name_font', 'TEXT']]) if (!colsOf('users').includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`);
+for (const [c, t] of [['sid', 'TEXT'], ['ua', 'TEXT'], ['last_seen', 'INTEGER']]) if (!colsOf('sessions').includes(c)) db.exec(`ALTER TABLE sessions ADD COLUMN ${c} ${t}`);
+for (const [c, t] of [['title', 'TEXT'], ['thread_id', 'TEXT']]) if (!colsOf('messages').includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`);
+if (!colsOf('servers').includes('welcome')) db.exec('ALTER TABLE servers ADD COLUMN welcome TEXT');
+db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
+CREATE TABLE IF NOT EXISTS friend_nicks (owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, target_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, nick TEXT NOT NULL, PRIMARY KEY (owner_id, target_id));
+CREATE TABLE IF NOT EXISTS daily_tasks (user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, day INTEGER NOT NULL, task TEXT NOT NULL, progress INTEGER NOT NULL DEFAULT 0, done_at INTEGER, PRIMARY KEY (user_id, day, task));
+CREATE TABLE IF NOT EXISTS task_counts (user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, task TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, task));
+CREATE TABLE IF NOT EXISTS full_days (user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, day INTEGER NOT NULL, PRIMARY KEY (user_id, day));
+CREATE TABLE IF NOT EXISTS user_badges (user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, badge TEXT NOT NULL, tier INTEGER NOT NULL, earned_at INTEGER NOT NULL, PRIMARY KEY (user_id, badge));
+CREATE TABLE IF NOT EXISTS member_xp (server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, xp INTEGER NOT NULL DEFAULT 0, last_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (server_id, user_id));`);
+const sidOf = (token) => crypto.createHash('sha256').update(String(token)).digest('hex').slice(0, 16);
+for (const r of db.prepare('SELECT token FROM sessions WHERE sid IS NULL').all()) db.prepare('UPDATE sessions SET sid=? WHERE token=?').run(sidOf(r.token), r.token);
+
 db.exec(`CREATE TABLE IF NOT EXISTS posts (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   server_id TEXT REFERENCES servers(id) ON DELETE CASCADE, content TEXT DEFAULT '', image TEXT, spark TEXT, created_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_posts_time ON posts(created_at);
@@ -199,11 +214,16 @@ function topRolePosition(serverId, userId) {
 const has = (perms, flag) => (perms & flag) === flag;
 
 // ---------------------------------------------------------------- helpers
+// Sparks: the paid plan. lumi owners and admins get it free.
+const hasSparks = (u) => !!u && (u.site_role === 'owner' || u.site_role === 'admin' || (u.sparks_until || 0) > Date.now());
+const NAME_FONTS = ['grotesk', 'serif', 'mono', 'hand', 'pixel', 'round', 'slab'];
 function publicUser(u) {
   if (!u) return null;
+  const sp = hasSparks(u);
   return { id: u.id, username: u.username, displayName: u.display_name || u.username, avatar: u.avatar,
     banner: u.banner, bio: u.bio, customStatus: u.custom_status, accent: u.accent, online: isOnline(u.id),
-    siteRole: u.site_role || null, banned: !!u.banned_at && (!u.ban_until || u.ban_until > now()) };
+    siteRole: u.site_role || null, banned: !!u.banned_at && (!u.ban_until || u.ban_until > now()),
+    sparks: sp, nameFont: sp && NAME_FONTS.includes(u.name_font) ? u.name_font : null };
 }
 const getUser = (uid) => db.prepare('SELECT * FROM users WHERE id=?').get(uid);
 
@@ -227,7 +247,9 @@ function serializeMessage(m) {
     const r = db.prepare('SELECT * FROM messages WHERE id=?').get(m.reply_to);
     if (r) reply = { id: r.id, content: r.content, author: publicUser(getUser(r.author_id)), attachmentType: r.attachment_type };
   }
-  return { id: m.id, channelId: m.channel_id, author: publicUser(author), content: m.content,
+  const thread = m.thread_id ? null : db.prepare('SELECT COUNT(*) n, MAX(created_at) last FROM messages WHERE thread_id=?').get(m.id);
+  return { id: m.id, channelId: m.channel_id, author: publicUser(author), content: m.content, title: m.title || null, threadId: m.thread_id || null,
+    replyCount: thread ? thread.n : 0, lastReplyAt: thread ? thread.last : null,
     attachment: m.attachment_url ? { url: m.attachment_url, type: m.attachment_type, name: m.attachment_name } : null,
     reply, pinned: !!m.pinned, editedAt: m.edited_at, createdAt: m.created_at,
     reactions: Object.entries(grouped).map(([emoji, users]) => ({ emoji, users })) };
@@ -248,12 +270,13 @@ function slugChannel(s) {
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { maxHttpBufferSize: 1e6, pingInterval: 20000, pingTimeout: 40000 });
+app.post('/api/stripe/webhook', express.raw({ type: '*/*', limit: '1mb' }), (req, res) => stripeWebhook(req, res));
 app.use(express.json({ limit: '1mb' }));
 // Front-end files live in ./public (and ./public/js). If they were uploaded flat into the
 // project root instead, serve just those known files from the root, and never anything else.
 const PUBLIC_DIR = fs.existsSync(path.join(__dirname, 'public', 'index.html')) ? path.join(__dirname, 'public') : null;
 const FLAT_FILES = { '/index.html': 'index.html', '/styles.css': 'styles.css', '/favicon.svg': 'favicon.svg' };
-for (const f of ['core', 'auth', 'views', 'social', 'modals', 'call', 'main']) FLAT_FILES[`/js/${f}.js`] = `${f}.js`;
+for (const f of ['core', 'auth', 'views', 'social', 'extras', 'community', 'modals', 'call', 'main']) FLAT_FILES[`/js/${f}.js`] = `${f}.js`;
 const INDEX_FILE = PUBLIC_DIR ? path.join(PUBLIC_DIR, 'index.html') : path.join(__dirname, 'index.html');
 // fingerprint of the front-end: changes whenever a new version is deployed (drives the in-app "Update" button)
 const BUILD_ID = (() => {
@@ -279,24 +302,29 @@ app.get('/uploads/:name', async (req, res) => {
   res.sendFile(file, { maxAge: '7d' });
 });
 
-function createSession(res, userId) {
+function createSession(res, userId, req) {
   const token = crypto.randomBytes(32).toString('hex');
-  db.prepare('INSERT INTO sessions (token, user_id, created_at) VALUES (?,?,?)').run(token, userId, now());
+  db.prepare('INSERT INTO sessions (token, user_id, created_at, sid, ua, last_seen) VALUES (?,?,?,?,?,?)')
+    .run(token, userId, now(), sidOf(token), String(req?.headers['user-agent'] || '').slice(0, 300), now());
   res.setHeader('Set-Cookie', cookie.serialize('lumi_session', token, {
     httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 30,
     secure: process.env.NODE_ENV === 'production' }));
 }
-function userFromCookieHeader(header) {
+function sessionFromCookieHeader(header) {
   const token = cookie.parse(header || '').lumi_session;
-  if (!token) return null;
-  const s = db.prepare('SELECT user_id FROM sessions WHERE token=?').get(token);
+  return token ? db.prepare('SELECT * FROM sessions WHERE token=?').get(token) : null;
+}
+function userFromCookieHeader(header) {
+  const s = sessionFromCookieHeader(header);
   return s ? getUser(s.user_id) : null;
 }
 function auth(req, res, next) {
-  const u = userFromCookieHeader(req.headers.cookie);
+  const s = sessionFromCookieHeader(req.headers.cookie);
+  const u = s && getUser(s.user_id);
   if (!u) return res.status(401).json({ error: 'Not signed in' });
   if (activeBan(u)) return res.status(403).json({ error: banMessage(u), ...banInfo(u) });
-  req.user = u; next();
+  if (!s.last_seen || now() - s.last_seen > 5 * 60_000) db.prepare('UPDATE sessions SET last_seen=?, ua=? WHERE token=?').run(now(), String(req.headers['user-agent'] || s.ua || '').slice(0, 300), s.token);
+  req.user = u; req.session = s; next();
 }
 const wrap = (fn) => (req, res) => {
   try { const out = fn(req, res); if (out !== undefined && !res.headersSent) res.json(out); }
@@ -383,7 +411,7 @@ app.post('/api/auth/signup', wrap((req, res) => {
   db.prepare(`INSERT INTO users (id,email,username,display_name,password_hash,created_at) VALUES (?,?,?,?,?,?)`)
     .run(uid, email, username, displayName, bcrypt.hashSync(password, 10), now());
   ensureOwner();
-  createSession(res, uid);
+  createSession(res, uid, req);
   return { user: publicUser(getUser(uid)) };
 }));
 
@@ -394,7 +422,7 @@ app.post('/api/auth/login', wrap((req, res) => {
   if (!u || !u.password_hash || !bcrypt.compareSync(String(req.body.password || ''), u.password_hash))
     throw fail(401, u && !u.password_hash ? 'This account uses Google sign-in.' : 'Incorrect email/username or password.');
   if (activeBan(u)) throw fail(403, banMessage(u), banInfo(u));
-  createSession(res, u.id);
+  createSession(res, u.id, req);
   return { user: publicUser(u) };
 }));
 
@@ -417,7 +445,7 @@ app.post('/api/auth/google', async (req, res) => {
     ensureOwner();
     u = getUser(u.id);
     if (activeBan(u)) return res.status(403).json({ error: banMessage(u), ...banInfo(u) });
-    createSession(res, u.id);
+    createSession(res, u.id, req);
     res.json({ user: publicUser(u) });
   } catch (e) { console.error(e); res.status(401).json({ error: 'Google sign-in failed.' }); }
 });
@@ -466,8 +494,15 @@ app.patch('/api/me', auth, wrap(req => {
     if (db.prepare('SELECT 1 FROM users WHERE username=? AND id<>?').get(un, u.id)) throw fail(409, 'That username is taken.');
     fields.username = un;
   }
+  if (b.nameFont !== undefined) {
+    const f = b.nameFont ? String(b.nameFont) : null;
+    if (f && !NAME_FONTS.includes(f)) throw fail(400, 'Unknown font.');
+    if (f && !hasSparks(u)) throw fail(403, 'Name fonts are part of Sparks.');
+    db.prepare('UPDATE users SET name_font=? WHERE id=?').run(f, u.id);
+  }
   db.prepare(`UPDATE users SET display_name=@display_name, bio=@bio, custom_status=@custom_status, avatar=@avatar,
     banner=@banner, accent=@accent, username=@username WHERE id=@id`).run({ ...fields, id: u.id });
+  if (fields.custom_status && fields.custom_status !== u.custom_status) taskEvent(u.id, 'status');
   ensureOwner();
   const pub = publicUser(getUser(u.id));
   broadcastUserUpdate(u.id, pub);
@@ -492,7 +527,8 @@ app.get('/api/users/:id', auth, wrap(req => {
   let relationship = 'none';
   if (f) relationship = f.status === 'accepted' ? 'friend' : (f.requester_id === req.user.id ? 'outgoing' : 'incoming');
   if (db.prepare('SELECT 1 FROM blocks WHERE user_id=? AND blocked_id=?').get(req.user.id, u.id)) relationship = 'blocked';
-  return { user: publicUser(u), mutualServers, relationship, memberSince: u.created_at };
+  return { user: publicUser(u), mutualServers, relationship, memberSince: u.created_at, badges: badgesOf(u.id),
+    nickname: db.prepare('SELECT nick FROM friend_nicks WHERE owner_id=? AND target_id=?').get(req.user.id, u.id)?.nick || null };
 }));
 
 // ---------------------------------------------------------------- friends
@@ -524,12 +560,14 @@ app.post('/api/friends/request', auth, wrap(req => {
   } else {
     db.prepare('INSERT INTO friendships VALUES (?,?,?,?)').run(req.user.id, target.id, 'pending', now());
   }
+  taskEvent(req.user.id, 'friend');
   io.to(`user:${target.id}`).to(`user:${req.user.id}`).emit('friends:update', { from: publicUser(req.user) , kind: existing ? 'accepted' : 'request', to: target.id });
   return { ok: true };
 }));
 app.post('/api/friends/:id/accept', auth, wrap(req => {
   const r = db.prepare(`UPDATE friendships SET status='accepted' WHERE requester_id=? AND addressee_id=? AND status='pending'`).run(req.params.id, req.user.id);
   if (!r.changes) throw fail(404, 'No pending request');
+  taskEvent(req.user.id, 'friend');
   io.to(`user:${req.params.id}`).to(`user:${req.user.id}`).emit('friends:update', { kind: 'accepted', from: publicUser(req.user), to: req.params.id });
   return { ok: true };
 }));
@@ -640,7 +678,7 @@ app.get('/api/channels/:id/messages', auth, wrap(req => {
   const q = String(req.query.q || '').trim();
   const rows = q
     ? db.prepare(`SELECT * FROM messages WHERE channel_id=? AND content LIKE ? ORDER BY created_at DESC LIMIT 50`).all(c.id, `%${q}%`)
-    : db.prepare(`SELECT * FROM messages WHERE channel_id=? AND created_at<? ORDER BY created_at DESC LIMIT 50`).all(c.id, before);
+    : db.prepare(`SELECT * FROM messages WHERE channel_id=? AND thread_id IS NULL AND created_at<? ORDER BY created_at DESC LIMIT 50`).all(c.id, before);
   return { messages: rows.reverse().map(serializeMessage), hasMore: rows.length === 50 };
 }));
 app.get('/api/channels/:id/pins', auth, wrap(req => {
@@ -658,13 +696,23 @@ app.post('/api/channels/:id/messages', auth, wrap(req => {
   const content = String(req.body.content || '').slice(0, 4000);
   const a = req.body.attachment;
   if (a && c.server_id && !has(memberPerms(c.server_id, req.user.id), P.ATTACH_FILES)) throw fail(403, 'You cannot attach files here.');
-  if (!content.trim() && !a) throw fail(400, 'Message is empty');
-  const attachment = a && typeof a.url === 'string' && a.url.startsWith('/uploads/') ? a : null;
+  const attachment = a && typeof a.url === 'string' && a.url.startsWith('/uploads/') ? { url: a.url, type: ['image', 'video', 'audio', 'file'].includes(a.type) ? a.type : 'file', name: String(a.name || '').slice(0, 200) } : null;
+  // boards: every post is a thread with a title; galleries: every post is a photo or video. Replies to either go in its thread.
+  let threadId = null, title = null;
+  if (req.body.threadId) {
+    const t = db.prepare('SELECT id FROM messages WHERE id=? AND channel_id=? AND thread_id IS NULL').get(String(req.body.threadId), c.id);
+    if (!t || !['board', 'gallery'].includes(c.type)) throw fail(404, 'That thread is gone.');
+    threadId = t.id;
+  } else if (c.type === 'board') {
+    title = sanitizeName(req.body.title, 120);
+    if (!title) throw fail(400, 'Give your thread a title.');
+  } else if (c.type === 'gallery' && !(attachment && (attachment.type === 'image' || attachment.type === 'video'))) throw fail(400, 'Gallery posts need a photo or video.');
+  if (!content.trim() && !attachment && !title) throw fail(400, 'Message is empty');
   const mid = id();
   const replyTo = req.body.replyTo && db.prepare('SELECT 1 FROM messages WHERE id=? AND channel_id=?').get(req.body.replyTo, c.id) ? req.body.replyTo : null;
-  db.prepare(`INSERT INTO messages (id,channel_id,author_id,content,attachment_url,attachment_type,attachment_name,reply_to,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?)`).run(mid, c.id, req.user.id, content, attachment?.url || null, attachment?.type || null,
-    attachment?.name || null, replyTo, now());
+  db.prepare(`INSERT INTO messages (id,channel_id,author_id,content,attachment_url,attachment_type,attachment_name,reply_to,created_at,title,thread_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(mid, c.id, req.user.id, content, attachment?.url || null, attachment?.type || null,
+    attachment?.name || null, replyTo, now(), title, threadId);
   db.prepare('INSERT OR REPLACE INTO read_states VALUES (?,?,?)').run(req.user.id, c.id, now());
   const msg = serializeMessage(db.prepare('SELECT * FROM messages WHERE id=?').get(mid));
   let rooms = channelAudience(c);
@@ -673,6 +721,14 @@ app.post('/api/channels/:id/messages', auth, wrap(req => {
     rooms = rooms.filter(r => !isBlocked(req.user.id, r.slice(5)));
   }
   for (const r of rooms) io.to(r).emit('message:new', { message: msg, serverId: c.server_id });
+  if (threadId) { const parent = serializeMessage(db.prepare('SELECT * FROM messages WHERE id=?').get(threadId)); for (const r of rooms) io.to(r).emit('message:update', { message: parent }); }
+  // daily tasks + community xp
+  taskEvent(req.user.id, 'chat');
+  if (c.type === 'dm' || c.type === 'group') taskEvent(req.user.id, 'dm');
+  if (replyTo || threadId) taskEvent(req.user.id, 'reply');
+  if (title) taskEvent(req.user.id, 'thread');
+  if (c.type === 'gallery' && !threadId) taskEvent(req.user.id, 'gallery');
+  if (c.server_id) addXp(c.server_id, req.user.id, XP_MSG, true);
   return { message: msg };
 }));
 function loadMessageForEdit(mid, uid) {
@@ -695,8 +751,10 @@ app.delete('/api/messages/:id', auth, wrap(req => {
   const { m, c } = loadMessageForEdit(req.params.id, req.user.id);
   const canManage = c.server_id && has(memberPerms(c.server_id, req.user.id), P.MANAGE_MESSAGES);
   if (m.author_id !== req.user.id && !canManage) throw fail(403, 'You cannot delete this message.');
+  db.prepare('DELETE FROM messages WHERE thread_id=?').run(m.id);
   db.prepare('DELETE FROM messages WHERE id=?').run(m.id);
-  for (const r of channelAudience(c)) io.to(r).emit('message:delete', { id: m.id, channelId: c.id });
+  for (const r of channelAudience(c)) io.to(r).emit('message:delete', { id: m.id, channelId: c.id, threadId: m.thread_id || null });
+  if (m.thread_id) { const p = db.prepare('SELECT * FROM messages WHERE id=?').get(m.thread_id); if (p) for (const r of channelAudience(c)) io.to(r).emit('message:update', { message: serializeMessage(p) }); }
   return { ok: true };
 }));
 app.post('/api/messages/:id/reactions', auth, wrap(req => {
@@ -705,7 +763,7 @@ app.post('/api/messages/:id/reactions', auth, wrap(req => {
   if (!emoji) throw fail(400, 'No emoji');
   const exists = db.prepare('SELECT 1 FROM reactions WHERE message_id=? AND user_id=? AND emoji=?').get(m.id, req.user.id, emoji);
   if (exists && req.body.force !== 'add') db.prepare('DELETE FROM reactions WHERE message_id=? AND user_id=? AND emoji=?').run(m.id, req.user.id, emoji);
-  else db.prepare('INSERT OR IGNORE INTO reactions VALUES (?,?,?)').run(m.id, req.user.id, emoji);
+  else { db.prepare('INSERT OR IGNORE INTO reactions VALUES (?,?,?)').run(m.id, req.user.id, emoji); if (!exists) taskEvent(req.user.id, 'react'); }
   const msg = serializeMessage(m);
   for (const r of channelAudience(c)) io.to(r).emit('message:update', { message: msg });
   return { message: msg };
@@ -718,6 +776,13 @@ app.post('/api/messages/:id/pin', auth, wrap(req => {
   for (const r of channelAudience(c)) io.to(r).emit('message:update', { message: msg });
   return { message: msg };
 }));
+app.get('/api/threads/:id', auth, wrap(req => {
+  const t = db.prepare('SELECT * FROM messages WHERE id=? AND thread_id IS NULL').get(req.params.id);
+  if (!t) throw fail(404, 'That thread is gone.');
+  getChannelOr404(t.channel_id, req.user.id);
+  const replies = db.prepare('SELECT * FROM messages WHERE thread_id=? ORDER BY created_at LIMIT 500').all(t.id);
+  return { thread: serializeMessage(t), replies: replies.map(serializeMessage) };
+}));
 app.post('/api/channels/:id/read', auth, wrap(req => {
   const c = getChannelOr404(req.params.id, req.user.id);
   db.prepare('INSERT OR REPLACE INTO read_states VALUES (?,?,?)').run(req.user.id, c.id, now());
@@ -726,7 +791,7 @@ app.post('/api/channels/:id/read', auth, wrap(req => {
 
 // ---------------------------------------------------------------- servers
 function serverSummary(s, uid) {
-  const chans = db.prepare(`SELECT id FROM channels WHERE server_id=? AND type='text'`).all(s.id);
+  const chans = db.prepare(`SELECT id FROM channels WHERE server_id=? AND type<>'voice'`).all(s.id);
   const unread = chans.reduce((a, c) => a + unreadCount(uid, c.id), 0);
   return { id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, unread,
     memberCount: db.prepare('SELECT COUNT(*) n FROM members WHERE server_id=?').get(s.id).n, ownerId: s.owner_id,
@@ -739,19 +804,20 @@ app.get('/api/servers', auth, wrap(req => {
 function serverDetail(sid, uid) {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid);
   const perms = memberPerms(sid, uid);
-  if (!s || !perms) throw fail(404, 'Orbit not found');
+  if (!s || !perms) throw fail(404, 'Community not found');
   const channels = db.prepare('SELECT * FROM channels WHERE server_id=? ORDER BY position, created_at').all(sid)
     .map(c => ({ id: c.id, type: c.type, name: c.name, topic: c.topic, position: c.position,
-      categoryId: c.category_id || null, unread: c.type === 'text' ? unreadCount(uid, c.id) : 0 }));
+      categoryId: c.category_id || null, unread: c.type !== 'voice' ? unreadCount(uid, c.id) : 0 }));
   const categories = db.prepare('SELECT * FROM categories WHERE server_id=? ORDER BY position, created_at').all(sid)
     .map((c) => ({ id: c.id, name: c.name, position: c.position }));
   const roles = db.prepare('SELECT * FROM roles WHERE server_id=? ORDER BY position DESC').all(sid)
     .map(r => ({ id: r.id, name: r.name, color: r.color, permissions: r.permissions, position: r.position, hoist: !!r.hoist, isDefault: !!r.is_default }));
   const mr = db.prepare('SELECT user_id, role_id FROM member_roles WHERE server_id=?').all(sid);
+  const xp = new Map(db.prepare('SELECT user_id, xp FROM member_xp WHERE server_id=?').all(sid).map((r) => [r.user_id, r.xp]));
   const members = db.prepare('SELECT * FROM members WHERE server_id=?').all(sid).map(m => ({
-    user: publicUser(getUser(m.user_id)), nickname: m.nickname, joinedAt: m.joined_at,
+    user: publicUser(getUser(m.user_id)), nickname: m.nickname, joinedAt: m.joined_at, xp: xp.get(m.user_id) || 0,
     roleIds: mr.filter(x => x.user_id === m.user_id).map(x => x.role_id) })).filter(m => m.user);
-  return { server: { id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, ownerId: s.owner_id, createdAt: s.created_at },
+  return { server: { id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, welcome: s.welcome || '', ownerId: s.owner_id, createdAt: s.created_at },
     channels, categories, roles, members, myPermissions: perms, myTopPosition: Math.min(topRolePosition(sid, uid), 1e9), voice: voiceStatesForServer(sid) };
 }
 app.get('/api/servers/:id', auth, wrap(req => serverDetail(req.params.id, req.user.id)));
@@ -768,7 +834,7 @@ function removeFromServerRooms(sid, uid) {
 }
 app.post('/api/servers', auth, wrap(req => {
   const name = sanitizeName(req.body.name, 100);
-  if (!name) throw fail(400, 'Give your orbit a name.');
+  if (!name) throw fail(400, 'Give your community a name.');
   const sid = id();
   db.prepare('INSERT INTO servers (id,name,icon,description,owner_id,created_at) VALUES (?,?,?,?,?,?)')
     .run(sid, name, req.body.icon || null, '', req.user.id, now());
@@ -779,20 +845,23 @@ app.post('/api/servers', auth, wrap(req => {
   const roomsCat = id(), loungesCat = id();
   db.prepare('INSERT INTO categories (id,server_id,name,position,created_at) VALUES (?,?,?,?,?)').run(roomsCat, sid, 'Rooms', 0, now());
   db.prepare('INSERT INTO categories (id,server_id,name,position,created_at) VALUES (?,?,?,?,?)').run(loungesCat, sid, 'Lounges', 1, now());
-  textChans.forEach((n, i) => db.prepare('INSERT INTO channels (id,server_id,type,name,position,category_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id(), sid, 'text', n, i, roomsCat, now()));
+  textChans.slice(0, 2).forEach((n, i) => db.prepare('INSERT INTO channels (id,server_id,type,name,position,category_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id(), sid, 'text', n, i, roomsCat, now()));
+  db.prepare('INSERT INTO channels (id,server_id,type,name,topic,position,category_id,created_at) VALUES (?,?,?,?,?,?,?,?)').run(id(), sid, 'board', t === 'study' ? 'Questions' : 'Ideas & plans', 'Start a thread. Every topic gets its own replies.', 2, roomsCat, now());
+  db.prepare('INSERT INTO channels (id,server_id,type,name,topic,position,category_id,created_at) VALUES (?,?,?,?,?,?,?,?)').run(id(), sid, 'gallery', t === 'gaming' ? 'Clips' : 'Photos', 'Photos and videos from the crew.', 3, roomsCat, now());
   ['The Lounge', t === 'gaming' ? 'Squad up' : 'Chill zone'].forEach((n, i) => db.prepare('INSERT INTO channels (id,server_id,type,name,position,category_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id(), sid, 'voice', n, 100 + i, loungesCat, now()));
   addMember(sid, req.user.id);
   return serverDetail(sid, req.user.id);
 }));
 app.patch('/api/servers/:id', auth, wrap(req => {
   const sid = req.params.id;
-  if (!has(memberPerms(sid, req.user.id), P.MANAGE_SERVER)) throw fail(403, 'You need the Manage Orbit permission.');
+  if (!has(memberPerms(sid, req.user.id), P.MANAGE_SERVER)) throw fail(403, 'You need the Manage Community permission.');
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid);
   const b = req.body;
-  db.prepare('UPDATE servers SET name=?, icon=?, banner=?, description=? WHERE id=?').run(
+  db.prepare('UPDATE servers SET name=?, icon=?, banner=?, description=?, welcome=? WHERE id=?').run(
     b.name !== undefined ? sanitizeName(b.name, 100) || s.name : s.name,
     b.icon !== undefined ? b.icon : s.icon, b.banner !== undefined ? b.banner : s.banner,
-    b.description !== undefined ? String(b.description).slice(0, 300) : s.description, sid);
+    b.description !== undefined ? String(b.description).slice(0, 300) : s.description,
+    b.welcome !== undefined ? String(b.welcome).slice(0, 1000) : s.welcome, sid);
   if (b.ownerId && s.owner_id === req.user.id && db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(sid, b.ownerId))
     db.prepare('UPDATE servers SET owner_id=? WHERE id=?').run(b.ownerId, sid);
   io.to(`server:${sid}`).emit('server:update', { serverId: sid });
@@ -800,7 +869,7 @@ app.patch('/api/servers/:id', auth, wrap(req => {
 }));
 app.delete('/api/servers/:id', auth, wrap(req => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
-  if (!s || s.owner_id !== req.user.id) throw fail(403, 'Only the owner can delete the orbit.');
+  if (!s || s.owner_id !== req.user.id) throw fail(403, 'Only the owner can delete the community.');
   io.to(`server:${s.id}`).emit('server:removed', { serverId: s.id, reason: 'deleted' });
   db.prepare('DELETE FROM servers WHERE id=?').run(s.id);
   return { ok: true };
@@ -808,7 +877,7 @@ app.delete('/api/servers/:id', auth, wrap(req => {
 app.post('/api/servers/:id/leave', auth, wrap(req => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
   if (!s) throw fail(404, 'Not found');
-  if (s.owner_id === req.user.id) throw fail(400, 'Transfer ownership or delete the orbit before leaving.');
+  if (s.owner_id === req.user.id) throw fail(400, 'Transfer ownership or delete the community before leaving.');
   db.prepare('DELETE FROM members WHERE server_id=? AND user_id=?').run(s.id, req.user.id);
   db.prepare('DELETE FROM member_roles WHERE server_id=? AND user_id=?').run(s.id, req.user.id);
   removeFromServerRooms(s.id, req.user.id);
@@ -820,9 +889,9 @@ app.post('/api/servers/:id/leave', auth, wrap(req => {
 app.post('/api/servers/:id/channels', auth, wrap(req => {
   const sid = req.params.id;
   if (!has(memberPerms(sid, req.user.id), P.MANAGE_CHANNELS)) throw fail(403, 'You need the Manage Rooms permission.');
-  const type = req.body.type === 'voice' ? 'voice' : 'text';
-  const name = sanitizeName(req.body.name, 100) || (type === 'text' ? 'New room' : 'Lounge');
-  const pos = (db.prepare('SELECT MAX(position) p FROM channels WHERE server_id=? AND type=?').get(sid, type).p ?? (type === 'voice' ? 99 : -1)) + 1;
+  const type = ['voice', 'board', 'gallery'].includes(req.body.type) ? req.body.type : 'text';
+  const name = sanitizeName(req.body.name, 100) || ({ text: 'New room', voice: 'Lounge', board: 'Board', gallery: 'Gallery' })[type];
+  const pos = (db.prepare(`SELECT MAX(position) p FROM channels WHERE server_id=? AND type${type === 'voice' ? "='voice'" : "<>'voice'"}`).get(sid).p ?? (type === 'voice' ? 99 : -1)) + 1;
   const cat = req.body.categoryId && db.prepare('SELECT id FROM categories WHERE id=? AND server_id=?').get(req.body.categoryId, sid);
   db.prepare('INSERT INTO channels (id,server_id,type,name,topic,position,category_id,created_at) VALUES (?,?,?,?,?,?,?,?)')
     .run(id(), sid, type, name, String(req.body.topic || '').slice(0, 300), pos, cat ? cat.id : null, now());
@@ -857,7 +926,7 @@ app.post('/api/servers/:id/categories', auth, wrap(req => {
   const sid = req.params.id;
   if (!has(memberPerms(sid, req.user.id), P.MANAGE_CHANNELS)) throw fail(403, 'You need the Manage Rooms permission.');
   const name = sanitizeName(req.body.name, 60);
-  if (!name) throw fail(400, 'Give the category a name.');
+  if (!name) throw fail(400, 'Give the section a name.');
   const pos = (db.prepare('SELECT MAX(position) p FROM categories WHERE server_id=?').get(sid).p ?? -1) + 1;
   const cid = id();
   db.prepare('INSERT INTO categories (id,server_id,name,position,created_at) VALUES (?,?,?,?,?)').run(cid, sid, name, pos, now());
@@ -1001,7 +1070,7 @@ app.get('/api/invites/:code', auth, wrap(req => {
 app.post('/api/invites/:code', auth, wrap(req => {
   const inv = validInvite(req.params.code);
   if (!inv) throw fail(404, 'This invite is invalid or has expired.');
-  if (db.prepare('SELECT 1 FROM bans WHERE server_id=? AND user_id=?').get(inv.server_id, req.user.id)) throw fail(403, 'You are banned from this orbit.');
+  if (db.prepare('SELECT 1 FROM bans WHERE server_id=? AND user_id=?').get(inv.server_id, req.user.id)) throw fail(403, 'You are banned from this community.');
   if (!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(inv.server_id, req.user.id)) {
     addMember(inv.server_id, req.user.id);
     db.prepare('UPDATE invites SET uses=uses+1 WHERE code=?').run(inv.code);
@@ -1014,25 +1083,26 @@ app.post('/api/invites/:code', auth, wrap(req => {
 const DISCOVER_MIN = 1000;
 const memberCountOf = (sid) => db.prepare('SELECT COUNT(*) n FROM members WHERE server_id=?').get(sid).n;
 // a lumi owner's servers skip the member minimum
-const discoverExempt = (s) => db.prepare('SELECT site_role FROM users WHERE id=?').get(s.owner_id)?.site_role === 'owner';
+const discoverExempt = (s) => { const o = getUser(s.owner_id); return o?.site_role === 'owner' || hasSparks(o); };
+const featuredServer = (s) => getUser(s.owner_id)?.site_role === 'owner';
 function discoverStatus(s) {
   const count = memberCountOf(s.id), exempt = discoverExempt(s);
-  return { enabled: !!s.discoverable, eligible: exempt || count >= DISCOVER_MIN, exempt, memberCount: count, minimum: DISCOVER_MIN, category: s.discover_category || null };
+  return { enabled: !!s.discoverable, eligible: exempt || count >= DISCOVER_MIN, exempt, viaSparks: exempt && !featuredServer(s), memberCount: count, minimum: DISCOVER_MIN, category: s.discover_category || null };
 }
 app.get('/api/servers/:id/discovery', auth, wrap(req => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
-  if (!s || !memberPerms(s.id, req.user.id)) throw fail(404, 'Orbit not found');
+  if (!s || !memberPerms(s.id, req.user.id)) throw fail(404, 'Community not found');
   return discoverStatus(s);
 }));
 app.put('/api/servers/:id/discovery', auth, wrap(req => {
   const sid = req.params.id;
-  if (!has(memberPerms(sid, req.user.id), P.MANAGE_SERVER)) throw fail(403, 'You need the Manage Space permission.');
+  if (!has(memberPerms(sid, req.user.id), P.MANAGE_SERVER)) throw fail(403, 'You need the Manage Community permission.');
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid);
   const on = req.body.enabled === undefined ? !!s.discoverable : !!req.body.enabled, st = discoverStatus(s);
-  if (on && !st.eligible) throw fail(403, `Spaces need at least ${DISCOVER_MIN.toLocaleString('en-US')} members to be listed on Stargaze.`);
+  if (on && !st.eligible) throw fail(403, `Communities need at least ${DISCOVER_MIN.toLocaleString('en-US')} members to be listed on Stargaze.`);
   // owners write their own genre (short free text)
   const cat = req.body.category !== undefined ? (String(req.body.category || '').replace(/\s+/g, ' ').trim().slice(0, 24) || null) : s.discover_category;
-  if (on && !String(s.description || '').trim()) throw fail(400, 'Add a description in Overview first, so people know what your space is about.');
+  if (on && !String(s.description || '').trim()) throw fail(400, 'Add a description in Overview first, so people know what your community is about.');
   db.prepare('UPDATE servers SET discoverable=?, discover_category=? WHERE id=?').run(on ? 1 : 0, cat, sid);
   io.to(`server:${sid}`).emit('server:update', { serverId: sid });
   return discoverStatus(db.prepare('SELECT * FROM servers WHERE id=?').get(sid));
@@ -1047,15 +1117,15 @@ app.get('/api/discover', auth, wrap(req => {
     if (q && !(s.name.toLowerCase().includes(q) || String(s.description || '').toLowerCase().includes(q) || String(s.discover_category || '').toLowerCase().includes(q))) continue;
     const online = db.prepare('SELECT user_id FROM members WHERE server_id=?').all(s.id).filter((m) => isOnline(m.user_id)).length;
     out.push({ id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, category: s.discover_category || null,
-      memberCount: st.memberCount, onlineCount: online, featured: st.exempt, joined: !!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(s.id, req.user.id) });
+      memberCount: st.memberCount, onlineCount: online, featured: featuredServer(s), joined: !!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(s.id, req.user.id) });
   }
   out.sort((a, b) => (b.featured - a.featured) || (b.onlineCount - a.onlineCount) || (b.memberCount - a.memberCount));
   return { servers: out.slice(0, 120) };
 }));
 app.post('/api/discover/:id/join', auth, wrap(req => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
-  if (!s || !s.discoverable || !discoverStatus(s).eligible) throw fail(404, 'This space is not on Stargaze.');
-  if (db.prepare('SELECT 1 FROM bans WHERE server_id=? AND user_id=?').get(s.id, req.user.id)) throw fail(403, 'You are banned from this space.');
+  if (!s || !s.discoverable || !discoverStatus(s).eligible) throw fail(404, 'This community is not on Stargaze.');
+  if (db.prepare('SELECT 1 FROM bans WHERE server_id=? AND user_id=?').get(s.id, req.user.id)) throw fail(403, 'You are banned from this community.');
   if (!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(s.id, req.user.id)) {
     addMember(s.id, req.user.id);
     io.to(`server:${s.id}`).emit('server:update', { serverId: s.id, joined: publicUser(req.user) });
@@ -1205,6 +1275,7 @@ app.post('/api/stories', auth, wrap(req => {
   db.prepare('INSERT INTO stories VALUES (?,?,?,?,?,?)').run(id(), req.user.id, text, String(req.body.bg || 'sunset').slice(0, 20), image, now());
   const friendIds = friendList(req.user.id).filter(f => f.type === 'friend').map(f => f.user.id);
   for (const f of [req.user.id, ...friendIds]) io.to(`user:${f}`).emit('stories:update');
+  taskEvent(req.user.id, 'moment');
   return { ok: true };
 }));
 app.post('/api/stories/:id/view', auth, wrap(req => {
@@ -1265,7 +1336,7 @@ app.get('/api/feed', auth, wrap(req => {
   const uid = req.user.id; const before = Number(req.query.before) || now() + 1; const scope = String(req.query.scope || 'all');
   let rows;
   if (scope.startsWith('server:')) {
-    const sid = scope.slice(7); if (!memberPerms(sid, uid)) throw fail(404, 'Orbit not found');
+    const sid = scope.slice(7); if (!memberPerms(sid, uid)) throw fail(404, 'Community not found');
     rows = db.prepare('SELECT * FROM posts WHERE server_id=? AND created_at<? ORDER BY created_at DESC LIMIT 20').all(sid, before);
   } else if (scope.startsWith('user:')) {
     const tid = scope.slice(5); if (tid !== uid && !areFriends(uid, tid)) return { posts: [] };
@@ -1283,12 +1354,13 @@ app.post('/api/posts', auth, wrap(req => {
   const image = typeof req.body.image === 'string' && req.body.image.startsWith('/uploads/') ? req.body.image : null;
   if (!content && !image) throw fail(400, 'Write something or add a photo.');
   const sid = req.body.serverId || null;
-  if (sid && !has(memberPerms(sid, req.user.id), P.SEND_MESSAGES)) throw fail(403, 'You can’t post in this orbit.');
+  if (sid && !has(memberPerms(sid, req.user.id), P.SEND_MESSAGES)) throw fail(403, 'You can’t post in this community.');
   const spark = req.body.spark ? todaySpark().id : null;
   rateLimit('post:' + req.user.id, 30, 3600_000);
   const p = { id: id(), user_id: req.user.id, server_id: sid, content, image, spark, created_at: now() };
   db.prepare('INSERT INTO posts (id, user_id, server_id, content, image, spark, created_at) VALUES (?,?,?,?,?,?,?)').run(p.id, p.user_id, p.server_id, p.content, p.image, p.spark, p.created_at);
   emitPost(p, 'post:new', { id: p.id, serverId: sid });
+  taskEvent(req.user.id, 'post');
   return { post: serializePost(p, req.user.id) };
 }));
 const loadPost = (pid, uid) => { const p = db.prepare('SELECT * FROM posts WHERE id=?').get(pid); if (!canSeePost(uid, p)) throw fail(404, 'Post not found'); return p; };
@@ -1305,6 +1377,7 @@ app.post('/api/posts/:id/like', auth, wrap(req => {
   if (on) db.prepare('INSERT INTO post_likes VALUES (?,?,?)').run(p.id, req.user.id, now()); else db.prepare('DELETE FROM post_likes WHERE post_id=? AND user_id=?').run(p.id, req.user.id);
   emitPost(p, 'post:update', { id: p.id });
   if (on && p.user_id !== req.user.id) io.to(`user:${p.user_id}`).emit('activity:new', { kind: 'glow', from: publicUser(req.user) });
+  if (on) taskEvent(req.user.id, 'glow');
   return { post: serializePost(p, req.user.id) };
 }));
 app.get('/api/posts/:id/comments', auth, wrap(req => {
@@ -1318,6 +1391,7 @@ app.post('/api/posts/:id/comments', auth, wrap(req => {
   db.prepare('INSERT INTO post_comments VALUES (?,?,?,?,?)').run(id(), p.id, req.user.id, content, now());
   emitPost(p, 'post:update', { id: p.id });
   if (p.user_id !== req.user.id) io.to(`user:${p.user_id}`).emit('activity:new', { kind: 'reply', from: publicUser(req.user) });
+  taskEvent(req.user.id, 'comment');
   return { post: serializePost(p, req.user.id) };
 }));
 app.delete('/api/comments/:id', auth, wrap(req => {
@@ -1343,31 +1417,293 @@ app.get('/api/activity', auth, wrap(req => {
   return { items: [...likes, ...cmts, ...joins].filter(i => i.from).sort((a, b) => b.createdAt - a.createdAt).slice(0, 40) };
 }));
 app.get('/api/servers/:id/pulse', auth, wrap(req => {
-  const sid = req.params.id; if (!memberPerms(sid, req.user.id)) throw fail(404, 'Orbit not found');
+  const sid = req.params.id; if (!memberPerms(sid, req.user.id)) throw fail(404, 'Community not found');
   const t = now();
   const msgsToday = db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>?`).get(sid, t - DAY).n;
   const msgsWeek = db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>?`).get(sid, t - 7 * DAY).n;
   const active = db.prepare(`SELECT m.author_id u, COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>? GROUP BY m.author_id ORDER BY n DESC LIMIT 5`).all(sid, t - 7 * DAY)
     .map(r => ({ user: publicUser(getUser(r.u)), count: r.n })).filter(r => r.user);
-  const rooms = db.prepare(`SELECT c.id, c.name, COUNT(m.id) n, MAX(m.created_at) last FROM channels c LEFT JOIN messages m ON m.channel_id=c.id AND m.created_at>? WHERE c.server_id=? AND c.type='text' GROUP BY c.id ORDER BY n DESC, c.position LIMIT 4`).all(t - 7 * DAY, sid)
+  const rooms = db.prepare(`SELECT c.id, c.name, COUNT(m.id) n, MAX(m.created_at) last FROM channels c LEFT JOIN messages m ON m.channel_id=c.id AND m.created_at>? WHERE c.server_id=? AND c.type<>'voice' AND m.thread_id IS NULL GROUP BY c.id ORDER BY n DESC, c.position LIMIT 5`).all(t - 7 * DAY, sid)
     .map(r => ({ id: r.id, name: r.name, count: r.n, last: r.last }));
+  const newest = db.prepare('SELECT user_id, joined_at FROM members WHERE server_id=? ORDER BY joined_at DESC LIMIT 6').all(sid).map(r => ({ user: publicUser(getUser(r.user_id)), joinedAt: r.joined_at })).filter(r => r.user);
+  const threads = db.prepare(`SELECT m.* FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND c.type='board' AND m.thread_id IS NULL ORDER BY m.created_at DESC LIMIT 4`).all(sid).map(serializeMessage);
+  const photos = db.prepare(`SELECT m.* FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND c.type='gallery' AND m.thread_id IS NULL AND m.attachment_type='image' ORDER BY m.created_at DESC LIMIT 6`).all(sid).map(serializeMessage);
   const newMembers = db.prepare('SELECT COUNT(*) n FROM members WHERE server_id=? AND joined_at>?').get(sid, t - 7 * DAY).n;
   const days = []; for (let i = 6; i >= 0; i--) { const a = (dayNum(t) - i) * DAY; days.push(db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>=? AND m.created_at<?`).get(sid, a, a + DAY).n); }
-  return { msgsToday, msgsWeek, active, rooms, newMembers, days };
+  return { msgsToday, msgsWeek, active, rooms, newMembers, days, newest, threads, photos };
 }));
+
+// ---------------------------------------------------------------- daily tasks + badges
+// Every day each person gets 3 tasks picked at random from this list. Finishing a task counts toward
+// that task's badge (Bronze after 1, Silver after 5, Gold after 15). Finishing all 3 in a day counts
+// toward Daily devotee (1, 7, 30 days).
+const TASKS = {
+  chat:     { label: 'Send 10 messages', goal: 10, emoji: '💬', badge: 'Chatterbox' },
+  react:    { label: 'React to 5 messages', goal: 5, emoji: '😄', badge: 'Reactor' },
+  voice:    { label: 'Spend 10 minutes in a call or lounge', goal: 10, emoji: '🎧', badge: 'Lounge regular' },
+  post:     { label: 'Share a post on your feed', goal: 1, emoji: '📝', badge: 'Storyteller' },
+  comment:  { label: 'Reply to someone’s post', goal: 1, emoji: '💭', badge: 'Commentator' },
+  glow:     { label: 'Glow 3 posts', goal: 3, emoji: '⭐', badge: 'Hype squad' },
+  moment:   { label: 'Share a moment', goal: 1, emoji: '📸', badge: 'Moment maker' },
+  dm:       { label: 'Send 5 messages in your DMs', goal: 5, emoji: '✉️', badge: 'Pen pal' },
+  reply:    { label: 'Reply to 3 messages', goal: 3, emoji: '↩️', badge: 'Good listener' },
+  thread:   { label: 'Start a thread on a board', goal: 1, emoji: '🧵', badge: 'Thread starter' },
+  gallery:  { label: 'Post a photo in a gallery', goal: 1, emoji: '🖼️', badge: 'Shutterbug' },
+  stargaze: { label: 'Look around Stargaze', goal: 1, emoji: '🔭', badge: 'Stargazer' },
+  friend:   { label: 'Add a friend', goal: 1, emoji: '🤝', badge: 'Social butterfly' },
+  status:   { label: 'Set a new status', goal: 1, emoji: '🎨', badge: 'Mood setter' },
+};
+const DEVOTEE = { label: 'Finish all of a day’s tasks', emoji: '🗓️', badge: 'Daily devotee' };
+const TIER_AT = { task: [1, 5, 15], devotee: [1, 7, 30] };
+const TIER_NAMES = ['', 'Bronze', 'Silver', 'Gold'];
+const TASKS_PER_DAY = 3;
+const taskDay = () => Math.floor(Date.now() / 86400_000);
+
+function pickTasks(uid, day) {
+  // stable shuffle seeded by user + day, so everyone gets a different mix each day
+  const keys = Object.keys(TASKS);
+  let seed = 0; for (const ch of uid + ':' + day) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let i = keys.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [keys[i], keys[j]] = [keys[j], keys[i]]; }
+  return keys.slice(0, TASKS_PER_DAY);
+}
+function todaysTasks(uid) {
+  const day = taskDay();
+  let rows = db.prepare('SELECT * FROM daily_tasks WHERE user_id=? AND day=?').all(uid, day);
+  if (!rows.length) {
+    for (const k of pickTasks(uid, day)) db.prepare('INSERT OR IGNORE INTO daily_tasks (user_id, day, task) VALUES (?,?,?)').run(uid, day, k);
+    rows = db.prepare('SELECT * FROM daily_tasks WHERE user_id=? AND day=?').all(uid, day);
+  }
+  return rows.filter((r) => TASKS[r.task]);
+}
+function tasksState(uid) {
+  return todaysTasks(uid).map((r) => ({ id: r.task, label: TASKS[r.task].label, goal: TASKS[r.task].goal, emoji: TASKS[r.task].emoji,
+    badge: TASKS[r.task].badge, progress: r.progress, done: !!r.done_at }));
+}
+function badgeInfo(key, tier, earnedAt, count) {
+  const def = key === 'devotee' ? DEVOTEE : TASKS[key];
+  if (!def) return null;
+  const at = TIER_AT[key === 'devotee' ? 'devotee' : 'task'];
+  return { id: key, name: def.badge, emoji: def.emoji, how: def.label, tier, tierName: TIER_NAMES[tier] || '', earnedAt: earnedAt || null,
+    count: count || 0, next: at[tier] || null };
+}
+function countFor(uid, key) {
+  return key === 'devotee' ? db.prepare('SELECT COUNT(*) n FROM full_days WHERE user_id=?').get(uid).n
+    : db.prepare('SELECT n FROM task_counts WHERE user_id=? AND task=?').get(uid, key)?.n || 0;
+}
+function badgesOf(uid) {
+  return db.prepare('SELECT * FROM user_badges WHERE user_id=? ORDER BY tier DESC, earned_at').all(uid)
+    .map((b) => badgeInfo(b.badge, b.tier, b.earned_at, countFor(uid, b.badge))).filter(Boolean);
+}
+function awardTier(uid, key, count) {
+  const at = TIER_AT[key === 'devotee' ? 'devotee' : 'task'];
+  let tier = 0; at.forEach((t, i) => { if (count >= t) tier = i + 1; });
+  if (!tier) return null;
+  const cur = db.prepare('SELECT tier FROM user_badges WHERE user_id=? AND badge=?').get(uid, key);
+  if (cur && cur.tier >= tier) return null;
+  db.prepare('INSERT OR REPLACE INTO user_badges VALUES (?,?,?,?)').run(uid, key, tier, Date.now());
+  return badgeInfo(key, tier, Date.now(), count);
+}
+function taskEvent(uid, key, n = 1) {
+  try {
+    const row = todaysTasks(uid).find((r) => r.task === key);
+    if (!row || row.done_at) return;
+    const def = TASKS[key], day = taskDay();
+    const progress = Math.min(def.goal, row.progress + n), done = progress >= def.goal;
+    db.prepare('UPDATE daily_tasks SET progress=?, done_at=? WHERE user_id=? AND day=? AND task=?').run(progress, done ? Date.now() : null, uid, day, key);
+    const earned = [];
+    if (done) {
+      db.prepare('INSERT INTO task_counts (user_id, task, n) VALUES (?,?,1) ON CONFLICT(user_id, task) DO UPDATE SET n=n+1').run(uid, key);
+      const b = awardTier(uid, key, countFor(uid, key)); if (b) earned.push(b);
+      if (todaysTasks(uid).every((r) => r.done_at)) {
+        db.prepare('INSERT OR IGNORE INTO full_days VALUES (?,?)').run(uid, day);
+        const d = awardTier(uid, 'devotee', countFor(uid, 'devotee')); if (d) earned.push(d);
+      }
+      if (earned.length) broadcastUserUpdate(uid, publicUser(getUser(uid)));
+    }
+    io.to(`user:${uid}`).emit('tasks:update', { tasks: tasksState(uid), completed: done ? key : null, earned });
+  } catch (e) { console.error('task event failed:', e.message); }
+}
+app.get('/api/tasks', auth, wrap(req => {
+  const day = taskDay();
+  const collection = [...Object.keys(TASKS), 'devotee'].map((k) => {
+    const b = db.prepare('SELECT * FROM user_badges WHERE user_id=? AND badge=?').get(req.user.id, k);
+    return badgeInfo(k, b?.tier || 0, b?.earned_at, countFor(req.user.id, k));
+  });
+  return { tasks: tasksState(req.user.id), resetsAt: (day + 1) * 86400_000, badges: collection };
+}));
+// a few tasks happen only in the browser (opening Stargaze)
+app.post('/api/tasks/ping', auth, wrap(req => { if (req.body.event === 'stargaze') taskEvent(req.user.id, 'stargaze'); return { ok: true }; }));
+
+// ---------------------------------------------------------------- community levels
+// Members earn xp by chatting (once per 45s, so spam doesn't count) and by hanging out in lounges.
+const XP_MSG = 15, XP_COOLDOWN = 45_000, XP_VOICE = 5;
+const levelOf = (xp) => Math.floor((Math.sqrt(1 + (4 * xp) / 25) - 1) / 2); // level L needs 25·L·(L+1) xp
+const RANKS = [[15, 'Legend'], [8, 'Veteran'], [3, 'Regular'], [0, 'Newcomer']];
+const rankOf = (lvl) => RANKS.find(([min]) => lvl >= min)[1];
+function addXp(sid, uid, amount, cooldown) {
+  try {
+    const row = db.prepare('SELECT * FROM member_xp WHERE server_id=? AND user_id=?').get(sid, uid);
+    if (cooldown && row && Date.now() - row.last_at < XP_COOLDOWN) return;
+    const before = row?.xp || 0, xp = before + amount;
+    db.prepare('INSERT INTO member_xp (server_id, user_id, xp, last_at) VALUES (?,?,?,?) ON CONFLICT(server_id, user_id) DO UPDATE SET xp=excluded.xp, last_at=excluded.last_at')
+      .run(sid, uid, xp, cooldown ? Date.now() : (row?.last_at || 0));
+    io.to(`server:${sid}`).emit('member:xp', { serverId: sid, userId: uid, xp });
+    const lvl = levelOf(xp);
+    if (lvl > levelOf(before)) io.to(`user:${uid}`).emit('level:up', { serverId: sid, level: lvl, rank: rankOf(lvl) });
+  } catch (e) { console.error('xp failed:', e.message); }
+}
+// once a minute: people in a call with someone else get voice-task minutes, and xp in community lounges
+setInterval(() => {
+  const credited = new Set();
+  for (const [cid, room] of voiceRooms) {
+    if (room.size < 2) continue;
+    const c = db.prepare('SELECT server_id FROM channels WHERE id=?').get(cid);
+    for (const p of room.values()) {
+      if (p.deafened || credited.has(p.userId)) continue;
+      credited.add(p.userId);
+      taskEvent(p.userId, 'voice');
+      if (c?.server_id) addXp(c.server_id, p.userId, XP_VOICE, false);
+    }
+  }
+}, 60_000);
+
+// ---------------------------------------------------------------- personal nicknames for friends (only you see them)
+app.get('/api/nicknames', auth, wrap(req => ({
+  nicknames: Object.fromEntries(db.prepare('SELECT target_id, nick FROM friend_nicks WHERE owner_id=?').all(req.user.id).map((r) => [r.target_id, r.nick])) })));
+app.put('/api/nicknames/:id', auth, wrap(req => {
+  const t = getUser(req.params.id);
+  if (!t || t.id === req.user.id) throw fail(404, 'User not found');
+  const nick = sanitizeName(req.body.nickname, 32);
+  if (nick && !areFriends(req.user.id, t.id)) throw fail(403, 'You can only give nicknames to friends.');
+  if (nick) db.prepare('INSERT OR REPLACE INTO friend_nicks VALUES (?,?,?)').run(req.user.id, t.id, nick);
+  else db.prepare('DELETE FROM friend_nicks WHERE owner_id=? AND target_id=?').run(req.user.id, t.id);
+  io.to(`user:${req.user.id}`).emit('nicknames:update', { userId: t.id, nickname: nick || null });
+  return { nickname: nick || null };
+}));
+
+// ---------------------------------------------------------------- device manager
+function kickSessions(uid, sids) {
+  const set = new Set(sids);
+  for (const sock of io.sockets.sockets.values()) if (sock.data.userId === uid && set.has(sock.data.sid)) { sock.emit('session:revoked'); sock.disconnect(true); }
+}
+app.get('/api/devices', auth, wrap(req => {
+  const live = new Set([...io.sockets.sockets.values()].filter((x) => x.data.userId === req.user.id).map((x) => x.data.sid));
+  return { devices: db.prepare('SELECT sid, ua, created_at, last_seen FROM sessions WHERE user_id=? ORDER BY COALESCE(last_seen, created_at) DESC').all(req.user.id)
+    .map((x) => ({ id: x.sid, ua: x.ua || '', signedInAt: x.created_at, lastActive: x.last_seen || x.created_at, current: x.sid === req.session.sid, online: live.has(x.sid) })) };
+}));
+app.delete('/api/devices/:id', auth, wrap(req => {
+  if (req.params.id === req.session.sid) throw fail(400, 'To sign out of this device, use Log out.');
+  const r = db.prepare('DELETE FROM sessions WHERE user_id=? AND sid=?').run(req.user.id, req.params.id);
+  if (!r.changes) throw fail(404, 'That device is already signed out.');
+  kickSessions(req.user.id, [req.params.id]);
+  return { ok: true };
+}));
+app.post('/api/devices/sign-out-others', auth, wrap(req => {
+  const others = db.prepare('SELECT sid FROM sessions WHERE user_id=? AND sid<>?').all(req.user.id, req.session.sid).map((x) => x.sid);
+  db.prepare('DELETE FROM sessions WHERE user_id=? AND sid<>?').run(req.user.id, req.session.sid);
+  kickSessions(req.user.id, others);
+  return { ok: true, count: others.length };
+}));
+
+// ---------------------------------------------------------------- Sparks ($5.99/month through Stripe)
+// Set on Render: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET (and optionally STRIPE_PRICE_ID, PUBLIC_URL).
+const STRIPE_KEY = process.env.STRIPE_SECRET_KEY, STRIPE_WH = process.env.STRIPE_WEBHOOK_SECRET, STRIPE_PRICE = process.env.STRIPE_PRICE_ID;
+const SPARKS_PRICE = '$5.99';
+async function stripeApi(method, p, params) {
+  const r = await fetch('https://api.stripe.com/v1/' + p, { method, headers: { Authorization: 'Bearer ' + STRIPE_KEY, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params ? new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])) : undefined });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error?.message || 'Stripe request failed');
+  return d;
+}
+function publicOrigin(req) {
+  const o = String(req.headers.origin || '');
+  if (/^https:\/\/(lumichat\.pages\.dev|[\w-]+\.onrender\.com)$/.test(o) || /^http:\/\/localhost(:\d+)?$/.test(o)) return o;
+  return (process.env.PUBLIC_URL || 'https://lumichat.pages.dev').replace(/\/$/, '');
+}
+function sparksState(u) {
+  const free = u.site_role === 'owner' || u.site_role === 'admin';
+  return { active: hasSparks(u), free, until: free ? null : u.sparks_until || null, subscribed: !!u.stripe_sub, manageable: !!u.stripe_customer && !!STRIPE_KEY,
+    canBuy: !!STRIPE_KEY, price: SPARKS_PRICE };
+}
+const sparksChanged = (uid) => { const u = getUser(uid); if (!u) return; broadcastUserUpdate(uid, publicUser(u)); io.to(`user:${uid}`).emit('sparks:update', sparksState(u)); };
+app.get('/api/sparks', auth, wrap(req => sparksState(req.user)));
+app.post('/api/sparks/checkout', auth, async (req, res) => {
+  try {
+    const u = req.user, st = sparksState(u);
+    if (!STRIPE_KEY) return res.status(503).json({ error: 'Sparks checkout isn’t switched on yet. Check back soon!' });
+    if (st.free) return res.status(400).json({ error: 'You already get Sparks free as part of the lumi team.' });
+    if (st.active && st.subscribed) return res.status(400).json({ error: 'You already have Sparks.' });
+    const origin = publicOrigin(req);
+    const p = { mode: 'subscription', client_reference_id: u.id, 'metadata[user_id]': u.id, 'subscription_data[metadata][user_id]': u.id,
+      success_url: origin + '/sparks?checkout=done', cancel_url: origin + '/sparks?checkout=cancel', 'line_items[0][quantity]': 1 };
+    if (STRIPE_PRICE) p['line_items[0][price]'] = STRIPE_PRICE;
+    else Object.assign(p, { 'line_items[0][price_data][currency]': 'usd', 'line_items[0][price_data][unit_amount]': 599,
+      'line_items[0][price_data][recurring][interval]': 'month', 'line_items[0][price_data][product_data][name]': 'lumi Sparks' });
+    if (u.stripe_customer) p.customer = u.stripe_customer; else if (u.email) p.customer_email = u.email;
+    const s = await stripeApi('POST', 'checkout/sessions', p);
+    res.json({ url: s.url });
+  } catch (e) { console.error('checkout:', e.message); res.status(502).json({ error: 'Couldn’t open checkout. Try again in a minute.' }); }
+});
+app.post('/api/sparks/manage', auth, async (req, res) => {
+  try {
+    if (!STRIPE_KEY || !req.user.stripe_customer) return res.status(400).json({ error: 'There’s no subscription to manage.' });
+    const s = await stripeApi('POST', 'billing_portal/sessions', { customer: req.user.stripe_customer, return_url: publicOrigin(req) + '/sparks' });
+    res.json({ url: s.url });
+  } catch (e) { console.error('portal:', e.message); res.status(502).json({ error: 'Couldn’t open billing. Try again in a minute.' }); }
+});
+const periodEnd = (sub) => (sub?.current_period_end || sub?.items?.data?.[0]?.current_period_end || 0) * 1000;
+async function onStripeEvent(ev) {
+  const o = ev.data?.object || {};
+  const byCustomer = (c) => c && db.prepare('SELECT * FROM users WHERE stripe_customer=?').get(c);
+  if (ev.type === 'checkout.session.completed' && o.mode === 'subscription') {
+    const u = getUser(o.client_reference_id || o.metadata?.user_id); if (!u) return;
+    let until = Date.now() + 31 * 86400_000;
+    try { const end = periodEnd(await stripeApi('GET', 'subscriptions/' + o.subscription)); if (end) until = end + 86400_000; } catch {}
+    db.prepare('UPDATE users SET stripe_customer=?, stripe_sub=?, sparks_until=? WHERE id=?').run(o.customer, o.subscription, Math.max(until, u.sparks_until || 0), u.id);
+    return sparksChanged(u.id);
+  }
+  if (ev.type === 'invoice.paid' || ev.type === 'invoice.payment_succeeded') {
+    const u = byCustomer(o.customer); const end = (o.lines?.data?.[0]?.period?.end || 0) * 1000;
+    if (!u || !end) return;
+    db.prepare('UPDATE users SET sparks_until=? WHERE id=?').run(Math.max(end + 86400_000, u.sparks_until || 0), u.id);
+    return sparksChanged(u.id);
+  }
+  if (ev.type === 'customer.subscription.updated' || ev.type === 'customer.subscription.deleted') {
+    const u = byCustomer(o.customer) || db.prepare('SELECT * FROM users WHERE stripe_sub=?').get(o.id); if (!u) return;
+    if (ev.type === 'customer.subscription.deleted' || ['canceled', 'unpaid', 'incomplete_expired'].includes(o.status)) {
+      db.prepare('UPDATE users SET sparks_until=?, stripe_sub=NULL WHERE id=?').run(Math.min(u.sparks_until || 0, Date.now()), u.id);
+    } else if (['active', 'trialing'].includes(o.status) && periodEnd(o)) {
+      db.prepare('UPDATE users SET sparks_until=?, stripe_sub=? WHERE id=?').run(periodEnd(o) + 86400_000, o.id, u.id);
+    }
+    return sparksChanged(u.id);
+  }
+}
+function stripeWebhook(req, res) {
+  if (!STRIPE_WH || !Buffer.isBuffer(req.body)) return res.status(503).end();
+  const parts = String(req.headers['stripe-signature'] || '').split(',').map((x) => x.split('='));
+  const t = parts.find(([k]) => k === 't')?.[1], sigs = parts.filter(([k]) => k === 'v1').map(([, v]) => v);
+  const payload = req.body.toString('utf8');
+  const expected = crypto.createHmac('sha256', STRIPE_WH).update(`${t}.${payload}`).digest('hex');
+  const ok = t && Math.abs(Date.now() / 1000 - Number(t)) < 600 && sigs.some((v) => v.length === expected.length && crypto.timingSafeEqual(Buffer.from(v), Buffer.from(expected)));
+  if (!ok) return res.status(400).json({ error: 'Bad signature' });
+  let ev; try { ev = JSON.parse(payload); } catch { return res.status(400).end(); }
+  onStripeEvent(ev).then(() => res.json({ received: true }), (e) => { console.error('stripe webhook:', e.message); res.status(500).end(); });
+}
 
 // Simple privacy + terms pages (linked from Google's sign-in screen)
 const legalPage = (title, body) => `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} · lumi</title>
 <style>body{font:16px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;color:#17151C;background:#F7F5F1}h1{letter-spacing:-.03em}a{color:#0E9F8E}</style></head>
 <body><p><a href="/">← back to lumi</a></p><h1>${title}</h1>${body}<p style="color:#6E6977">Last updated ${new Date().getFullYear()}.</p></body></html>`;
 app.get('/privacy', (req, res) => res.send(legalPage('Privacy policy', `
-<p>lumi stores only what it needs to run: your account (email, username, display name, a hashed password or your Google account ID, and profile details you choose to add), your friends list, the orbits you join, and the messages, photos and files you send.</p>
+<p>lumi stores only what it needs to run: your account (email, username, display name, a hashed password or your Google account ID, and profile details you choose to add), your friends list, the communities you join, and the messages, photos and files you send.</p>
 <p>If you sign in with Google, lumi receives your name, email address and profile photo from Google. It does not access anything else in your Google account.</p>
 <p>Voice and video calls go directly between participants (or through a relay server when a direct connection is not possible) and are not recorded or stored.</p>
 <p>Your data is never sold or shared with advertisers. You can ask the owner of this lumi site to delete your account and data at any time.</p>`)));
 app.get('/terms', (req, res) => res.send(legalPage('Terms of service', `
 <p>lumi is provided as-is, without warranties. Be kind: don't use lumi to harass people, share illegal content, or spam.</p>
-<p>Orbit owners and moderators can remove content and members from their orbits. The site owner can suspend accounts that break these terms.</p>
+<p>Community owners and moderators can remove content and members from their communities. The site owner can suspend accounts that break these terms.</p>
 <p>You keep ownership of what you post, and you give lumi permission to store and show it to the people you share it with.</p>`)));
 
 // SPA fallback (for /invite/CODE links etc.)
@@ -1431,9 +1767,10 @@ function leaveVoice(socket, opts = {}) {
 }
 
 io.use((socket, next) => {
-  const u = userFromCookieHeader(socket.handshake.headers.cookie);
+  const sess = sessionFromCookieHeader(socket.handshake.headers.cookie);
+  const u = sess && getUser(sess.user_id);
   if (!u || activeBan(u)) return next(new Error('unauthorized'));
-  socket.data.userId = u.id; next();
+  socket.data.userId = u.id; socket.data.sid = sess.sid; next();
 });
 
 io.on('connection', (socket) => {
@@ -1460,7 +1797,7 @@ io.on('connection', (socket) => {
     const c = db.prepare('SELECT * FROM channels WHERE id=?').get(channelId);
     if (!c || !canAccessChannel(uid, c)) return ack?.({ error: 'No access' });
     if (c.server_id && !has(memberPerms(c.server_id, uid), P.CONNECT)) return ack?.({ error: 'You can’t join this lounge.' });
-    if (c.server_id === null && c.type === 'text') return ack?.({ error: 'Not a call channel' });
+    if ((c.server_id === null && c.type === 'text') || (c.server_id && c.type !== 'voice')) return ack?.({ error: 'Not a call channel' });
     if (socket.data.voiceChannel) leaveVoice(socket);
     // only one active voice connection per user: kick other sockets of same user
     for (const [cid, room] of voiceRooms) for (const [sid, p] of room) if (p.userId === uid && sid !== socket.id) {
