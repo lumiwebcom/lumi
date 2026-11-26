@@ -44,13 +44,13 @@ function nameAttrs(u, extra = '') {
 const sparkMark = (u) => ((u && (S.userCache[u.id] || u).sparks) ? `<span class="spark-mark" data-tip="Sparks member">${icon('gem', 'xs')}</span>` : '');
 
 const SPARK_THEMES = {
-  classic: { label: 'Classic', accent: '#743AFB', light: '#A78BFA' },
-  ember: { label: 'Ember', accent: '#E8662F', light: '#F4A07A', bg: ['#0D0A09', '#17120F', '#1C1613', '#251E1A', '#30271F', '#2E2520', '#211A16'] },
-  forest: { label: 'Forest', accent: '#2F9E62', light: '#7CCFA0', bg: ['#090D0B', '#111713', '#151C17', '#1C251F', '#253029', '#24302A', '#19211C'] },
-  ocean: { label: 'Ocean', accent: '#2C83E6', light: '#86B9F3', bg: ['#080B10', '#10151C', '#141A23', '#1B232E', '#242E3B', '#243040', '#18202B'] },
-  rose: { label: 'Rose', accent: '#D9466F', light: '#EF97B0', bg: ['#0E090B', '#181013', '#1E1418', '#281B20', '#33232A', '#33232A', '#22171B'] },
-  gold: { label: 'Gold', accent: '#C9931A', light: '#E8C766', bg: ['#0C0B08', '#16140F', '#1B1913', '#24211A', '#2F2B22', '#2E2A20', '#201D16'] },
-  mono: { label: 'Graphite', accent: '#D4D4D8', light: '#F4F4F5', ink: '#111113', bg: ['#09090B', '#131316', '#18181B', '#212125', '#2B2B30', '#2A2A2F', '#1D1D21'] },
+  classic: { label: 'lumi', accent: '#743AFB', light: '#A78BFA' },
+  ember: { label: 'Campfire', accent: '#E2622B', light: '#F29B6E', bg: ['#0D0A09', '#17120F', '#1C1613', '#251E1A', '#30271F', '#2E2520', '#211A16'] },
+  forest: { label: 'Matcha', accent: '#7FA650', light: '#B5D08F', bg: ['#090D0B', '#111713', '#151C17', '#1C251F', '#253029', '#24302A', '#19211C'] },
+  ocean: { label: 'Night swim', accent: '#3478D8', light: '#8DB6EE', bg: ['#080B10', '#10151C', '#141A23', '#1B232E', '#242E3B', '#243040', '#18202B'] },
+  rose: { label: 'Bubblegum', accent: '#EC6AA6', light: '#F6A8CB', bg: ['#0E090B', '#181013', '#1E1418', '#281B20', '#33232A', '#33232A', '#22171B'] },
+  gold: { label: 'Honey', accent: '#DDA12A', light: '#EFCB74', bg: ['#0C0B08', '#16140F', '#1B1913', '#24211A', '#2F2B22', '#2E2A20', '#201D16'] },
+  mono: { label: 'Concrete', accent: '#D4D4D8', light: '#F4F4F5', ink: '#111113', bg: ['#09090B', '#131316', '#18181B', '#212125', '#2B2B30', '#2A2A2F', '#1D1D21'] },
 };
 const APP_FONTS = { default: ['Default', ''], ...Object.fromEntries(Object.entries(NAME_FONTS).filter(([k]) => k !== 'pixel' && k !== 'hand').map(([k, v]) => [k, [v[0], v[1]]])) };
 function mix(hex, other, t) {
@@ -84,7 +84,7 @@ async function renderSparks(main) {
   const el = $('#sparks-page'); if (!el) return;
   const perks = [
     ['type', 'Custom fonts', 'Pick a font for your name, and one for the whole app.'],
-    ['palette', 'Custom themes', 'Ember, Forest, Ocean, Rose, Gold, Graphite, or any color you like.'],
+    ['palette', 'Custom themes', 'Campfire, Matcha, Night swim, Bubblegum, Honey, Concrete, or pick any color you want.'],
     ['compass', 'Stargaze, free', 'List your communities on Stargaze without needing 1,000 members.'],
     ['gem', 'Golden nameplate', 'Your name shows in gold, with a plate in member lists and on your profile.'],
   ];
