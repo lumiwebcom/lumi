@@ -744,20 +744,25 @@ app.get('/api/channels/:id/pins', auth, wrap(req => {
 }));
 // every GIF is run through the nudity check before it can be sent
 const gifVerdicts = new Map(); // url -> true (safe) / false (blocked)
+// one GIF at a time, small files only, and never more than a few waiting: the free server is tiny
+let gifChecking = 0;
 async function gifIsSafe(url) {
   if (gifVerdicts.has(url)) return gifVerdicts.get(url);
+  if (gifChecking >= 2) return true; // busy: let it through rather than slow lumi down
+  gifChecking++;
   let ok = true, file = null;
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    const buf = r.ok ? Buffer.from(await r.arrayBuffer()) : null;
-    if (buf && buf.length < 15 * 1024 * 1024) {
+    const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    const len = Number(r.headers.get('content-length') || 0);
+    const buf = r.ok && (!len || len < 4 * 1024 * 1024) ? Buffer.from(await r.arrayBuffer()) : null;
+    if (buf && buf.length < 4 * 1024 * 1024) {
       file = path.join(require('os').tmpdir(), 'gifchk-' + crypto.randomBytes(6).toString('hex'));
       fs.writeFileSync(file, buf);
       const scores = await moderation.checkImage(file);
       ok = moderation.nsfwScore(scores) < 0.4 && (scores?.sexy || 0) < 0.7;
     }
-  } catch (e) { console.error('  GIF check skipped:', e.message); }
-  finally { if (file) fs.unlink(file, () => {}); }
+  } catch (e) { /* skipped: GIF couldn't be checked in time */ }
+  finally { gifChecking--; if (file) fs.unlink(file, () => {}); }
   gifVerdicts.set(url, ok);
   if (gifVerdicts.size > 5000) gifVerdicts.delete(gifVerdicts.keys().next().value);
   return ok;
@@ -1177,8 +1182,6 @@ app.get('/api/gifs/search', auth, wrap(async (req) => {
   if (q && (q.match(/[a-z0-9]/gi) || []).length < 2) return { items: [], more: false, short: true };
   if (/^(se|sx|s3|po|p0|nu|bo|b0|ti|t1|di|d1|pu|cu|xx|ho|ns|tw|nk|as)$/i.test(q.replace(/[^a-z0-9]/gi, ''))) return { items: [], more: false, short: true };
   const r = await gifQuery(q ? 'search' : 'trending', q, page, req.user.id);
-  // every result also gets the nudity check in the background; ones that fail are hidden from then on
-  for (const g of r.items.slice(0, 12)) if (!gifVerdicts.has(g.url)) gifIsSafe(g.url).catch(() => {});
   return { ...r, items: r.items.filter((g) => gifVerdicts.get(g.url) !== false) };
 }));
 app.get('/api/gifs/favorites', auth, wrap((req) => ({ items: db.prepare('SELECT url, preview, w, h FROM gif_favs WHERE user_id=? ORDER BY at DESC LIMIT 300').all(req.user.id) })));
