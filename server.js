@@ -732,7 +732,33 @@ app.get('/api/channels/:id/pins', auth, wrap(req => {
   const c = getChannelOr404(req.params.id, req.user.id);
   return { messages: db.prepare('SELECT * FROM messages WHERE channel_id=? AND pinned=1 ORDER BY created_at DESC').all(c.id).map(serializeMessage) };
 }));
-app.post('/api/channels/:id/messages', auth, wrap(req => {
+// every GIF is run through the nudity check before it can be sent
+const gifVerdicts = new Map(); // url -> true (safe) / false (blocked)
+async function gifIsSafe(url) {
+  if (gifVerdicts.has(url)) return gifVerdicts.get(url);
+  let ok = true, file = null;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const buf = r.ok ? Buffer.from(await r.arrayBuffer()) : null;
+    if (buf && buf.length < 15 * 1024 * 1024) {
+      file = path.join(require('os').tmpdir(), 'gifchk-' + crypto.randomBytes(6).toString('hex'));
+      fs.writeFileSync(file, buf);
+      const scores = await moderation.checkImage(file);
+      ok = moderation.nsfwScore(scores) < 0.4 && (scores?.sexy || 0) < 0.7;
+    }
+  } catch (e) { console.error('  GIF check skipped:', e.message); }
+  finally { if (file) fs.unlink(file, () => {}); }
+  gifVerdicts.set(url, ok);
+  if (gifVerdicts.size > 5000) gifVerdicts.delete(gifVerdicts.keys().next().value);
+  return ok;
+}
+const gifGuard = async (req, res, next) => {
+  const content = String(req.body?.content || '').trim();
+  if (!/^https:\/\/\S+$/.test(content) || !isGifUrl(content)) return next();
+  if (!(await gifIsSafe(content))) return res.status(422).json({ error: 'That GIF isn’t allowed on lumi.' });
+  next();
+};
+app.post('/api/channels/:id/messages', auth, gifGuard, wrap(req => {
   const c = getChannelOr404(req.params.id, req.user.id);
   if (c.type === 'voice') throw fail(400, 'Lounges don’t have text chat');
   if (c.server_id && !has(memberPerms(c.server_id, req.user.id), P.SEND_MESSAGES)) throw fail(403, 'You can’t send messages in this room.');
@@ -1085,11 +1111,11 @@ async function gifQuery(kind, q, page, uid, ttl = 15 * 60_000) {
   const prov = gifProvider(); if (!prov) throw fail(503, 'GIFs aren’t switched on yet.');
   const per = 24; let url;
   if (prov === 'klipy') {
-    const qs = new URLSearchParams({ page: String(page), per_page: String(per), customer_id: crypto.createHash('sha256').update('lumi:' + uid).digest('hex').slice(0, 32), locale: 'en_US', rating: 'pg', content_filter: 'medium' });
+    const qs = new URLSearchParams({ page: String(page), per_page: String(per), customer_id: crypto.createHash('sha256').update('lumi:' + uid).digest('hex').slice(0, 32), locale: 'en_US', rating: 'g', content_filter: 'high' });
     if (q) qs.set('q', q);
     url = `${process.env.KLIPY_API_BASE || 'https://api.klipy.com'}/api/v1/${encodeURIComponent(process.env.KLIPY_API_KEY)}/gifs/${kind}?${qs}`;
   } else {
-    const qs = new URLSearchParams({ api_key: process.env.GIPHY_API_KEY, limit: String(per), offset: String((page - 1) * per), rating: 'pg', lang: 'en' });
+    const qs = new URLSearchParams({ api_key: process.env.GIPHY_API_KEY, limit: String(per), offset: String((page - 1) * per), rating: 'g', lang: 'en' });
     if (q) qs.set('q', q);
     url = `${process.env.GIPHY_API_BASE || 'https://api.giphy.com'}/v1/gifs/${kind}?${qs}`;
   }
@@ -1099,7 +1125,8 @@ async function gifQuery(kind, q, page, uid, ttl = 15 * 60_000) {
   if (!r || !r.ok) throw fail(502, 'Couldn’t load GIFs right now. Try again in a moment.');
   const body = await r.json().catch(() => ({}));
   const list = Array.isArray(body.data) ? body.data : Array.isArray(body.data?.data) ? body.data.data : Array.isArray(body.results) ? body.results : [];
-  const items = list.filter((x) => !x.type || /gif/i.test(x.type)).map(pickGif).filter(Boolean);
+  const items = list.filter((x) => (!x.type || /gif/i.test(x.type)) && (!x.rating || /^(g|y)$/i.test(x.rating)) && !moderation.isNsfwSearch(`${x.title || ''} ${x.slug || ''} ${x.content_description || ''}`))
+    .map(pickGif).filter(Boolean);
   const data = { items, more: items.length >= per / 2 && page < 20 };
   gifCache.set(key, { at: Date.now(), data });
   if (gifCache.size > 500) gifCache.delete(gifCache.keys().next().value);
@@ -1116,13 +1143,14 @@ app.get('/api/gifs/home', auth, wrap(async (req) => {
 app.get('/api/gifs/search', auth, wrap(async (req) => {
   rateLimit('gif:' + req.user.id, 120, 60_000);
   const q = String(req.query.q || '').trim().slice(0, 60), page = Math.max(1, Math.min(20, Number(req.query.page) || 1));
-  if (moderation.isNsfwText(q)) return { items: [], more: false };
+  if (moderation.isNsfwSearch(q)) throw fail(400, 'That search isn’t allowed on lumi.');
   return gifQuery(q ? 'search' : 'trending', q, page, req.user.id);
 }));
 app.get('/api/gifs/favorites', auth, wrap((req) => ({ items: db.prepare('SELECT url, preview, w, h FROM gif_favs WHERE user_id=? ORDER BY at DESC LIMIT 300').all(req.user.id) })));
 app.put('/api/gifs/favorites', auth, wrap((req) => {
   const { url, preview, w, h } = req.body || {};
   if (!isGifUrl(url) || (preview && !isGifUrl(preview))) throw fail(400, 'That isn’t a GIF.');
+  if (gifVerdicts.get(url) === false) throw fail(422, 'That GIF isn’t allowed on lumi.');
   db.prepare('INSERT OR REPLACE INTO gif_favs VALUES (?,?,?,?,?,?)').run(req.user.id, url, preview || url, Number(w) || 1, Number(h) || 1, now());
   return { ok: true };
 }));

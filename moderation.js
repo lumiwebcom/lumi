@@ -73,6 +73,22 @@ const nsfwScore = (s) => (s ? (s.porn || 0) + (s.hentai || 0) : 0);
 const NSFW_TEXT = /\b(porn\w*|p0rn\w*|nsfw|nudes?|nudity|naked|hentai|xxx+|onlyfans|only\s*fans|r34|rule\s*34|sex|sexy|sexting|horny|boobs?|tits|titties|dick\s*pics?|cum|nsfl|erotic\w*|fetish\w*|lewd)\b|(^|\W)18\s*\+/i;
 const isNsfwText = (...parts) => parts.some((p) => typeof p === 'string' && NSFW_TEXT.test(p));
 
+// GIF searches get a much stricter check: leetspeak is undone (p0rn, s3x, $exy), and spaced-out or
+// glued-together words (p o r n, hotporn) are caught too.
+const SEARCH_WORDS = /\b(porn\w*|nsfw|nsfl|nudes?|nudity|nude\w*|naked|hentai|ecchi|ahegao|yaoi|yuri|futa\w*|xxx+|onlyfans?|fansly|r34|rule ?34|sex|sexy|sexi\w*|sexx\w*|sexting|sexual\w*|sexually|horny|boob\w*|tits?|titt(y|ies)|dick\w*|cocks?|penis\w*|vagina\w*|puss(y|ies)|cum\w*|erotic\w*|fetish\w*|lewd\w*|ass|asses|arse|booty|butts?|buttocks|thong\w*|bikini\w*|lingerie|underwear|panties|bra|bras|twerk\w*|strip(per|pers|ping|tease)?|milf\w*|dilf|thots?|bdsm|kink\w*|orgasm\w*|masturbat\w*|jerk ?off|blow ?jobs?|bj|anal|nipples?|breasts?|topless|bottomless|thicc|playboy|brazzers|pornhub|xvideos|xhamster|camgirls?|seduc\w*|moan\w*|spank\w*|gore|gory|hot (girls?|women|chicks?)|make ?out|grind\w*|naughty|smut\w*|hump\w*|horni)\b/i;
+const SEARCH_GLUED = /(porn|xxx|rule34|r34|sexy|hentai|nsfw|xxx|onlyfan|rule34|nude|naked|boob|titty|titties|pussy|blowjob|milf|ahegao|sexy|sexx|bdsm|orgasm|masturb|brazzers|xvideo|xhamster)/;
+function normalizeSearch(q) {
+  return String(q || '').toLowerCase()
+    .replace(/[0]/g, 'o').replace(/[1!|]/g, 'i').replace(/[3]/g, 'e').replace(/[4@]/g, 'a').replace(/[5$]/g, 's').replace(/[7]/g, 't').replace(/[8]/g, 'b')
+    .replace(/(.)\1{2,}/g, '$1$1'); // "seeeexy" -> "seexy"
+}
+function isNsfwSearch(q) {
+  const raw = String(q || '').toLowerCase(), n = normalizeSearch(q);
+  if ([raw, n].some((t) => SEARCH_WORDS.test(t) || isNsfwText(t))) return true;
+  const glued = n.replace(/[^a-z]/g, ''), squashed = glued.replace(/(.)\1+/g, '$1'); // "s e e e x y" -> "sexy"
+  return [glued, squashed].some((t) => SEARCH_GLUED.test(t)) || /(^|[^a-z])(s\s*e\s*x)([^a-z]|$)/.test(n);
+}
+
 // ---- The model runs in its own small process. If it ever runs out of memory or crashes,
 // only that process dies: the main lumi server keeps running.
 if (require.main === module && process.argv[2] === 'worker') {
@@ -122,4 +138,4 @@ function checkImage(file) {
 }
 const warmUp = () => worker();
 
-module.exports = { checkImage, warmUp, nsfwScore, isNsfwText };
+module.exports = { checkImage, warmUp, nsfwScore, isNsfwText, isNsfwSearch };
