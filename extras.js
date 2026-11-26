@@ -167,7 +167,7 @@ function giveSparksMenu(anchor, u, done) {
 // ------------------------------------------------------------------ daily tasks + badges
 S.tasks = null;
 async function loadTasks() { try { S.tasks = await api('GET', '/api/tasks'); } catch {} }
-const TIER_COLORS = { 1: 'bronze', 2: 'silver', 3: 'gold' };
+const TIER_COLORS = { 1: 'bronze', 2: 'silver', 3: 'gold', 4: 'diamond' };
 // badge art: a hexagonal medal in the tier's metal, with an icon for the task and dots for the tier
 const BADGE_GLYPHS = {
   chat: '<path d="M20.7 16.6A9.5 9.5 0 1 0 17 20.4l4.5 1.1z"/>',
@@ -184,17 +184,23 @@ const BADGE_GLYPHS = {
   stargaze: '<circle cx="12" cy="12" r="9.5"/><path d="m16.2 7.8-2.1 6.3-6.3 2.1 2.1-6.3z"/>',
   friend: '<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/>',
   status: '<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11.5" r=".9"/><circle cx="10" cy="7.5" r=".9"/><circle cx="15" cy="7.5" r=".9"/>',
+  invite: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+  join: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5M15 12H3"/>',
+  level: '<path d="m3 17 6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+  nickname: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
   devotee: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/><path d="m8.5 14.5 2.5 2.5 4.5-5"/>',
 };
-const METALS = { 1: ['#B07444', '#7E4E2B', '#FFE7D2'], 2: ['#A3AEBB', '#6E7987', '#FFFFFF'], 3: ['#DDA82E', '#9E7413', '#FFF7DD'] };
+const METALS = { 1: ['#B07444', '#7E4E2B', '#FFE7D2'], 2: ['#A3AEBB', '#6E7987', '#FFFFFF'], 3: ['#DDA82E', '#9E7413', '#FFF7DD'], 4: ['#5CCBF0', '#1E7EA6', '#F3FCFF'] };
 const taskGlyph = (id, cls = 'sm') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${BADGE_GLYPHS[id] || BADGE_GLYPHS.glow}</svg>`;
 function badgeIcon(b, size = 40) {
   const m = METALS[b.tier];
   const [fill, rim, ink] = m || ['var(--bg3)', 'var(--border)', 'var(--text3)'];
-  const pips = b.tier ? Array.from({ length: b.tier }, (_, i) => `<circle cx="${24 + (i - (b.tier - 1) / 2) * 5}" cy="38.5" r="1.6" fill="${ink}"/>`).join('') : '';
+  const pips = b.tier ? Array.from({ length: b.tier }, (_, i) => `<circle cx="${24 + (i - (b.tier - 1) / 2) * 4.6}" cy="38.5" r="1.5" fill="${ink}"/>`).join('') : '';
+  // diamonds get a facet line across the top
+  const facets = b.tier === 4 ? `<path d="M10 15.5 24 24 38 15.5M24 24v16.5" fill="none" stroke="#FFFFFF" stroke-opacity=".22" stroke-width="1"/>` : '';
   return `<span class="badge-ic ${b.tier ? TIER_COLORS[b.tier] : 'locked'}" style="--s:${size}px" data-tip="${esc(b.name)}${b.tier ? ` · ${b.tierName}` : ' · locked'}"><svg viewBox="0 0 48 48" width="${size}" height="${size}" aria-hidden="true">
     <path d="M24 3.5 41.5 13.5v21L24 44.5 6.5 34.5v-21z" fill="${fill}" stroke="${rim}" stroke-width="2.5" stroke-linejoin="round"/>
-    ${m ? `<path d="M24 7.5 38 15.5v17L24 40.5 10 32.5v-17z" fill="none" stroke="${ink}" stroke-opacity=".28" stroke-width="1"/>` : ''}
+    ${m ? `<path d="M24 7.5 38 15.5v17L24 40.5 10 32.5v-17z" fill="none" stroke="${ink}" stroke-opacity=".28" stroke-width="1"/>` : ''}${facets}
     <g transform="translate(14.5 12.5) scale(.79)" fill="none" stroke="${ink}" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">${BADGE_GLYPHS[b.id] || BADGE_GLYPHS.glow}</g>${pips}</svg></span>`;
 }
 function tasksCard() {
@@ -208,9 +214,9 @@ function tasksCard() {
 }
 function openBadges() {
   const t = S.tasks; if (!t) return;
-  openModal({ title: 'Badges', cls: 'badges-modal', body: `<p class="muted" style="margin:0 0 14px">Finish daily tasks to earn badges. Each one levels up from Bronze to Silver (5 times) to Gold (15 times). They show on your profile.</p>
+  openModal({ title: 'Badges', cls: 'badges-modal', body: `<p class="muted" style="margin:0 0 14px">Finish daily tasks to earn badges. Each one goes Bronze (1 time), Silver (5), Gold (15), then Diamond (40). They show on your profile.</p>
     <div class="badge-grid">${t.badges.map((b) => `<div class="bg-item ${b.tier ? '' : 'locked'}">${badgeIcon(b, 46)}<div><b>${esc(b.name)}</b><div class="small muted">${esc(b.how)}</div>
-      <div class="small">${b.tier ? `<span class="tier ${TIER_COLORS[b.tier]}">${b.tierName}</span>` : ''}${b.next ? ` <span class="muted">${b.count}/${b.next} for ${['', 'Bronze', 'Silver', 'Gold'][b.tier + 1]}</span>` : b.tier ? ' <span class="muted">maxed out</span>' : ''}</div></div></div>`).join('')}</div>` });
+      <div class="small">${b.tier ? `<span class="tier ${TIER_COLORS[b.tier]}">${b.tierName}</span>` : ''}${b.next ? ` <span class="muted">${b.count}/${b.next} for ${['', 'Bronze', 'Silver', 'Gold', 'Diamond'][b.tier + 1]}</span>` : b.tier ? ' <span class="muted">maxed out</span>' : ''}</div></div></div>`).join('')}</div>` });
 }
 function badgesRow(badges) {
   if (!badges?.length) return '';

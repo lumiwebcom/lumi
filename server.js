@@ -1047,6 +1047,7 @@ app.post('/api/servers/:id/invites', auth, wrap(req => {
   const maxUses = Math.max(0, Number(req.body.maxUses) || 0);
   const code = crypto.randomBytes(5).toString('base64url');
   db.prepare('INSERT INTO invites VALUES (?,?,?,?,?,?,?)').run(code, sid, req.user.id, 0, maxUses, hours > 0 ? now() + hours * 3600_000 : null, now());
+  taskEvent(req.user.id, 'invite');
   return { code };
 }));
 app.delete('/api/invites/:code', auth, wrap(req => {
@@ -1076,6 +1077,7 @@ app.post('/api/invites/:code', auth, wrap(req => {
   if (db.prepare('SELECT 1 FROM bans WHERE server_id=? AND user_id=?').get(inv.server_id, req.user.id)) throw fail(403, 'You are banned from this community.');
   if (!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(inv.server_id, req.user.id)) {
     addMember(inv.server_id, req.user.id);
+    taskEvent(req.user.id, 'join');
     db.prepare('UPDATE invites SET uses=uses+1 WHERE code=?').run(inv.code);
     io.to(`server:${inv.server_id}`).emit('server:update', { serverId: inv.server_id, joined: publicUser(req.user) });
   }
@@ -1131,6 +1133,7 @@ app.post('/api/discover/:id/join', auth, wrap(req => {
   if (db.prepare('SELECT 1 FROM bans WHERE server_id=? AND user_id=?').get(s.id, req.user.id)) throw fail(403, 'You are banned from this community.');
   if (!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(s.id, req.user.id)) {
     addMember(s.id, req.user.id);
+    taskEvent(req.user.id, 'join');
     io.to(`server:${s.id}`).emit('server:update', { serverId: s.id, joined: publicUser(req.user) });
   }
   return serverDetail(s.id, req.user.id);
@@ -1455,10 +1458,18 @@ const TASKS = {
   stargaze: { label: 'Look around Stargaze', goal: 1, emoji: '🔭', badge: 'Stargazer' },
   friend:   { label: 'Add a friend', goal: 1, emoji: '🤝', badge: 'Social butterfly' },
   status:   { label: 'Set a new status', goal: 1, emoji: '🎨', badge: 'Mood setter' },
+  invite:   { label: 'Make an invite to a community', goal: 1, emoji: '🔗', badge: 'Recruiter' },
+  join:     { label: 'Join a community', goal: 1, emoji: '🚪', badge: 'Wanderer' },
+  level:    { label: 'Level up in a community', goal: 1, emoji: '📈', badge: 'Climber' },
+  nickname: { label: 'Give a friend a nickname', goal: 1, emoji: '🏷️', badge: 'Name tag' },
 };
 const DEVOTEE = { label: 'Finish all of a day’s tasks', emoji: '🗓️', badge: 'Daily devotee' };
-const TIER_AT = { task: [1, 5, 15], devotee: [1, 7, 30] };
-const TIER_NAMES = ['', 'Bronze', 'Silver', 'Gold'];
+const TIER_AT = { task: [1, 5, 15, 40], devotee: [1, 7, 30, 100] };
+const TIER_NAMES = ['', 'Bronze', 'Silver', 'Gold', 'Diamond'];
+const MAX_TIER = 4;
+// lumi owners have every badge at Diamond
+const ownsAllBadges = (uid) => getUser(uid)?.site_role === 'owner';
+const ALL_BADGE_KEYS = () => [...Object.keys(TASKS), 'devotee'];
 const TASKS_PER_DAY = 3;
 const taskDay = () => Math.floor(Date.now() / 86400_000);
 
@@ -1512,6 +1523,7 @@ function countFor(uid, key) {
     : db.prepare('SELECT n FROM task_counts WHERE user_id=? AND task=?').get(uid, key)?.n || 0;
 }
 function badgesOf(uid) {
+  if (ownsAllBadges(uid)) return ALL_BADGE_KEYS().map((k) => badgeInfo(k, MAX_TIER, null, countFor(uid, k)));
   return db.prepare('SELECT * FROM user_badges WHERE user_id=? ORDER BY tier DESC, earned_at').all(uid)
     .map((b) => badgeInfo(b.badge, b.tier, b.earned_at, countFor(uid, b.badge))).filter(Boolean);
 }
@@ -1546,9 +1558,10 @@ function taskEvent(uid, key, n = 1) {
 }
 app.get('/api/tasks', auth, wrap(req => {
   const day = taskDay();
-  const collection = [...Object.keys(TASKS), 'devotee'].map((k) => {
+  const owner = ownsAllBadges(req.user.id);
+  const collection = ALL_BADGE_KEYS().map((k) => {
     const b = db.prepare('SELECT * FROM user_badges WHERE user_id=? AND badge=?').get(req.user.id, k);
-    return badgeInfo(k, b?.tier || 0, b?.earned_at, countFor(req.user.id, k));
+    return badgeInfo(k, owner ? MAX_TIER : b?.tier || 0, b?.earned_at, countFor(req.user.id, k));
   });
   return { tasks: tasksState(req.user.id), resetsAt: (day + 1) * 86400_000, badges: collection };
 }));
@@ -1570,7 +1583,7 @@ function addXp(sid, uid, amount, cooldown) {
       .run(sid, uid, xp, cooldown ? Date.now() : (row?.last_at || 0));
     io.to(`server:${sid}`).emit('member:xp', { serverId: sid, userId: uid, xp });
     const lvl = levelOf(xp);
-    if (lvl > levelOf(before)) io.to(`user:${uid}`).emit('level:up', { serverId: sid, level: lvl, rank: rankOf(lvl) });
+    if (lvl > levelOf(before)) { io.to(`user:${uid}`).emit('level:up', { serverId: sid, level: lvl, rank: rankOf(lvl) }); taskEvent(uid, 'level'); }
   } catch (e) { console.error('xp failed:', e.message); }
 }
 // once a minute: people in a call with someone else get voice-task minutes, and xp in community lounges
@@ -1596,7 +1609,7 @@ app.put('/api/nicknames/:id', auth, wrap(req => {
   if (!t || t.id === req.user.id) throw fail(404, 'User not found');
   const nick = sanitizeName(req.body.nickname, 32);
   if (nick && !areFriends(req.user.id, t.id)) throw fail(403, 'You can only give nicknames to friends.');
-  if (nick) db.prepare('INSERT OR REPLACE INTO friend_nicks VALUES (?,?,?)').run(req.user.id, t.id, nick);
+  if (nick) { db.prepare('INSERT OR REPLACE INTO friend_nicks VALUES (?,?,?)').run(req.user.id, t.id, nick); taskEvent(req.user.id, 'nickname'); }
   else db.prepare('DELETE FROM friend_nicks WHERE owner_id=? AND target_id=?').run(req.user.id, t.id);
   io.to(`user:${req.user.id}`).emit('nicknames:update', { userId: t.id, nickname: nick || null });
   return { nickname: nick || null };

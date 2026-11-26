@@ -1261,3 +1261,4 @@ i.on { width: 7px; height: 7px; border-radius: 50%; background: var(--green); di
 .tpl-go { transform: rotate(-90deg); color: var(--text3); }
 .lock-tag { display: inline-grid; color: var(--text3); margin-left: 4px; flex: none; }
 .main-head .lock-tag { color: var(--text2); }
+.tier.diamond { color: #5CCBF0; }
