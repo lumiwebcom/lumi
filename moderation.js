@@ -120,6 +120,8 @@ function worker() {
   if (child) return child;
   if (Date.now() < pausedUntil) return null;
   child = fork(__filename, ['worker'], { execArgv: ['--no-warnings', '--max-old-space-size=160'], stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+  // lowest CPU priority: the image check only uses spare CPU, so chat and calls never wait for it
+  try { require('os').setPriority(child.pid, 19); } catch {}
   child.on('message', (m) => {
     if ('ready' in m) { if (m.ready) crashes = 0; return; }
     const w = waiting.get(m.id); if (!w) return;

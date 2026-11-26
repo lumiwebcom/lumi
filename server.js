@@ -294,6 +294,8 @@ const FLUSH_KEY = storage.enabled ? crypto.createHash('sha256').update('lumi-flu
 app.post('/api/internal/flush', async (req, res) => {
   if (!FLUSH_KEY || req.get('x-flush-key') !== FLUSH_KEY) return res.status(404).end();
   readOnly = true;
+  // if the new version doesn't take over within a minute (e.g. it failed to start), carry on normally
+  setTimeout(() => { if (readOnly) { readOnly = false; console.log('  Handover didn’t finish; taking changes again'); } }, 60_000).unref();
   while (backingUp) await new Promise((r) => setTimeout(r, 200));
   await backup(true);
   console.log('  Handing over to the new version: saved and paused changes');
@@ -333,9 +335,11 @@ app.get('/api/version', (req, res) => { res.set('Cache-Control', 'no-store'); re
 if (PUBLIC_DIR) app.use(express.static(PUBLIC_DIR));
 else app.get(Object.keys(FLAT_FILES), (req, res) => res.sendFile(path.join(__dirname, FLAT_FILES[req.path])));
 app.use('/fonts', express.static(path.join(__dirname, 'node_modules', '@fontsource-variable', 'manrope', 'files'), { maxAge: '30d' }));
+db.exec('CREATE TABLE IF NOT EXISTS blocked_uploads (name TEXT PRIMARY KEY, at INTEGER)');
 app.get('/uploads/:name', async (req, res) => {
   const name = req.params.name;
   if (!/^[\w-]+(\.[a-z0-9]{1,10})?$/.test(name)) return res.status(404).end();
+  if (db.prepare('SELECT 1 FROM blocked_uploads WHERE name=?').get(name)) return res.status(404).end();
   const file = path.join(UPLOAD_DIR, name);
   if (!fs.existsSync(file) && storage.enabled) {
     try { const buf = await storage.get('up:' + name); if (buf) fs.writeFileSync(file, buf); } catch (e) { console.error(e.message); }
@@ -518,7 +522,20 @@ app.post('/api/upload', auth, upload.single('file'), async (req, res) => {
   // nudity check: anything that looks sexual is thrown away, and clear cases get a permanent ban
   if (type === 'image' || /\.(jpe?g|png|gif|webp|avif|heic|bmp)$/i.test(req.file.filename)) {
     let scores = null;
-    try { scores = await moderation.checkImage(req.file.path); } catch (e) { console.error('  Image check skipped:', e.message); }
+    const check = moderation.checkImage(req.file.path);
+    try { scores = await Promise.race([check, new Promise((ok) => setTimeout(() => ok('slow'), 6000))]); } catch { scores = null; }
+    if (scores === 'slow') {
+      // the check is taking a while: let the upload through now and finish checking in the background
+      scores = null;
+      const who = req.user, file = req.file.filename, sid = typeof req.body.serverId === 'string' ? req.body.serverId : null;
+      check.then((late) => {
+        const sc = moderation.nsfwScore(late);
+        if (sc < NSFW_BLOCK) return;
+        db.prepare('INSERT OR IGNORE INTO blocked_uploads VALUES (?,?)').run(file, now());
+        try { fs.unlinkSync(path.join(UPLOAD_DIR, file)); } catch {}
+        nsfwStrike(getUser(who.id) || who, sid, 'image', late, sc >= NSFW_BAN);
+      }).catch(() => {});
+    }
     const score = moderation.nsfwScore(scores);
     if (score >= NSFW_BLOCK) {
       fs.unlink(req.file.path, () => {});
@@ -1227,7 +1244,6 @@ function nsfwStrike(user, sid, kind, scores, ban) {
   }
   return doBan;
 }
-setTimeout(() => moderation.warmUp(), 60_000); // starts the separate image-check process
 
 app.delete('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
   const t = getUser(req.params.id);

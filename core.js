@@ -163,9 +163,15 @@ function showBannedScreen({ reason, until } = {}) {
 }
 async function uploadFile(file) {
   if (file.size > 25 * 1024 * 1024) throw new Error('Files can be up to 25 MB.');
-  const fd = new FormData(); if (S.view?.serverId) fd.append('serverId', S.view.serverId); fd.append('file', file);
-  const r = await fetch('/api/upload', { method: 'POST', body: fd, credentials: 'same-origin' });
-  const d = await r.json().catch(() => ({}));
+  let r, d;
+  for (let tries = 0; ; tries++) {
+    const fd = new FormData(); if (S.view?.serverId) fd.append('serverId', S.view.serverId); fd.append('file', file);
+    r = await fetch('/api/upload', { method: 'POST', body: fd, credentials: 'same-origin' });
+    d = await r.json().catch(() => ({}));
+    // lumi is switching to a new version for a moment: try again
+    if (r.status === 503 && d.updating && tries < 15) { await new Promise((ok) => setTimeout(ok, 3000)); continue; }
+    break;
+  }
   if (!r.ok) throw new Error(d.error || 'Upload failed');
   return d;
 }
