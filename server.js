@@ -519,28 +519,28 @@ app.post('/api/upload', auth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
   const mt = req.file.mimetype || '';
   const type = mt.startsWith('image/') ? 'image' : mt.startsWith('video/') ? 'video' : mt.startsWith('audio/') ? 'audio' : 'file';
-  // nudity check: anything that looks sexual is thrown away, and clear cases get a permanent ban
+  // nudity check: anything that clearly looks sexual is thrown away, and very clear cases get a permanent ban
   if (type === 'image' || /\.(jpe?g|png|gif|webp|avif|heic|bmp)$/i.test(req.file.filename)) {
-    let scores = null;
-    const check = moderation.checkImage(req.file.path);
-    try { scores = await Promise.race([check, new Promise((ok) => setTimeout(() => ok('slow'), 6000))]); } catch { scores = null; }
+    const who = req.user, file = req.file.filename, sid = typeof req.body.serverId === 'string' ? req.body.serverId : null;
+    const check = moderation.checkImage(req.file.path).catch(() => null);
+    // wait a moment for the check, but never hold the upload up for long
+    const scores = await Promise.race([check, new Promise((ok) => setTimeout(() => ok('slow'), 2500))]);
     if (scores === 'slow') {
-      // the check is taking a while: let the upload through now and finish checking in the background
-      scores = null;
-      const who = req.user, file = req.file.filename, sid = typeof req.body.serverId === 'string' ? req.body.serverId : null;
       check.then((late) => {
-        const sc = moderation.nsfwScore(late);
-        if (sc < NSFW_BLOCK) return;
+        const v = imageVerdict(late, file);
+        if (v === 'ok') return;
         db.prepare('INSERT OR IGNORE INTO blocked_uploads VALUES (?,?)').run(file, now());
         try { fs.unlinkSync(path.join(UPLOAD_DIR, file)); } catch {}
-        nsfwStrike(getUser(who.id) || who, sid, 'image', late, sc >= NSFW_BAN);
-      }).catch(() => {});
-    }
-    const score = moderation.nsfwScore(scores);
-    if (score >= NSFW_BLOCK) {
-      fs.unlink(req.file.path, () => {});
-      const banned = nsfwStrike(req.user, typeof req.body.serverId === 'string' ? req.body.serverId : null, 'image', scores, score >= NSFW_BAN);
-      return res.status(422).json({ nsfw: true, banned, error: banned ? 'That image has nudity or sexual content. Your account has been permanently banned.' : 'That image looks like nudity or sexual content, which isn’t allowed on lumi.' });
+        nsfwStrike(getUser(who.id) || who, sid, 'image', late, v === 'ban');
+        io.to(`user:${who.id}`).emit('toast', { text: 'A picture you uploaded looked like nudity or sexual content, so it was removed.' });
+      });
+    } else {
+      const v = imageVerdict(scores, file);
+      if (v !== 'ok') {
+        fs.unlink(req.file.path, () => {});
+        const banned = nsfwStrike(req.user, sid, 'image', scores, v === 'ban');
+        return res.status(422).json({ nsfw: true, banned, error: banned ? 'That image has nudity or sexual content. Your account has been permanently banned.' : 'That image looks like nudity or sexual content, which isn’t allowed on lumi.' });
+      }
     }
   }
   const done = () => res.json({ url: '/uploads/' + req.file.filename, type, name: req.file.originalname.slice(0, 200) });
@@ -776,7 +776,7 @@ async function gifIsSafe(url) {
       file = path.join(require('os').tmpdir(), 'gifchk-' + crypto.randomBytes(6).toString('hex'));
       fs.writeFileSync(file, buf);
       const scores = await moderation.checkImage(file);
-      ok = moderation.nsfwScore(scores) < 0.4 && (scores?.sexy || 0) < 0.7;
+      ok = imageVerdict(scores, 'GIF') === 'ok';
     }
   } catch (e) { /* skipped: GIF couldn't be checked in time */ }
   finally { gifChecking--; if (file) fs.unlink(file, () => {}); }
@@ -1212,6 +1212,16 @@ app.put('/api/gifs/favorites', auth, wrap((req) => {
 app.delete('/api/gifs/favorites', auth, wrap((req) => { db.prepare('DELETE FROM gif_favs WHERE user_id=? AND url=?').run(req.user.id, String(req.query.url || '')); return { ok: true }; }));
 
 // ---- automatic NSFW moderation
+// 'ok', 'block' (thrown away) or 'ban' (thrown away + permanent ban). The model's "drawn explicit" score
+// misfires on normal anime and cartoon art, so it needs far more certainty than the photo score.
+function imageVerdict(s, name = '') {
+  if (!s) return 'ok';
+  if (process.env.NSFW_TEST === 'ban') return 'ban';
+  const porn = s.porn || 0, drawn = s.hentai || 0;
+  const v = porn >= 0.85 || drawn >= 0.97 ? 'ban' : porn >= 0.6 || drawn >= 0.88 || porn + drawn >= 0.92 ? 'block' : 'ok';
+  if (v !== 'ok') console.log(`  Moderation: ${v === 'ban' ? 'banned' : 'blocked'} an image ${name} (photo ${porn.toFixed(2)}, drawn ${drawn.toFixed(2)})`);
+  return v;
+}
 db.exec(`CREATE TABLE IF NOT EXISTS mod_events (id TEXT PRIMARY KEY, user_id TEXT, server_id TEXT, kind TEXT, score REAL, action TEXT, at INTEGER)`);
 const NSFW_BLOCK = Number(process.env.NSFW_BLOCK || 0.5), NSFW_BAN = Number(process.env.NSFW_BAN || 0.7), NSFW_SERVER_FLAGS = 3;
 function siteBan(uid, reason, until = null) {
