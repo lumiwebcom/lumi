@@ -75,14 +75,27 @@ const isNsfwText = (...parts) => parts.some((p) => typeof p === 'string' && NSFW
 
 // GIF searches get a much stricter check: leetspeak is undone (p0rn, s3x, $exy), and spaced-out or
 // glued-together words (p o r n, hotporn) are caught too.
-const SEARCH_WORDS = /\b(porn\w*|nsfw|nsfl|nudes?|nudity|nude\w*|naked|hentai|ecchi|ahegao|yaoi|yuri|futa\w*|xxx+|onlyfans?|fansly|r34|rule ?34|sex|sexy|sexi\w*|sexx\w*|sexting|sexual\w*|sexually|horny|boob\w*|tits?|titt(y|ies)|dick\w*|cocks?|penis\w*|vagina\w*|puss(y|ies)|cum\w*|erotic\w*|fetish\w*|lewd\w*|ass|asses|arse|booty|butts?|buttocks|thong\w*|bikini\w*|lingerie|underwear|panties|bra|bras|twerk\w*|strip(per|pers|ping|tease)?|milf\w*|dilf|thots?|bdsm|kink\w*|orgasm\w*|masturbat\w*|jerk ?off|blow ?jobs?|bj|anal|nipples?|breasts?|topless|bottomless|thicc|playboy|brazzers|pornhub|xvideos|xhamster|camgirls?|seduc\w*|moan\w*|spank\w*|gore|gory|hot (girls?|women|chicks?)|make ?out|grind\w*|naughty|smut\w*|hump\w*|horni)\b/i;
-const SEARCH_GLUED = /(porn|xxx|rule34|r34|sexy|hentai|nsfw|xxx|onlyfan|rule34|nude|naked|boob|titty|titties|pussy|blowjob|milf|ahegao|sexy|sexx|bdsm|orgasm|masturb|brazzers|xvideo|xhamster)/;
+const SEARCH_WORDS = /\b(porn\w*|nsfw|nsfl|nudes?|nudity|nude\w*|naked|hentai|ecchi|ahegao|yaoi|yuri|futa\w*|xxx+|onlyfans?|fansly|r34|rule ?34|sex|sexy|sexi\w*|sexx\w*|sexting|sexual\w*|sexually|horny|boob\w*|tits?|titt(y|ies)|dick\w*|cocks?|penis\w*|vagina\w*|puss(y|ies)|cum\w*|erotic\w*|fetish\w*|lewd\w*|ass|asses|arse|booty|butts?|buttocks|thong\w*|bikini\w*|lingerie|underwear|panties|bra|bras|twerk\w*|strip(per|pers|ping|tease)?|milf\w*|dilf|thots?|bdsm|kink\w*|orgasm\w*|masturbat\w*|jerk ?off|blow ?jobs?|bj|anal|nipples?|breasts?|topless|bottomless|thicc|playboy|brazzers|pornhub|xvideos|xhamster|camgirls?|seduc\w*|balls|ballsack|ball ?sack|nut ?sack|testicles?|scrotum|boners?|erections?|sluts?|slutty|whores?|hoes|hooker\w*|escorts?|dildo\w*|vibrator\w*|condoms?|moan\w*|spank\w*|gore|gory|hot (girls?|women|chicks?)|make ?out|grind\w*|naughty|smut\w*|hump\w*|horni)\b/i;
+const SEARCH_GLUED = /(porn|xxx|rule34|r34|sexy|ballsack|nutsack|dildo|hentai|nsfw|xxx|onlyfan|rule34|nude|naked|boob|titty|titties|pussy|blowjob|milf|ahegao|sexy|sexx|bdsm|orgasm|masturb|brazzers|xvideo|xhamster)/;
 function normalizeSearch(q) {
   return String(q || '').toLowerCase()
     .replace(/[0]/g, 'o').replace(/[1!|]/g, 'i').replace(/[3]/g, 'e').replace(/[4@]/g, 'a').replace(/[5$]/g, 's').replace(/[7]/g, 't').replace(/[8]/g, 'b')
     .replace(/(.)\1{2,}/g, '$1$1'); // "seeeexy" -> "seexy"
 }
+// words people try to sneak past with symbols, like p*ssy, c*m, b@lls, d!ck
+const MASKABLE = ['porn', 'pussy', 'pussies', 'cum', 'cock', 'cocks', 'dick', 'dicks', 'balls', 'tits', 'titty', 'titties', 'boobs', 'boob', 'sex', 'sexy',
+  'nude', 'nudes', 'naked', 'ass', 'booty', 'butt', 'penis', 'vagina', 'nipple', 'nipples', 'hentai', 'milf', 'thot', 'slut', 'whore', 'horny', 'nsfw', 'xxx', 'anal', 'boner', 'dildo'];
+function maskedWord(q) {
+  return String(q || '').toLowerCase().split(/\s+/).some((tok) => {
+    if (!/[*#_.\-~^%?]/.test(tok)) return false;
+    const pat = tok.replace(/[^a-z0-9*#_.\-~^%?@$!]/g, '').replace(/[@4]/g, 'a').replace(/[$5]/g, 's').replace(/[!1]/g, 'i').replace(/0/g, 'o').replace(/3/g, 'e');
+    if ((pat.match(/[a-z]/g) || []).length < 2) return false; // need some real letters, so "..." or "?!" are fine
+    const re = new RegExp('^' + pat.split('').map((ch) => (/[*#_.\-~^%?]/.test(ch) ? '[a-z]?' : ch)).join('') + '$');
+    return MASKABLE.some((w) => re.test(w));
+  });
+}
 function isNsfwSearch(q) {
+  if (maskedWord(q)) return true;
   const raw = String(q || '').toLowerCase(), n = normalizeSearch(q);
   if ([raw, n].some((t) => SEARCH_WORDS.test(t) || isNsfwText(t))) return true;
   const glued = n.replace(/[^a-z]/g, ''), squashed = glued.replace(/(.)\1+/g, '$1'); // "s e e e x y" -> "sexy"
