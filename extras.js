@@ -44,13 +44,14 @@ function nameAttrs(u, extra = '') {
 const sparkMark = (u) => ((u && (S.userCache[u.id] || u).sparks) ? `<span class="spark-mark" data-tip="Sparks member">${icon('gem', 'xs')}</span>` : '');
 
 const SPARK_THEMES = {
-  classic: { label: 'lumi', accent: '#743AFB', light: '#A78BFA' },
-  ember: { label: 'Campfire', accent: '#E2622B', light: '#F29B6E', bg: ['#0D0A09', '#17120F', '#1C1613', '#251E1A', '#30271F', '#2E2520', '#211A16'] },
-  forest: { label: 'Matcha', accent: '#7FA650', light: '#B5D08F', bg: ['#090D0B', '#111713', '#151C17', '#1C251F', '#253029', '#24302A', '#19211C'] },
-  ocean: { label: 'Night swim', accent: '#3478D8', light: '#8DB6EE', bg: ['#080B10', '#10151C', '#141A23', '#1B232E', '#242E3B', '#243040', '#18202B'] },
-  rose: { label: 'Bubblegum', accent: '#EC6AA6', light: '#F6A8CB', bg: ['#0E090B', '#181013', '#1E1418', '#281B20', '#33232A', '#33232A', '#22171B'] },
-  gold: { label: 'Honey', accent: '#DDA12A', light: '#EFCB74', bg: ['#0C0B08', '#16140F', '#1B1913', '#24211A', '#2F2B22', '#2E2A20', '#201D16'] },
-  mono: { label: 'Concrete', accent: '#D4D4D8', light: '#F4F4F5', ink: '#111113', bg: ['#09090B', '#131316', '#18181B', '#212125', '#2B2B30', '#2A2A2F', '#1D1D21'] },
+  classic: { label: 'Lumi', accent: '#743AFB', light: '#A78BFA' },
+  ember: { label: 'Blaze', accent: '#FF5A1F', light: '#FF9A6B', bg: ['#120806', '#1E0F0A', '#26130D', '#321A12', '#3F2218', '#3A2117', '#2A1610'] },
+  blood: { label: 'Blood', accent: '#E11D48', light: '#FB7185', bg: ['#110407', '#1D080D', '#260B12', '#320F18', '#3E1520', '#3A141E', '#2A0D15'] },
+  forest: { label: 'Toxic', accent: '#2EE66B', light: '#8CF5AE', ink: '#04210F', bg: ['#050E08', '#0B1A10', '#0F2215', '#152D1C', '#1C3925', '#1D3826', '#132619'] },
+  ocean: { label: 'Frost', accent: '#38BDF8', light: '#A5E3FC', ink: '#062033', bg: ['#060B16', '#0C1424', '#101A2E', '#16233B', '#1E2D49', '#1F2E48', '#142036'] },
+  rose: { label: 'Candy', accent: '#FF4FA3', light: '#FFA3CF', bg: ['#14060E', '#200C18', '#29101F', '#35162A', '#421D35', '#3F1C33', '#2C1223'] },
+  gold: { label: 'Gold', accent: '#F5B800', light: '#FFD966', ink: '#241A00', bg: ['#100C02', '#1B1606', '#221C09', '#2C250E', '#383014', '#372F14', '#271F0B'] },
+  mono: { label: 'Void', accent: '#FFFFFF', light: '#E5E5E5', ink: '#000000', bg: ['#000000', '#0A0A0A', '#101010', '#181818', '#222222', '#222222', '#141414'] },
 };
 const APP_FONTS = { default: ['Default', ''], ...Object.fromEntries(Object.entries(NAME_FONTS).filter(([k]) => k !== 'pixel' && k !== 'hand').map(([k, v]) => [k, [v[0], v[1]]])) };
 function mix(hex, other, t) {
@@ -84,7 +85,7 @@ async function renderSparks(main) {
   const el = $('#sparks-page'); if (!el) return;
   const perks = [
     ['type', 'Custom fonts', 'Pick a font for your name, and one for the whole app.'],
-    ['palette', 'Custom themes', 'Campfire, Matcha, Night swim, Bubblegum, Honey, Concrete, or pick any color you want.'],
+    ['palette', 'Custom themes', 'Blaze, Blood, Toxic, Frost, Candy, Gold, Void, or any color you pick.'],
     ['compass', 'Stargaze, free', 'List your communities on Stargaze without needing 1,000 members.'],
     ['gem', 'Golden nameplate', 'Your name shows in gold, with a plate in member lists and on your profile.'],
   ];
@@ -261,8 +262,8 @@ function sparksAppearance() {
   const lock = on ? '' : 'disabled';
   return `<h4 style="display:flex;align-items:center;gap:8px">${icon('gem', 'sm')} Sparks ${on ? '' : '<button class="btn link" data-act-sparks>Get Sparks to unlock</button>'}</h4>
     <div class="field"><label>Color theme</label><div class="theme-row ${on ? '' : 'locked'}">
-      ${Object.entries(SPARK_THEMES).map(([k, t]) => `<button class="theme-sw ${cur === k ? 'sel' : ''}" data-sth="${k}" ${lock} style="--a:${t.accent};--b:${(t.bg || ['#0A090D', '#141218'])[1]}"><i></i><span>${t.label}</span></button>`).join('')}
-      <label class="theme-sw custom ${cur === 'custom' ? 'sel' : ''}" style="--a:${esc(S.settings.sparkAccent || '#743AFB')};--b:#141218"><input type="color" id="sth-custom" value="${esc(S.settings.sparkAccent || '#743AFB')}" ${lock}><i></i><span>Custom</span></label></div></div>
+      ${Object.entries(SPARK_THEMES).map(([k, t]) => `<button class="theme-sw ${cur === k ? 'sel' : ''}" data-sth="${k}" ${lock} style="--a:${t.accent};--b:${t.bg ? t.bg[3] : '#241D36'};--c:${t.bg ? t.bg[0] : '#0A090D'}"><i><b></b><u></u></i><span>${t.label}</span></button>`).join('')}
+      <label class="theme-sw custom ${cur === 'custom' ? 'sel' : ''}" style="--a:${esc(S.settings.sparkAccent || '#743AFB')};--b:#141218"><input type="color" id="sth-custom" value="${esc(S.settings.sparkAccent || '#743AFB')}" ${lock}><i><b></b><u></u></i><span>Custom</span></label></div></div>
     <div class="field"><label>Name font</label><div class="font-row">
       <button class="font-sw ${!S.me.nameFont ? 'sel' : ''}" data-nfont="" ${lock}>Default</button>
       ${Object.entries(NAME_FONTS).map(([k, f]) => { ensureFont(k); return `<button class="font-sw ${S.me.nameFont === k ? 'sel' : ''}" data-nfont="${k}" style="font-family:${fontFamily(k)}" ${lock}>${esc(S.me.displayName)}</button>`; }).join('')}</div>
