@@ -125,23 +125,34 @@ function openChannelModal(sid, cid = null, type = 'text', catId = null) {
   const cats = [...(sd.categories || [])].sort((a, b) => a.position - b.position);
   const PH = { text: 'e.g. Memes', board: 'e.g. Ideas & plans', gallery: 'e.g. Photos', voice: 'e.g. Chill zone' };
   const m = openModal({ title: ch ? `Edit ${ROOM_TYPES[type].label.toLowerCase()}` : 'Add a room', body: `
+    <div class="ch-tabs"><button class="sel" data-chtab="general">General</button><button data-chtab="privacy">${icon('lock', 'xs')} Privacy</button></div>
+    <div data-chpane="general">
     ${ch ? '' : `<div class="field"><label>What kind of room?</label><div class="choice-grid room-kinds">
       ${['text', 'board', 'gallery', 'voice'].map((k) => `<button class="choice ${type === k ? 'sel' : ''}" data-type="${k}">${icon(ROOM_TYPES[k].icon)}<div><div>${ROOM_TYPES[k].label}</div><div class="small muted" style="font-weight:400">${ROOM_TYPES[k].desc}</div></div></button>`).join('')}</div></div>`}
     <div class="field"><label>Name</label><input class="input" id="ch-name" value="${esc(ch?.name || '')}" placeholder="${PH[type]}" maxlength="100" autofocus></div>
     <div class="field" id="topic-field" ${type === 'voice' ? 'style="display:none"' : ''}><label>Topic</label><textarea class="textarea" id="ch-topic" maxlength="300" placeholder="What’s this room for?">${esc(ch?.topic || '')}</textarea></div>
-    <div class="perm" id="lock-field" ${type === 'voice' ? 'style="display:none"' : ''}><div><div class="bold">Only admins can post</div><div class="d">Only the owner and people with an Administrator role can send messages here. Everyone else can still read and react. Good for announcements and rules.</div></div><label class="switch"><input type="checkbox" id="ch-lock" ${ch?.locked ? 'checked' : ''}><span></span></label></div>
-    ${cats.length ? `<div class="field"><label>Section</label><select class="select" id="ch-cat"><option value="">No section</option>${cats.map((c) => `<option value="${c.id}" ${c.id === catId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>` : ''}`,
+    ${cats.length ? `<div class="field"><label>Section</label><select class="select" id="ch-cat"><option value="">No section</option>${cats.map((c) => `<option value="${c.id}" ${c.id === catId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>` : ''}
+    </div>
+    <div data-chpane="privacy" hidden>
+    <p class="muted small" style="margin:0 0 6px">“Admins” means the community owner and anyone with a role that has the Administrator permission.</p>
+    <div class="perm" id="lock-field" ${type === 'voice' ? 'style="display:none"' : ''}><div><div class="bold">Only admins can post</div><div class="d">Only admins can send messages here. Everyone else can still read and react. Good for announcements and rules.</div></div><label class="switch"><input type="checkbox" id="ch-lock" ${ch?.locked ? 'checked' : ''}><span></span></label></div>
+    <div class="perm"><div><div class="bold">Only admins can see</div><div class="d">Hide this room from everyone except admins. Nobody else can see it, read it, post in it${type === 'voice' ? ', or join it' : ''}. Good for staff chat.</div></div><label class="switch"><input type="checkbox" id="ch-admin" ${ch?.adminOnly ? 'checked' : ''}><span></span></label></div>
+    </div>`,
     foot: `${ch ? `<button class="btn danger" data-del style="margin-right:auto">${icon('trash', 'sm')} Delete</button>` : ''}<button class="btn" data-cancel>Cancel</button><button class="btn primary" data-save>${ch ? 'Save' : 'Create'}</button>` });
   const el = m.el;
   el.querySelectorAll('[data-type]').forEach((b) => (b.onclick = () => { type = b.dataset.type; el.querySelectorAll('[data-type]').forEach((x) => x.classList.toggle('sel', x === b)); el.querySelector('#topic-field').style.display = type === 'voice' ? 'none' : ''; el.querySelector('#lock-field').style.display = type === 'voice' ? 'none' : ''; el.querySelector('#ch-name').placeholder = PH[type]; }));
+  el.querySelectorAll('[data-chtab]').forEach((b) => (b.onclick = () => {
+    el.querySelectorAll('[data-chtab]').forEach((x) => x.classList.toggle('sel', x === b));
+    el.querySelectorAll('[data-chpane]').forEach((p) => (p.hidden = p.dataset.chpane !== b.dataset.chtab));
+  }));
   el.querySelector('[data-cancel]').onclick = () => m.close();
   const save = async () => {
     const name = el.querySelector('#ch-name').value.trim() || ({ text: 'New room', board: 'Board', gallery: 'Gallery', voice: 'Lounge' })[type]; const topic = el.querySelector('#ch-topic').value;
     try {
       const categoryId = el.querySelector('#ch-cat')?.value || null;
-      const locked = el.querySelector('#ch-lock').checked;
-      if (ch) await api('PATCH', `/api/channels/${ch.id}`, { name, topic, categoryId, locked });
-      else await api('POST', `/api/servers/${sid}/channels`, { name, type, topic, categoryId, locked });
+      const locked = el.querySelector('#ch-lock').checked, adminOnly = el.querySelector('#ch-admin').checked;
+      if (ch) await api('PATCH', `/api/channels/${ch.id}`, { name, topic, categoryId, locked, adminOnly });
+      else await api('POST', `/api/servers/${sid}/channels`, { name, type, topic, categoryId, locked, adminOnly });
       m.close(); await loadServer(sid); renderAll();
     } catch (e) { toast(e.message, true); }
   };

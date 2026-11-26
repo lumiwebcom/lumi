@@ -11,7 +11,7 @@ const ROOM_TYPES = {
 const isChatRoom = (c) => c && c.type !== 'voice';
 // rooms can be locked so only the owner and Administrator roles can post
 const canPost = (sd, c) => can(sd, P.SEND_MESSAGES) && (!c?.locked || can(sd, P.ADMINISTRATOR));
-const lockTag = (c) => (c?.locked ? `<span class="lock-tag" data-tip="Only admins can post">${icon('lock', 'xs')}</span>` : '');
+const lockTag = (c) => (c?.adminOnly ? `<span class="lock-tag" data-tip="Only admins can see this room">${icon('eyeOff', 'xs')}</span>` : '') + (c?.locked ? `<span class="lock-tag" data-tip="Only admins can post">${icon('lock', 'xs')}</span>` : '');
 const roomIcon = (c, cls = 'sm') => icon((ROOM_TYPES[c?.type] || ROOM_TYPES.text).icon, cls);
 
 // ------------------------------------------------------------------ levels (mirror of the server)

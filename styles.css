@@ -1340,3 +1340,8 @@ img.mark { border-radius: 24%; object-fit: cover; }
 .bg-sec { display: flex; align-items: center; gap: 8px; }
 .bg-sec span { font-weight: 600; color: var(--text3); }
 .bg-sec.bronze { color: #c48a4f; } .bg-sec.gold { color: #E3B341; } .bg-sec.diamond { color: #5CCBF0; }
+/* room settings tabs */
+.ch-tabs { display: flex; gap: 4px; padding: 4px; margin: -4px 0 16px; border-radius: 12px; background: var(--bg2); }
+.ch-tabs button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; border: 0; border-radius: 9px; background: none; color: var(--text2); font: 600 13.5px var(--font); cursor: pointer; }
+.ch-tabs button.sel { background: var(--bg); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+[data-chpane][hidden] { display: none !important; }

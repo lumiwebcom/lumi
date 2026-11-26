@@ -121,6 +121,7 @@ for (const [c, t] of [['sid', 'TEXT'], ['ua', 'TEXT'], ['last_seen', 'INTEGER']]
 for (const [c, t] of [['title', 'TEXT'], ['thread_id', 'TEXT']]) if (!colsOf('messages').includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`);
 if (!colsOf('servers').includes('welcome')) db.exec('ALTER TABLE servers ADD COLUMN welcome TEXT');
 if (!colsOf('channels').includes('locked')) db.exec('ALTER TABLE channels ADD COLUMN locked INTEGER DEFAULT 0');
+if (!colsOf('channels').includes('admin_only')) db.exec('ALTER TABLE channels ADD COLUMN admin_only INTEGER DEFAULT 0');
 db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
 CREATE TABLE IF NOT EXISTS friend_nicks (owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, target_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, nick TEXT NOT NULL, PRIMARY KEY (owner_id, target_id));
 CREATE TABLE IF NOT EXISTS daily_tasks (user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, day INTEGER NOT NULL, task TEXT NOT NULL, progress INTEGER NOT NULL DEFAULT 0, done_at INTEGER, PRIMARY KEY (user_id, day, task));
@@ -234,12 +235,20 @@ const getUser = (uid) => db.prepare('SELECT * FROM users WHERE id=?').get(uid);
 
 function canAccessChannel(userId, channel) {
   if (!channel) return false;
-  if (channel.server_id) return memberPerms(channel.server_id, userId) > 0;
+  if (channel.server_id) {
+    const perms = memberPerms(channel.server_id, userId);
+    return perms > 0 && (!channel.admin_only || has(perms, P.ADMINISTRATOR));
+  }
   return !!db.prepare('SELECT 1 FROM channel_members WHERE channel_id=? AND user_id=?').get(channel.id, userId);
 }
 function channelAudience(channel) {
   // returns socket.io room names that should receive events about this channel
-  if (channel.server_id) return [`server:${channel.server_id}`];
+  if (channel.server_id) {
+    if (!channel.admin_only) return [`server:${channel.server_id}`];
+    // admin-only room: only tell the people who can see it
+    return db.prepare('SELECT user_id FROM members WHERE server_id=?').all(channel.server_id)
+      .filter((r) => has(memberPerms(channel.server_id, r.user_id), P.ADMINISTRATOR)).map((r) => `user:${r.user_id}`);
+  }
   return db.prepare('SELECT user_id FROM channel_members WHERE channel_id=?').all(channel.id).map(r => `user:${r.user_id}`);
 }
 function serializeMessage(m) {
@@ -865,7 +874,7 @@ app.post('/api/channels/:id/read', auth, wrap(req => {
 
 // ---------------------------------------------------------------- servers
 function serverSummary(s, uid) {
-  const chans = db.prepare(`SELECT id FROM channels WHERE server_id=? AND type<>'voice'`).all(s.id);
+  const chans = db.prepare(`SELECT * FROM channels WHERE server_id=? AND type<>'voice'`).all(s.id).filter((c) => canAccessChannel(uid, c));
   const unread = chans.reduce((a, c) => a + unreadCount(uid, c.id), 0);
   return { id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, unread,
     memberCount: db.prepare('SELECT COUNT(*) n FROM members WHERE server_id=?').get(s.id).n, ownerId: s.owner_id,
@@ -880,8 +889,9 @@ function serverDetail(sid, uid) {
   const perms = memberPerms(sid, uid);
   if (!s || !perms) throw fail(404, 'Community not found');
   const channels = db.prepare('SELECT * FROM channels WHERE server_id=? ORDER BY position, created_at').all(sid)
+    .filter((c) => !c.admin_only || has(perms, P.ADMINISTRATOR))
     .map(c => ({ id: c.id, type: c.type, name: c.name, topic: c.topic, position: c.position,
-      categoryId: c.category_id || null, locked: !!c.locked, unread: c.type !== 'voice' ? unreadCount(uid, c.id) : 0 }));
+      categoryId: c.category_id || null, locked: !!c.locked, adminOnly: !!c.admin_only, unread: c.type !== 'voice' ? unreadCount(uid, c.id) : 0 }));
   const categories = db.prepare('SELECT * FROM categories WHERE server_id=? ORDER BY position, created_at').all(sid)
     .map((c) => ({ id: c.id, name: c.name, position: c.position }));
   const roles = db.prepare('SELECT * FROM roles WHERE server_id=? ORDER BY position DESC').all(sid)
@@ -975,8 +985,8 @@ app.post('/api/servers/:id/channels', auth, wrap(req => {
   const name = sanitizeName(req.body.name, 100) || ({ text: 'New room', voice: 'Lounge', board: 'Board', gallery: 'Gallery' })[type];
   const pos = (db.prepare(`SELECT MAX(position) p FROM channels WHERE server_id=? AND type${type === 'voice' ? "='voice'" : "<>'voice'"}`).get(sid).p ?? (type === 'voice' ? 99 : -1)) + 1;
   const cat = req.body.categoryId && db.prepare('SELECT id FROM categories WHERE id=? AND server_id=?').get(req.body.categoryId, sid);
-  db.prepare('INSERT INTO channels (id,server_id,type,name,topic,position,category_id,created_at,locked) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run(id(), sid, type, name, String(req.body.topic || '').slice(0, 300), pos, cat ? cat.id : null, now(), type !== 'voice' && req.body.locked ? 1 : 0);
+  db.prepare('INSERT INTO channels (id,server_id,type,name,topic,position,category_id,created_at,locked,admin_only) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(id(), sid, type, name, String(req.body.topic || '').slice(0, 300), pos, cat ? cat.id : null, now(), type !== 'voice' && req.body.locked ? 1 : 0, req.body.adminOnly ? 1 : 0);
   io.to(`server:${sid}`).emit('server:update', { serverId: sid });
   return { ok: true };
 }));
@@ -992,7 +1002,10 @@ app.patch('/api/channels/:id', auth, wrap(req => {
     categoryId = cat ? cat.id : null;
   }
   const locked = req.body.locked !== undefined ? (c.type !== 'voice' && req.body.locked ? 1 : 0) : (c.locked || 0);
-  db.prepare('UPDATE channels SET name=?, topic=?, position=?, category_id=?, locked=? WHERE id=?').run(name, topic, position, categoryId, locked, c.id);
+  const adminOnly = req.body.adminOnly !== undefined ? (req.body.adminOnly ? 1 : 0) : (c.admin_only || 0);
+  db.prepare('UPDATE channels SET name=?, topic=?, position=?, category_id=?, locked=?, admin_only=? WHERE id=?').run(name, topic, position, categoryId, locked, adminOnly, c.id);
+  // kick non-admins out of a lounge that just became admin-only
+  if (adminOnly && !c.admin_only && voiceRooms.get(c.id)) for (const [sockId, p] of voiceRooms.get(c.id)) if (!has(memberPerms(c.server_id, p.userId), P.ADMINISTRATOR)) { const sk = io.sockets.sockets.get(sockId); if (sk) leaveVoice(sk); }
   io.to(`server:${c.server_id}`).emit('server:update', { serverId: c.server_id });
   return { ok: true };
 }));
@@ -1615,18 +1628,19 @@ app.get('/api/activity', auth, wrap(req => {
 }));
 app.get('/api/servers/:id/pulse', auth, wrap(req => {
   const sid = req.params.id; if (!memberPerms(sid, req.user.id)) throw fail(404, 'Community not found');
+  const hide = has(memberPerms(sid, req.user.id), P.ADMINISTRATOR) ? '' : ' AND COALESCE(c.admin_only,0)=0';
   const t = now();
-  const msgsToday = db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>?`).get(sid, t - DAY).n;
-  const msgsWeek = db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>?`).get(sid, t - 7 * DAY).n;
-  const active = db.prepare(`SELECT m.author_id u, COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>? GROUP BY m.author_id ORDER BY n DESC LIMIT 5`).all(sid, t - 7 * DAY)
+  const msgsToday = db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=?${hide} AND m.created_at>?`).get(sid, t - DAY).n;
+  const msgsWeek = db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=?${hide} AND m.created_at>?`).get(sid, t - 7 * DAY).n;
+  const active = db.prepare(`SELECT m.author_id u, COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=?${hide} AND m.created_at>? GROUP BY m.author_id ORDER BY n DESC LIMIT 5`).all(sid, t - 7 * DAY)
     .map(r => ({ user: publicUser(getUser(r.u)), count: r.n })).filter(r => r.user);
-  const rooms = db.prepare(`SELECT c.id, c.name, COUNT(m.id) n, MAX(m.created_at) last FROM channels c LEFT JOIN messages m ON m.channel_id=c.id AND m.created_at>? WHERE c.server_id=? AND c.type<>'voice' AND m.thread_id IS NULL GROUP BY c.id ORDER BY n DESC, c.position LIMIT 5`).all(t - 7 * DAY, sid)
+  const rooms = db.prepare(`SELECT c.id, c.name, COUNT(m.id) n, MAX(m.created_at) last FROM channels c LEFT JOIN messages m ON m.channel_id=c.id AND m.created_at>? WHERE c.server_id=?${hide} AND c.type<>'voice' AND m.thread_id IS NULL GROUP BY c.id ORDER BY n DESC, c.position LIMIT 5`).all(t - 7 * DAY, sid)
     .map(r => ({ id: r.id, name: r.name, count: r.n, last: r.last }));
   const newest = db.prepare('SELECT user_id, joined_at FROM members WHERE server_id=? ORDER BY joined_at DESC LIMIT 6').all(sid).map(r => ({ user: publicUser(getUser(r.user_id)), joinedAt: r.joined_at })).filter(r => r.user);
-  const threads = db.prepare(`SELECT m.* FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND c.type='board' AND m.thread_id IS NULL ORDER BY m.created_at DESC LIMIT 4`).all(sid).map(serializeMessage);
-  const photos = db.prepare(`SELECT m.* FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND c.type='gallery' AND m.thread_id IS NULL AND m.attachment_type='image' ORDER BY m.created_at DESC LIMIT 6`).all(sid).map(serializeMessage);
+  const threads = db.prepare(`SELECT m.* FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=?${hide} AND c.type='board' AND m.thread_id IS NULL ORDER BY m.created_at DESC LIMIT 4`).all(sid).map(serializeMessage);
+  const photos = db.prepare(`SELECT m.* FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=?${hide} AND c.type='gallery' AND m.thread_id IS NULL AND m.attachment_type='image' ORDER BY m.created_at DESC LIMIT 6`).all(sid).map(serializeMessage);
   const newMembers = db.prepare('SELECT COUNT(*) n FROM members WHERE server_id=? AND joined_at>?').get(sid, t - 7 * DAY).n;
-  const days = []; for (let i = 6; i >= 0; i--) { const a = (dayNum(t) - i) * DAY; days.push(db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=? AND m.created_at>=? AND m.created_at<?`).get(sid, a, a + DAY).n); }
+  const days = []; for (let i = 6; i >= 0; i--) { const a = (dayNum(t) - i) * DAY; days.push(db.prepare(`SELECT COUNT(*) n FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=?${hide} AND m.created_at>=? AND m.created_at<?`).get(sid, a, a + DAY).n); }
   return { msgsToday, msgsWeek, active, rooms, newMembers, days, newest, threads, photos };
 }));
 
