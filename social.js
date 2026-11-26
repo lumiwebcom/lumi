@@ -12,7 +12,9 @@ function socialNavItems(v) {
       <div style="width:48px;display:grid;place-items:center">${icon('bell')}</div><div class="meta"><div class="n bold">Activity</div></div>
       ${S.activityUnread ? `<span class="count">${S.activityUnread}</span>` : ''}</div>
     <div class="nav-item ${v.type === 'sparks' ? 'active' : ''}" data-snav="/sparks">
-      <div style="width:48px;display:grid;place-items:center" class="sp-nav">${icon('gem')}</div><div class="meta"><div class="n bold">Sparks</div></div>${S.me?.sparks ? '' : '<span class="sp-new">$5.99</span>'}</div>`;
+      <div style="width:48px;display:grid;place-items:center" class="sp-nav">${icon('gem')}</div><div class="meta"><div class="n bold">Sparks</div></div>${S.me?.sparks ? '' : '<span class="sp-new">$5.99</span>'}</div>
+    ${window.lumiDesktop ? '' : `<a class="nav-item dl-nav" href="${PC_DOWNLOAD}" target="_blank" rel="noopener">
+      <div style="width:48px;display:grid;place-items:center">${icon('download')}</div><div class="meta"><div class="n bold">Download app</div></div><span class="dl-os">Windows</span></a>`}`;
 }
 
 // ---------- post card

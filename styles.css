@@ -1345,3 +1345,5 @@ img.mark { border-radius: 24%; object-fit: cover; }
 .ch-tabs button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; border: 0; border-radius: 9px; background: none; color: var(--text2); font: 600 13.5px var(--font); cursor: pointer; }
 .ch-tabs button.sel { background: var(--bg); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.18); }
 [data-chpane][hidden] { display: none !important; }
+.dl-nav { text-decoration: none; color: inherit; }
+.dl-os { margin-left: auto; font-size: 11px; font-weight: 700; color: var(--text3); padding: 2px 7px; border-radius: 6px; background: var(--bg2); }

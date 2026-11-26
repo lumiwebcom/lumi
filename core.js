@@ -45,6 +45,7 @@ const ICONS = {
   trash: '<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>',
   star: '<path d="M12 2.5l2.1 5.6 5.9.4-4.6 3.8 1.5 5.8L12 14.9l-4.9 3.2 1.5-5.8L4 8.5l5.9-.4z"/>',
   trend: '<path d="m3 17 6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+  download: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
   info: '<circle cx="12" cy="12" r="9.5"/><path d="M12 11v6M12 7.5h.01"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
