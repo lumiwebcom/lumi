@@ -739,6 +739,7 @@ function openAdminPanel() {
       if (owner && !u.siteRole && !u.bannedAt) acts.push(`<button class="btn ${u.sparksUntil ? 'sp-has' : ''}" data-give-sparks="${u.id}" data-tip="${u.sparksUntil ? 'Has Sparks' : 'Give Sparks'}">${icon('gem', 'sm')}</button>`);
       if (u.bannedAt) acts.push(`<button class="btn" data-unban="${u.id}">Unban</button>`);
       else if (canBan) acts.push(`<button class="btn danger" data-ban="${u.id}">${icon('hammer', 'sm')} Ban</button>`);
+      if (owner && !me && u.siteRole !== 'owner') acts.push(`<button class="btn danger" data-delacct="${u.id}" data-tip="Delete account">${icon('trash', 'sm')}</button>`);
       const role = u.siteRole || 'member';
       if (u.primary) acts.unshift(`<span class="role-pill owner">${POTION.replace('<svg', '<svg style="width:14px;height:14px"')} Main owner</span>`);
       else if (owner && !me && (role !== 'owner' || r.viewerPrimary) && !u.bannedAt)
@@ -749,7 +750,7 @@ function openAdminPanel() {
       else if (role !== 'member') acts.unshift(`<span class="role-pill ${role}">${role === 'owner' ? 'Owner' : 'Admin'}</span>`);
       return `<div class="row-line ${u.bannedAt ? 'is-banned' : ''}">${avatar(u, 42)}<div class="meta">
         <div class="bold">${esc(u.displayName)}${roleBadge(u)} <span class="muted" style="font-weight:400">@${esc(u.username)}</span>${me ? ' <span class="small muted">(you)</span>' : ''}</div>
-        <div class="small muted">${u.email ? esc(u.email) + ' · ' : ''}joined ${new Date(u.createdAt).toLocaleDateString()}${u.bannedAt ? ` · <span class="ban-tag">${u.bannedUntil ? `banned · ${fmtBanLeft(u.bannedUntil - Date.now())} left (ends ${esc(fmtBanEnd(u.bannedUntil))})` : 'banned permanently'}${u.banReason ? ' — ' + esc(u.banReason) : ''}</span>` : ''}</div></div>
+        <div class="small muted">joined ${new Date(u.createdAt).toLocaleDateString()}${u.bannedAt ? ` · <span class="ban-tag">${u.bannedUntil ? `banned · ${fmtBanLeft(u.bannedUntil - Date.now())} left (ends ${esc(fmtBanEnd(u.bannedUntil))})` : 'banned permanently'}${u.banReason ? ' — ' + esc(u.banReason) : ''}</span>` : ''}</div></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${acts.join('')}</div></div>`;
     }).join('') || '<div class="empty" style="padding:30px"><p>No one matches.</p></div>';
     const act = async (fn) => { try { await fn(); load(); } catch (e) { toast(e.message, true); } };
@@ -759,6 +760,11 @@ function openAdminPanel() {
       act(async () => { await api('POST', `/api/admin/users/${u.id}/ban`, r); toast(`@${u.username} was banned ${r.minutes ? 'for ' + fmtBanLeft(r.minutes * 60000) : 'permanently'}`); });
     }));
     el.querySelectorAll('[data-give-sparks]').forEach((b) => (b.onclick = () => giveSparksMenu(b, r.users.find((x) => x.id === b.dataset.giveSparks), load)));
+    el.querySelectorAll('[data-delacct]').forEach((b) => (b.onclick = async () => {
+      const u = S.userCache[b.dataset.delacct];
+      if (!(await confirmDialog(`Delete @${u.username}’s account?`, `This permanently deletes <b>${esc(u.displayName)}</b> (@${esc(u.username)}): their messages, posts, friends, badges, and any communities they own. They’re signed out everywhere. <b>This can’t be undone.</b>`, 'Delete forever'))) return;
+      act(async () => { const r = await api('DELETE', `/api/admin/users/${u.id}`); toast(`@${u.username}’s account was deleted${r.communities ? ` (and ${r.communities} ${r.communities === 1 ? 'community' : 'communities'} they owned)` : ''}`); });
+    }));
     el.querySelectorAll('[data-unban]').forEach((b) => (b.onclick = () => act(async () => { await api('DELETE', `/api/admin/users/${b.dataset.unban}/ban`); toast('Unbanned'); })));
     el.querySelectorAll('[data-role]').forEach((sel) => (sel.onchange = async () => {
       const u = S.userCache[sel.dataset.role], to = sel.value, from = u.siteRole || 'member';

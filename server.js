@@ -1105,7 +1105,7 @@ app.get('/api/admin/users', auth, adminOnly, wrap(req => {
   if (req.query.filter === 'owners') where += " AND site_role='owner'";
   const rows = db.prepare(`SELECT * FROM users WHERE ${where} ORDER BY (site_role='owner') DESC, (site_role='admin') DESC, created_at DESC LIMIT 100`).all(...params);
   return {
-    users: rows.map((u) => ({ ...publicUser(u), email: owner ? u.email : undefined, sparksUntil: u.sparks_until && u.sparks_until > now() ? u.sparks_until : null, createdAt: u.created_at, bannedAt: u.banned_at, banReason: u.ban_reason, bannedUntil: u.ban_until || null, primary: isPrimaryOwner(u) })),
+    users: rows.map((u) => ({ ...publicUser(u), sparksUntil: u.sparks_until && u.sparks_until > now() ? u.sparks_until : null, createdAt: u.created_at, bannedAt: u.banned_at, banReason: u.ban_reason, bannedUntil: u.ban_until || null, primary: isPrimaryOwner(u) })),
     total: db.prepare('SELECT COUNT(*) n FROM users').get().n,
     bannedCount: db.prepare('SELECT COUNT(*) n FROM users WHERE banned_at IS NOT NULL').get().n,
     viewerPrimary: isPrimaryOwner(req.user), primaryOwner: PRIMARY_OWNER,
@@ -1117,6 +1117,30 @@ function assertCanModerateSite(actor, target) {
   if (target.site_role === 'owner') throw fail(403, "lumi owners can't be banned.");
   if (target.site_role === 'admin' && actor.site_role !== 'owner') throw fail(403, 'Only the owner can ban admins.');
 }
+// permanently delete an account and everything it made (owners only; can't be undone)
+app.delete('/api/admin/users/:id', auth, wrap(req => {
+  if (req.user.site_role !== 'owner') throw fail(403, 'Only lumi owners can delete accounts.');
+  const t = getUser(req.params.id);
+  if (!t) throw fail(404, 'User not found');
+  if (t.id === req.user.id) throw fail(400, "You can't delete your own account from here.");
+  if (t.site_role === 'owner') throw fail(403, "lumi owners can't be deleted.");
+  const owned = db.prepare('SELECT id FROM servers WHERE owner_id=?').all(t.id).map((r) => r.id);
+  io.to(`user:${t.id}`).emit('session:revoked');
+  setTimeout(() => io.in(`user:${t.id}`).disconnectSockets(true), 300);
+  db.exec('BEGIN');
+  try {
+    for (const sid of owned) { io.to(`server:${sid}`).emit('server:removed', { serverId: sid, reason: 'deleted' }); db.prepare('DELETE FROM servers WHERE id=?').run(sid); }
+    db.prepare('UPDATE channels SET owner_id=NULL WHERE owner_id=?').run(t.id); // group chats they started stay
+    for (const [table, col] of [['bans', 'user_id'], ['read_states', 'user_id'], ['invites', 'creator_id'], ['story_views', 'user_id'], ['gif_favs', 'user_id'], ['mod_events', 'user_id'], ['blocks', 'user_id'], ['blocks', 'blocked_id']]) {
+      try { db.prepare(`DELETE FROM ${table} WHERE ${col}=?`).run(t.id); } catch {}
+    }
+    db.prepare('DELETE FROM users WHERE id=?').run(t.id); // everything else goes with it (messages, posts, friends…)
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  io.emit('user:deleted', { userId: t.id });
+  console.log('  An owner deleted an account');
+  return { ok: true, communities: owned.length };
+}));
 app.post('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
   const t = getUser(req.params.id);
   assertCanModerateSite(req.user, t);
