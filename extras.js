@@ -222,10 +222,17 @@ function badgesRow(badges) {
   if (!badges?.length) return '';
   return `<div class="psec"><h5>Badges — ${badges.length}</h5><div class="p-badges">${badges.map((b) => badgeIcon(b, 34)).join('')}</div></div>`;
 }
-function onTasksUpdate({ tasks, completed, earned }) {
-  if (S.tasks) S.tasks.tasks = tasks;
-  if (completed) { const x = tasks.find((k) => k.id === completed); if (x) toast(`Task done: ${x.label}`); }
+// updates arrive both on the HTTP response and over the live connection: show each one once
+const _seenTask = new Set();
+function onTasksUpdate({ tasks, completed, completedAll, earned }) {
+  if (!tasks) return;
+  if (S.tasks) S.tasks.tasks = tasks; else S.tasks = { tasks, badges: [] };
+  for (const id of [...(completedAll || []), ...(completed ? [completed] : [])]) {
+    const x = tasks.find((k) => k.id === id), key = 'd' + (S.tasks.resetsAt || '') + id;
+    if (x && !_seenTask.has(key)) { _seenTask.add(key); toast(`Task done: ${x.label}`); }
+  }
   for (const b of earned || []) {
+    const key = 'b' + b.id + b.tier; if (_seenTask.has(key)) continue; _seenTask.add(key);
     toast(`New badge: ${b.name} (${b.tierName})`);
     if (S.tasks) { const i = S.tasks.badges.findIndex((y) => y.id === b.id); if (i >= 0) S.tasks.badges[i] = b; }
   }
@@ -292,6 +299,9 @@ function wireSparksAppearance(pane, redraw) {
 // ------------------------------------------------------------------ realtime
 function extrasSocket(socket) {
   socket.on('tasks:update', onTasksUpdate);
+  // calls and level-ups happen without a request of yours: catch up whenever you come back to the tab
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') loadTasks().then(() => { if (S.view.type === 'home') renderActiveNow(); }); });
+  setInterval(() => { if (document.visibilityState === 'visible') loadTasks().then(() => { if (S.view.type === 'home') renderActiveNow(); }); }, 60_000);
   socket.on('tasks:refresh', async () => { await loadTasks(); if (S.view.type === 'home') renderActiveNow(); toast('You have new daily tasks'); });
   socket.on('nicknames:update', ({ userId, nickname }) => applyNickname(userId, nickname));
   socket.on('sparks:requests', ({ quiet } = {}) => { const p = $('#ap-sparks'); if (p && !p.hidden) adminSparksPane(p); else if (S.me.siteRole === 'owner' && !quiet) toast('Someone says they paid for Sparks. Check Admin panel › Sparks.'); });

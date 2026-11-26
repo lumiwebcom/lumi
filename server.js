@@ -273,6 +273,17 @@ const server = http.createServer(app);
 const io = new Server(server, { maxHttpBufferSize: 1e6, pingInterval: 20000, pingTimeout: 40000 });
 app.post('/api/stripe/webhook', express.raw({ type: '*/*', limit: '1mb' }), (req, res) => stripeWebhook(req, res));
 app.use(express.json({ limit: '1mb' }));
+const pendingTasks = new Map(); // uid -> task progress made during the current request
+app.use('/api', (req, res, next) => {
+  if (req.method === 'GET') return next();
+  const json = res.json.bind(res);
+  res.json = (body) => {
+    const uid = req.user?.id, p = uid && pendingTasks.get(uid);
+    if (p && body && typeof body === 'object' && !Array.isArray(body)) { pendingTasks.delete(uid); body = { ...body, _tasks: p }; }
+    return json(body);
+  };
+  next();
+});
 // Front-end files live in ./public (and ./public/js). If they were uploaded flat into the
 // project root instead, serve just those known files from the root, and never anything else.
 const PUBLIC_DIR = fs.existsSync(path.join(__dirname, 'public', 'index.html')) ? path.join(__dirname, 'public') : null;
@@ -725,7 +736,7 @@ app.post('/api/channels/:id/messages', auth, wrap(req => {
   for (const r of rooms) io.to(r).emit('message:new', { message: msg, serverId: c.server_id });
   if (threadId) { const parent = serializeMessage(db.prepare('SELECT * FROM messages WHERE id=?').get(threadId)); for (const r of rooms) io.to(r).emit('message:update', { message: parent }); }
   // daily tasks + community xp
-  taskEvent(req.user.id, 'chat');
+  if (c.server_id) taskEvent(req.user.id, 'chat');
   if (c.type === 'dm' || c.type === 'group') taskEvent(req.user.id, 'dm');
   if (replyTo || threadId) taskEvent(req.user.id, 'reply');
   if (title) taskEvent(req.user.id, 'thread');
@@ -1444,15 +1455,15 @@ app.get('/api/servers/:id/pulse', auth, wrap(req => {
 // that task's badge (Bronze after 1, Silver after 5, Gold after 15). Finishing all 3 in a day counts
 // toward Daily devotee (1, 7, 30 days).
 const TASKS = {
-  chat:     { label: 'Send 10 messages', goal: 10, emoji: '💬', badge: 'Chatterbox' },
+  chat:     { label: 'Send 10 messages in a community', goal: 10, emoji: '💬', badge: 'Chatterbox' },
   react:    { label: 'React to 5 messages', goal: 5, emoji: '😄', badge: 'Reactor' },
-  voice:    { label: 'Spend 10 minutes in a call or lounge', goal: 10, emoji: '🎧', badge: 'Lounge regular' },
+  voice:    { label: 'Hang out in a call with someone for 10 minutes', goal: 10, emoji: '🎧', badge: 'Lounge regular' },
   post:     { label: 'Share a post on your feed', goal: 1, emoji: '📝', badge: 'Storyteller' },
-  comment:  { label: 'Reply to someone’s post', goal: 1, emoji: '💭', badge: 'Commentator' },
+  comment:  { label: 'Comment on a post', goal: 1, emoji: '💭', badge: 'Commentator' },
   glow:     { label: 'Glow 3 posts', goal: 3, emoji: '⭐', badge: 'Hype squad' },
   moment:   { label: 'Share a moment', goal: 1, emoji: '📸', badge: 'Moment maker' },
-  dm:       { label: 'Send 5 messages in your DMs', goal: 5, emoji: '✉️', badge: 'Pen pal' },
-  reply:    { label: 'Reply to 3 messages', goal: 3, emoji: '↩️', badge: 'Good listener' },
+  dm:       { label: 'Send 5 DMs', goal: 5, emoji: '✉️', badge: 'Pen pal' },
+  reply:    { label: 'Use Reply on 3 messages', goal: 3, emoji: '↩️', badge: 'Good listener' },
   thread:   { label: 'Start a thread on a board', goal: 1, emoji: '🧵', badge: 'Thread starter' },
   gallery:  { label: 'Post a photo in a gallery', goal: 1, emoji: '🖼️', badge: 'Shutterbug' },
   stargaze: { label: 'Look around Stargaze', goal: 1, emoji: '🔭', badge: 'Stargazer' },
@@ -1463,6 +1474,10 @@ const TASKS = {
   level:    { label: 'Level up in a community', goal: 1, emoji: '📈', badge: 'Climber' },
   nickname: { label: 'Give a friend a nickname', goal: 1, emoji: '🏷️', badge: 'Name tag' },
 };
+// tasks in the same group come from the same kind of action, so a day never gets two from one group
+const TASK_GROUPS = { chat: 'talk', dm: 'talk', reply: 'talk', thread: 'rooms', gallery: 'rooms', post: 'feed', comment: 'feed',
+  glow: 'feed', moment: 'moments', friend: 'people', nickname: 'people', status: 'me', react: 'react', voice: 'voice',
+  stargaze: 'explore', join: 'explore', invite: 'grow', level: 'grow' };
 const DEVOTEE = { label: 'Finish all of a day’s tasks', emoji: '🗓️', badge: 'Daily devotee' };
 const TIER_AT = { task: [1, 5, 15, 40], devotee: [1, 7, 30, 100] };
 const TIER_NAMES = ['', 'Bronze', 'Silver', 'Gold', 'Diamond'];
@@ -1492,11 +1507,17 @@ setTimeout(() => { // one-time: new tasks for everyone
 }, 1000);
 function pickTasks(uid, day) {
   // stable shuffle seeded by user + day (+ reset round), so everyone gets a different mix each day
-  const keys = Object.keys(TASKS);
   let seed = 0; for (const ch of uid + ':' + day + (taskRound() ? ':' + taskRound() : '')) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
   const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
-  for (let i = keys.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [keys[i], keys[j]] = [keys[j], keys[i]]; }
-  return keys.slice(0, TASKS_PER_DAY);
+  // skip anything from the last 2 days and badges already at Diamond; lower badges are more likely to come up
+  const recent = new Set(db.prepare('SELECT task FROM daily_tasks WHERE user_id=? AND day>=? AND day<?').all(uid, day - 2, day).map((r) => r.task));
+  const tierOf = (k) => db.prepare('SELECT tier FROM user_badges WHERE user_id=? AND badge=?').get(uid, k)?.tier || 0;
+  const pool = (strict) => Object.keys(TASKS).filter((k) => !strict || (!recent.has(k) && tierOf(k) < MAX_TIER));
+  let keys = pool(true); if (keys.length < 8) keys = pool(false);
+  const scored = keys.map((k) => ({ k, s: rnd() * (MAX_TIER + 1 - tierOf(k)) })).sort((a, b) => b.s - a.s);
+  const out = [], used = new Set();
+  for (const { k } of scored) { if (out.length >= TASKS_PER_DAY) break; if (used.has(TASK_GROUPS[k])) continue; used.add(TASK_GROUPS[k]); out.push(k); }
+  return out;
 }
 function todaysTasks(uid) {
   const day = taskDay();
@@ -1553,7 +1574,11 @@ function taskEvent(uid, key, n = 1) {
       }
       if (earned.length) broadcastUserUpdate(uid, publicUser(getUser(uid)));
     }
-    io.to(`user:${uid}`).emit('tasks:update', { tasks: tasksState(uid), completed: done ? key : null, earned });
+    const payload = { tasks: tasksState(uid), completed: done ? key : null, earned };
+    const p = pendingTasks.get(uid) || { completedAll: [], earned: [] };
+    p.tasks = payload.tasks; if (done) p.completedAll.push(key); p.earned.push(...earned); pendingTasks.set(uid, p);
+    setTimeout(() => pendingTasks.delete(uid), 5000).unref?.();
+    io.to(`user:${uid}`).emit('tasks:update', payload);
   } catch (e) { console.error('task event failed:', e.message); }
 }
 app.get('/api/tasks', auth, wrap(req => {
