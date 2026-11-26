@@ -308,7 +308,7 @@ app.use('/api', (req, res, next) => {
 // project root instead, serve just those known files from the root, and never anything else.
 const PUBLIC_DIR = fs.existsSync(path.join(__dirname, 'public', 'index.html')) ? path.join(__dirname, 'public') : null;
 const FLAT_FILES = { '/index.html': 'index.html', '/styles.css': 'styles.css', '/favicon.svg': 'favicon.svg' };
-for (const f of ['core', 'auth', 'views', 'social', 'extras', 'community', 'modals', 'call', 'main']) FLAT_FILES[`/js/${f}.js`] = `${f}.js`;
+for (const f of ['core', 'auth', 'views', 'social', 'extras', 'gifs', 'community', 'modals', 'call', 'main']) FLAT_FILES[`/js/${f}.js`] = `${f}.js`;
 const INDEX_FILE = PUBLIC_DIR ? path.join(PUBLIC_DIR, 'index.html') : path.join(__dirname, 'index.html');
 // fingerprint of the front-end: changes whenever a new version is deployed (drives the in-app "Update" button)
 const BUILD_ID = (() => {
@@ -358,9 +358,13 @@ function auth(req, res, next) {
   if (!s.last_seen || now() - s.last_seen > 5 * 60_000) db.prepare('UPDATE sessions SET last_seen=?, ua=? WHERE token=?').run(now(), String(req.headers['user-agent'] || s.ua || '').slice(0, 300), s.token);
   req.user = u; req.session = s; next();
 }
+const wrapFail = (res, e) => { if (!e.status) console.error(e); if (!res.headersSent) res.status(e.status || 500).json({ error: e.status ? e.message : 'Server error', ...(e.status && e.extra ? e.extra : {}) }); };
 const wrap = (fn) => (req, res) => {
-  try { const out = fn(req, res); if (out !== undefined && !res.headersSent) res.json(out); }
-  catch (e) { if (!e.status) console.error(e); if (!res.headersSent) res.status(e.status || 500).json({ error: e.status ? e.message : 'Server error', ...(e.status && e.extra ? e.extra : {}) }); }
+  try {
+    const out = fn(req, res);
+    if (out && typeof out.then === 'function') return out.then((v) => { if (v !== undefined && !res.headersSent) res.json(v); }, (e) => wrapFail(res, e));
+    if (out !== undefined && !res.headersSent) res.json(out);
+  } catch (e) { wrapFail(res, e); }
 };
 const fail = (status, message, extra) => Object.assign(new Error(message), { status, extra });
 // site bans: banned_at set + optional ban_until (ms). Expired bans are lifted on first check.
@@ -1050,6 +1054,79 @@ app.post('/api/admin/users/:id/ban', auth, adminOnly, wrap(req => {
   broadcastUserUpdate(t.id, publicUser(getUser(t.id)));
   return { ok: true };
 }));
+// ---------------------------------------------------------------- GIFs
+// Search goes through lumi's server so the API key stays secret. Uses KLIPY (KLIPY_API_KEY),
+// or GIPHY (GIPHY_API_KEY) if that's what's set. Only family-friendly results are asked for.
+db.exec(`CREATE TABLE IF NOT EXISTS gif_favs (user_id TEXT NOT NULL, url TEXT NOT NULL, preview TEXT, w INTEGER, h INTEGER, at INTEGER, PRIMARY KEY (user_id, url))`);
+const GIF_HOSTS = /(^|\.)(klipy\.com|klipy\.co|giphy\.com)$/i;
+const isGifUrl = (u) => { try { const x = new URL(u); return x.protocol === 'https:' && GIF_HOSTS.test(x.hostname); } catch { return false; } };
+const gifProvider = () => (process.env.KLIPY_API_KEY ? 'klipy' : process.env.GIPHY_API_KEY ? 'giphy' : null);
+const GIF_TERMS = ['hello', 'lol', 'love', 'happy birthday', 'yes', 'no', 'sad', 'wow', 'dance', 'thank you', 'facepalm', 'good night'];
+const gifCache = new Map();
+function mediaLeaves(o, p = '', out = []) {
+  if (!o || typeof o !== 'object') return out;
+  if (typeof o.url === 'string' && o.url.startsWith('https://')) {
+    const ext = (o.url.split('?')[0].match(/\.(gif|webp|mp4|webm|jpe?g|png)$/i) || [])[1]?.toLowerCase();
+    out.push({ url: o.url, w: Number(o.width || o.dims?.[0]) || 0, h: Number(o.height || o.dims?.[1]) || 0, ext, path: p.toLowerCase() });
+  }
+  for (const [k, v] of Object.entries(o)) if (v && typeof v === 'object') mediaLeaves(v, p + '/' + k, out);
+  return out;
+}
+function pickGif(item) {
+  const all = mediaLeaves(item).filter((m) => isGifUrl(m.url) && ['gif', 'webp'].includes(m.ext));
+  if (!all.length) return null;
+  const sizeOf = (m) => m.w || (/\/(xs|tiny|nano)/.test(m.path) ? 120 : /\/(sm|small|fixed_width)/.test(m.path) ? 220 : /\/(md|medium|downsized)/.test(m.path) ? 400 : 700);
+  const near = (target) => [...all].sort((a, b) => Math.abs(sizeOf(a) - target) - Math.abs(sizeOf(b) - target) || (a.ext === 'webp' ? -1 : 1))[0];
+  const prev = near(220), full = near(420);
+  return { id: String(item.id ?? item.slug ?? full.url), title: String(item.title || item.content_description || '').slice(0, 100),
+    preview: prev.url, url: full.url, w: full.w || prev.w || 1, h: full.h || prev.h || 1 };
+}
+async function gifQuery(kind, q, page, uid) {
+  const prov = gifProvider(); if (!prov) throw fail(503, 'GIFs aren’t switched on yet.');
+  const per = 24; let url;
+  if (prov === 'klipy') {
+    const qs = new URLSearchParams({ page: String(page), per_page: String(per), customer_id: crypto.createHash('sha256').update('lumi:' + uid).digest('hex').slice(0, 32), locale: 'en_US', rating: 'pg', content_filter: 'medium' });
+    if (q) qs.set('q', q);
+    url = `${process.env.KLIPY_API_BASE || 'https://api.klipy.com'}/api/v1/${encodeURIComponent(process.env.KLIPY_API_KEY)}/gifs/${kind}?${qs}`;
+  } else {
+    const qs = new URLSearchParams({ api_key: process.env.GIPHY_API_KEY, limit: String(per), offset: String((page - 1) * per), rating: 'pg', lang: 'en' });
+    if (q) qs.set('q', q);
+    url = `https://api.giphy.com/v1/gifs/${kind}?${qs}`;
+  }
+  const key = `${kind}|${q}|${page}`, hit = gifCache.get(key);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.data;
+  const r = await fetch(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+  if (!r || !r.ok) throw fail(502, 'Couldn’t load GIFs right now. Try again in a moment.');
+  const body = await r.json().catch(() => ({}));
+  const list = Array.isArray(body.data) ? body.data : Array.isArray(body.data?.data) ? body.data.data : Array.isArray(body.results) ? body.results : [];
+  const items = list.filter((x) => !x.type || /gif/i.test(x.type)).map(pickGif).filter(Boolean);
+  const data = { items, more: items.length >= per / 2 && page < 20 };
+  gifCache.set(key, { at: Date.now(), data });
+  if (gifCache.size > 500) gifCache.delete(gifCache.keys().next().value);
+  return data;
+}
+app.get('/api/gifs/home', auth, wrap(async (req) => {
+  const favs = db.prepare('SELECT preview FROM gif_favs WHERE user_id=? ORDER BY at DESC LIMIT 1').get(req.user.id);
+  if (!gifProvider()) return { enabled: false, favPreview: favs?.preview || null, categories: [] };
+  const first = async (kind, q) => { try { return (await gifQuery(kind, q, 1, req.user.id)).items[0]?.preview || null; } catch { return null; } };
+  const [trending, ...cats] = await Promise.all([first('trending', ''), ...GIF_TERMS.map((t) => first('search', t))]);
+  return { enabled: true, favPreview: favs?.preview || null, trending, categories: GIF_TERMS.map((term, i) => ({ term, preview: cats[i] })) };
+}));
+app.get('/api/gifs/search', auth, wrap(async (req) => {
+  rateLimit('gif:' + req.user.id, 120, 60_000);
+  const q = String(req.query.q || '').trim().slice(0, 60), page = Math.max(1, Math.min(20, Number(req.query.page) || 1));
+  if (moderation.isNsfwText(q)) return { items: [], more: false };
+  return gifQuery(q ? 'search' : 'trending', q, page, req.user.id);
+}));
+app.get('/api/gifs/favorites', auth, wrap((req) => ({ items: db.prepare('SELECT url, preview, w, h FROM gif_favs WHERE user_id=? ORDER BY at DESC LIMIT 300').all(req.user.id) })));
+app.put('/api/gifs/favorites', auth, wrap((req) => {
+  const { url, preview, w, h } = req.body || {};
+  if (!isGifUrl(url) || (preview && !isGifUrl(preview))) throw fail(400, 'That isn’t a GIF.');
+  db.prepare('INSERT OR REPLACE INTO gif_favs VALUES (?,?,?,?,?,?)').run(req.user.id, url, preview || url, Number(w) || 1, Number(h) || 1, now());
+  return { ok: true };
+}));
+app.delete('/api/gifs/favorites', auth, wrap((req) => { db.prepare('DELETE FROM gif_favs WHERE user_id=? AND url=?').run(req.user.id, String(req.query.url || '')); return { ok: true }; }));
+
 // ---- automatic NSFW moderation
 db.exec(`CREATE TABLE IF NOT EXISTS mod_events (id TEXT PRIMARY KEY, user_id TEXT, server_id TEXT, kind TEXT, score REAL, action TEXT, at INTEGER)`);
 const NSFW_BLOCK = Number(process.env.NSFW_BLOCK || 0.5), NSFW_BAN = Number(process.env.NSFW_BAN || 0.7), NSFW_SERVER_FLAGS = 3;

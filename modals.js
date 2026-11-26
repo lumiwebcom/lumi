@@ -412,7 +412,7 @@ async function openProfile(uid, serverId) {
 
 // ------------------------------------------------------------------ user settings
 function openUserSettings(tab = 'profile') {
-  const tabs = [['profile', 'Edit profile', 'user'], ['account', 'Account', 'lock'], ['devices', 'Devices', 'screen'], ['appearance', 'Appearance', 'moon'], ['sparks', 'Sparks', 'gem'], ['notifications', 'Notifications', 'bell'], ['voice', 'Voice & video', 'mic']];
+  const tabs = [['profile', 'Edit profile', 'user'], ['account', 'Account', 'lock'], ['devices', 'Devices', 'screen'], ['appearance', 'Appearance', 'moon'], ['chat', 'Chat', 'chat'], ['sparks', 'Sparks', 'gem'], ['notifications', 'Notifications', 'bell'], ['voice', 'Voice & video', 'mic']];
   const m = openModal({ title: 'Settings', cls: 'wide', body: `<nav class="settings-nav"><div class="lbl">User settings</div>${tabs.map(([k, l, i]) => `<button data-tab="${k}">${icon(i, 'sm')} ${l}</button>`).join('')}
     <div class="lbl" style="margin-top:12px"></div><button data-tab="logout" class="dz">${icon('logout', 'sm')} Log out</button></nav><div class="settings-pane" id="us-pane"></div>` });
   const pane = m.el.querySelector('#us-pane');
@@ -420,7 +420,7 @@ function openUserSettings(tab = 'profile') {
     if (t === 'logout') return logout();
     if (t === 'sparks') { m.close(); return navigate('/sparks'); }
     m.el.querySelectorAll('.settings-nav [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
-    ({ profile: usProfile, account: usAccount, devices: usDevices, appearance: usAppearance, notifications: usNotifications, voice: usVoice })[t](pane, m);
+    ({ profile: usProfile, account: usAccount, devices: usDevices, appearance: usAppearance, chat: usChat, notifications: usNotifications, voice: usVoice })[t](pane, m);
   };
   m.el.querySelectorAll('.settings-nav [data-tab]').forEach((b) => (b.onclick = () => show(b.dataset.tab)));
   show(tab);
@@ -467,11 +467,35 @@ function usAppearance(pane) {
   pane.querySelectorAll('[data-theme]').forEach((b) => (b.onclick = () => { S.settings.theme = b.dataset.theme; saveSettings(); applyTheme(); usAppearance(pane); }));
   wireSparksAppearance(pane, () => usAppearance(pane));
 }
+// a row with a label, a description and an on/off switch, saved to settings[key]
+const setSwitch = (key, title, desc, def = true) => `<div class="perm"><div><div class="bold">${title}</div><div class="d">${desc}</div></div><label class="switch"><input type="checkbox" data-set="${key}" data-def="${def ? 1 : 0}" ${(S.settings[key] ?? def) ? 'checked' : ''}><span></span></label></div>`;
+function wireSwitches(pane, after) {
+  pane.querySelectorAll('[data-set]').forEach((i) => (i.onchange = () => { S.settings[i.dataset.set] = i.checked; saveSettings(); applyChatPrefs(); after?.(i.dataset.set); }));
+}
+function usChat(pane) {
+  const size = S.settings.textSize || 'md';
+  pane.innerHTML = `<h2>Chat</h2>
+    <h4>Message text size</h4><div class="choice-grid" style="grid-template-columns:repeat(4,1fr)">
+      ${[['sm', 'Small'], ['md', 'Default'], ['lg', 'Large'], ['xl', 'Extra large']].map(([k, l]) => `<button class="choice ${size === k ? 'sel' : ''}" data-size="${k}"><span class="ts-demo ts-${k}">Aa</span>${l}</button>`).join('')}</div>
+    <h4>Messages</h4>
+    ${setSwitch('enterSends', 'Enter sends the message', 'Turn off to make Enter start a new line. Then send with Ctrl+Enter (⌘+Enter on Mac).')}
+    ${setSwitch('compact', 'Compact mode', 'Fit more messages on screen with tighter spacing.', false)}
+    ${setSwitch('clock24', '24-hour clock', 'Show times like 18:30 instead of 6:30 PM.', false)}
+    ${setSwitch('showGifs', 'Show GIFs in chat', 'Turn off to show a small “GIF” link instead of playing GIFs.')}
+    <h4>Privacy</h4>
+    ${setSwitch('showTyping', 'Show when I’m typing', 'Let others see “typing…” while you write a message.')}
+    <h4>Accessibility</h4>
+    ${setSwitch('reduceMotion', 'Reduce motion', 'Turn off most animations and transitions.', false)}`;
+  pane.querySelectorAll('[data-size]').forEach((b) => (b.onclick = () => { S.settings.textSize = b.dataset.size; saveSettings(); applyChatPrefs(); usChat(pane); }));
+  wireSwitches(pane, (k) => { if (k === 'clock24') { try { renderMessages(); } catch {} } });
+}
 function usNotifications(pane) {
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   pane.innerHTML = `<h2>Notifications</h2>
     <div class="perm"><div><div class="bold">Desktop notifications</div><div class="d">Get notified about DMs and @mentions when Lumi isn't focused.${perm === 'denied' ? ' <b>Blocked in your browser settings.</b>' : ''}</div></div><label class="switch"><input type="checkbox" id="n-desk" ${S.settings.notifications && perm === 'granted' ? 'checked' : ''} ${perm === 'denied' || perm === 'unsupported' ? 'disabled' : ''}><span></span></label></div>
-    <div class="perm"><div><div class="bold">Sounds</div><div class="d">Play sounds for new messages, calls, and joining voice.</div></div><label class="switch"><input type="checkbox" id="n-snd" ${S.settings.sounds ? 'checked' : ''}><span></span></label></div>`;
+    <div class="perm"><div><div class="bold">Sounds</div><div class="d">Play sounds for new messages, calls, and joining voice.</div></div><label class="switch"><input type="checkbox" id="n-snd" ${S.settings.sounds ? 'checked' : ''}><span></span></label></div>
+    ${setSwitch('notifPreview', 'Show message text', 'Include what the message says in desktop notifications. Turn off for privacy.')}`;
+  wireSwitches(pane);
   pane.querySelector('#n-desk').onchange = async (e) => {
     if (e.target.checked && Notification.permission !== 'granted') { const p = await Notification.requestPermission(); if (p !== 'granted') { e.target.checked = false; return; } }
     S.settings.notifications = e.target.checked; saveSettings();
@@ -486,12 +510,16 @@ async function usVoice(pane) {
   pane.innerHTML = `<h2>Voice & video</h2>
     <div class="field"><label>Microphone</label><select class="select" id="v-mic"><option value="">Default</option>${opts('audioinput', S.settings.micId)}</select></div>
     <div class="field"><label>Camera</label><select class="select" id="v-cam"><option value="">Default</option>${opts('videoinput', S.settings.camId)}</select></div>
+    ${setSwitch('echoCancel', 'Echo cancellation', 'Stop others from hearing themselves through your speakers.')}
+    ${setSwitch('autoGain', 'Automatic volume', 'Keep your mic at a steady volume.')}
+    ${setSwitch('joinMuted', 'Join calls muted', 'Your mic starts off when you join a call or lounge.', false)}
     <div class="perm"><div><div class="bold">Noise suppression</div><div class="d">Filter background noise from your mic.</div></div><label class="switch"><input type="checkbox" id="v-ns" ${S.settings.noiseSuppression !== false ? 'checked' : ''}><span></span></label></div>
     <h4>Mic test</h4><button class="btn" data-test>Let's check</button><div style="height:8px;border-radius:4px;background:var(--bg3);margin-top:10px;overflow:hidden"><div id="v-meter" style="height:100%;width:0;background:var(--ig);transition:width .08s"></div></div>
     <p class="hint">Device names appear after you allow microphone/camera access once.</p>`;
   pane.querySelector('#v-mic').onchange = (e) => { S.settings.micId = e.target.value; saveSettings(); };
   pane.querySelector('#v-cam').onchange = (e) => { S.settings.camId = e.target.value; saveSettings(); };
   pane.querySelector('#v-ns').onchange = (e) => { S.settings.noiseSuppression = e.target.checked; saveSettings(); };
+  wireSwitches(pane);
   pane.querySelector('[data-test]').onclick = async (e) => {
     try {
       const st = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints() });

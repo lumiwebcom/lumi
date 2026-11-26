@@ -5,7 +5,7 @@ const Call = { active: null, tiles: new Map(), ring: null, meters: new Map(), me
 function rtcConfig() { return { iceServers: S.config.iceServers || [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }] }; }
 function audioConstraints() {
   const ns = S.settings.noiseSuppression !== false;
-  return { echoCancellation: true, noiseSuppression: ns, autoGainControl: true, ...(S.settings.micId ? { deviceId: { ideal: S.settings.micId } } : {}) };
+  return { echoCancellation: S.settings.echoCancel !== false, noiseSuppression: ns, autoGainControl: S.settings.autoGain !== false, ...(S.settings.micId ? { deviceId: { ideal: S.settings.micId } } : {}) };
 }
 function videoConstraints() { return { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 }, ...(S.settings.camId ? { deviceId: { ideal: S.settings.camId } } : {}) }; }
 const currentVideoTrack = () => { const c = Call.active; return !c ? null : c.screen ? c.screenTrack : c.video ? c.camTrack : null; };
@@ -24,7 +24,7 @@ async function joinCall(channelId, { video = false } = {}) {
   }
   const c = Call.active = {
     channelId, local, audioTrack: local.getAudioTracks()[0] || null, camTrack: local.getVideoTracks()[0] || null, screenTrack: null,
-    peers: new Map(), muted: !local.getAudioTracks().length || !!S.selfMute, deafened: !!S.selfDeaf, video: !!local.getVideoTracks().length, screen: false, startedAt: Date.now(),
+    peers: new Map(), muted: !local.getAudioTracks().length || !!S.selfMute || !!S.settings.joinMuted, deafened: !!S.selfDeaf, video: !!local.getVideoTracks().length, screen: false, startedAt: Date.now(),
   };
   if (c.audioTrack) c.audioTrack.enabled = !c.muted;
   socket.emit('voice:join', { channelId }, (res) => {

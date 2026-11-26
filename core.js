@@ -43,6 +43,8 @@ const ICONS = {
   reply: '<path d="m9 14-5-5 5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   trash: '<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>',
+  star: '<path d="M12 2.5l2.1 5.6 5.9.4-4.6 3.8 1.5 5.8L12 14.9l-4.9 3.2 1.5-5.8L4 8.5l5.9-.4z"/>',
+  trend: '<path d="m3 17 6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
   info: '<circle cx="12" cy="12" r="9.5"/><path d="M12 11v6M12 7.5h.01"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
@@ -108,7 +110,7 @@ function serverIcon(s) {
 }
 
 // ------------------------------------------------------------------ time
-function fmtTime(ts) { return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+function fmtTime(ts) { return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...(S.settings?.clock24 ? { hourCycle: 'h23' } : {}) }); }
 function fmtDay(ts) {
   const d = new Date(ts), t = new Date(); const y = new Date(); y.setDate(t.getDate() - 1);
   if (d.toDateString() === t.toDateString()) return 'Today';
@@ -213,7 +215,16 @@ const S = {
 function saveSettings() { localStorage.setItem('lumi.settings', JSON.stringify(S.settings)); }
 function isOnline(uid) { if (S.me && uid === S.me.id) return true; return !!S.presence[uid]; }
 function cacheUser(u) { if (!u) return u; S.userCache[u.id] = { ...(S.userCache[u.id] || {}), ...u }; if (u.online !== undefined) S.presence[u.id] = u.online; return u; }
+// chat settings that change how the app looks
+function applyChatPrefs() {
+  const st = S.settings, r = document.documentElement;
+  r.dataset.textsize = st.textSize || 'md';
+  r.classList.toggle('compact', !!st.compact);
+  r.classList.toggle('reduce-motion', !!st.reduceMotion);
+  r.classList.toggle('hide-gifs', st.showGifs === false);
+}
 function applyTheme() {
+  applyChatPrefs();
   const t = S.settings.theme;
   document.documentElement.dataset.theme = t === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : t;
   localStorage.setItem('lumi.theme', t);
@@ -330,7 +341,7 @@ function playSound(kind) {
 }
 function notify(title, body, onClick) {
   if (!S.settings.notifications || !('Notification' in window) || Notification.permission !== 'granted' || document.hasFocus()) return;
-  const n = new Notification(title, { body, icon: '/favicon.ico', silent: true });
+  const n = new Notification(title, { body: S.settings.notifPreview === false ? 'New message' : body, icon: '/favicon.ico', silent: true });
   n.onclick = () => { window.focus(); onClick?.(); n.close(); };
 }
 

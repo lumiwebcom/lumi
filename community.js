@@ -188,7 +188,7 @@ function replyRow(sd, m) {
   const att = m.attachment ? (m.attachment.type === 'image' ? `<div class="attach"><img src="${esc(m.attachment.url)}" data-zoom></div>` : `<div class="attach"><a class="file" href="${esc(m.attachment.url)}" target="_blank">${icon('file')}<span>${esc(m.attachment.name || 'file')}</span></a></div>`) : '';
   return `<div class="t-reply" data-mid="${m.id}">${avatar(a, 34)}<div class="b"><div class="h"><b data-user="${a.id}" ${nameAttrs(a)}>${esc(memberInfo(sd, a.id).name)}</b>${roleBadge(a)}${sd ? lvlChip(memberXp(sd, a.id)) : ''}<span>${fmtDay(m.createdAt)} ${fmtTime(m.createdAt)}</span>
     ${(m.author.id === S.me.id || can(sd, P.MANAGE_MESSAGES)) ? `<button class="t-del" data-del-reply="${m.id}" data-tip="Delete">${icon('trash', 'xs')}</button>` : ''}</div>
-    ${m.content ? `<div class="c">${md(m.content)}</div>` : ''}${att}</div></div>`;
+    ${m.content ? (isGifMsg(m.content) ? gifMessageHtml(m.content.trim()) : `<div class="c">${md(m.content)}</div>`) : ''}${att}</div></div>`;
 }
 function renderThread() {
   const el = $('#room-body'); const th = S.thread; if (!el || !th) return;

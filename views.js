@@ -177,7 +177,7 @@ function renderSideBody() {
     const lm = d.lastMessage; const inCall = (S.voice[d.id] || []).length > 0;
     let sub = '';
     if (inCall) sub = `<span style="color:var(--green)">● Call in progress</span>`;
-    else if (lm) sub = `${lm.authorId === S.me.id ? 'You: ' : ''}${esc(lm.content || (lm.attachmentType ? 'Sent an attachment' : ''))} · ${ago(lm.createdAt)}`;
+    else if (lm) sub = `${lm.authorId === S.me.id ? 'You: ' : ''}${esc(isGifMsg(lm.content) ? 'Sent a GIF' : lm.content || (lm.attachmentType ? 'Sent an attachment' : ''))} · ${ago(lm.createdAt)}`;
     else if (d.type === 'dm') { const u = S.userCache[d.recipients[0]?.id] || d.recipients[0]; sub = u ? esc(u.customStatus || (isOnline(u.id) ? 'Active now' : '@' + u.username)) : ''; }
     else sub = `${d.members.length} members`;
     html += `<div class="nav-item ${v.dmId === d.id ? 'active' : ''} ${d.unread ? 'unread' : ''}" data-dm="${d.id}">
@@ -524,7 +524,7 @@ function msgHtml(m, first, last) {
   const reacts = m.reactions.length ? `<div class="reacts">${m.reactions.map((r) => `<button class="react ${r.users.includes(S.me.id) ? 'mine' : ''}" data-react="${esc(r.emoji)}" data-tip="${esc(r.users.map((u) => (S.userCache[u] ? nameOf(S.userCache[u]) : 'someone')).slice(0, 5).join(', '))}">${r.emoji}${r.users.length > 1 ? `<b>${r.users.length}</b>` : ''}</button>`).join('')}</div>` : '';
   return `<div class="msg ${first ? 'first' : ''} ${last ? 'last' : ''} ${mentioned ? 'mentioned' : ''}" data-mid="${m.id}">
     ${reply}${m.pinned ? `<div class="pinned-tag">${icon('pin', 'xs')} Pinned</div>` : ''}${att}
-    ${m.content ? `<div class="bubble ${isJumbo(m.content) ? 'jumbo' : ''}">${md(m.content)}</div>` : ''}
+    ${m.content ? (isGifMsg(m.content) ? gifMessageHtml(m.content.trim()) : `<div class="bubble ${isJumbo(m.content) ? 'jumbo' : ''}">${md(m.content)}</div>`) : ''}
     ${m.editedAt ? '<div class="edited">Edited</div>' : ''}${reacts}
     <div class="actions"><button data-act="react" data-tip="React">${icon('smile', 'sm')}</button><button data-act="reply" data-tip="Reply">${icon('reply', 'sm')}</button><button data-act="msg-more" data-tip="More">${icon('more', 'sm')}</button></div>
     <span class="time">${fmtTime(m.createdAt)}</span></div>`;
@@ -602,6 +602,7 @@ function renderTyping() {
 // ---------- composer
 function renderComposer() {
   const wrap = $('#composer-wrap'); if (!wrap) return;
+  if (typeof Gif !== 'undefined' && Gif.open) closeGifPicker();
   const sd = currentServer(); const v = S.view;
   const room = sd?.channels.find((c) => c.id === v.channelId);
   const allowed = sd ? canPost(sd, room) : true;
@@ -610,6 +611,7 @@ function renderComposer() {
   else { const dm = S.dms.find((d) => d.id === v.dmId); ph = `Message ${dmName(dm)}…`; }
   wrap.innerHTML = `<div id="composer-extras"></div><div class="composer ${allowed ? '' : 'disabled'}">
     <button class="icon-btn" data-act="emoji" data-tip="Emoji">${icon('smile')}</button>
+    <button class="gif-btn" data-act="gif" data-tip="GIFs" ${allowed ? '' : 'disabled'}>GIF</button>
     <textarea id="msg-input" rows="1" placeholder="${esc(ph)}" maxlength="4000"></textarea>
     <span id="composer-right" style="display:flex;align-items:center"></span></div>`;
   const ta = $('#msg-input');
@@ -618,10 +620,12 @@ function renderComposer() {
   let lastTyping = 0;
   ta.oninput = () => {
     autosize(ta); renderComposerRight(); sessionStorage.setItem(draftKey, ta.value);
-    if (ta.value && Date.now() - lastTyping > 2500) { lastTyping = Date.now(); socket.emit('typing', { channelId: v.channelId }); }
+    if (ta.value && S.settings.showTyping !== false && Date.now() - lastTyping > 2500) { lastTyping = Date.now(); socket.emit('typing', { channelId: v.channelId }); }
   };
   ta.onkeydown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage(); }
+    // Enter sends (default), or Ctrl/Cmd+Enter sends when "Enter sends" is off
+    const enterSends = S.settings.enterSends !== false;
+    if (e.key === 'Enter' && !e.isComposing && (enterSends ? !e.shiftKey : (e.ctrlKey || e.metaKey))) { e.preventDefault(); sendMessage(); }
     if (e.key === 'ArrowUp' && !ta.value) {
       const mine = (S.messages[v.channelId]?.list || []).filter((m) => m.author.id === S.me.id && m.content).pop();
       if (mine) { e.preventDefault(); startEdit(mine.id); }
@@ -762,6 +766,7 @@ async function onMainClick(e) {
     case 'drawer': return $('#app').classList.toggle('drawer');
     case 'send': return sendMessage();
     case 'send-heart': return sendMessage('✨');
+    case 'gif': return toggleGifPicker();
     case 'attach': { const f = await pickFile('*/*'); if (f) attachFile(f); return; }
     case 'emoji': return emojiPicker(t, (em) => { const ta = $('#msg-input'); const s = ta.selectionStart ?? ta.value.length; ta.value = ta.value.slice(0, s) + em + ta.value.slice(ta.selectionEnd ?? s); ta.focus(); ta.setSelectionRange(s + em.length, s + em.length); ta.oninput(); }, { keepOpen: true });
     case 'cancel-reply': S.replyTo = null; return renderComposerExtras();
