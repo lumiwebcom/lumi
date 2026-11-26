@@ -119,6 +119,7 @@ for (const [c, t] of [['sparks_until', 'INTEGER'], ['stripe_customer', 'TEXT'], 
 for (const [c, t] of [['sid', 'TEXT'], ['ua', 'TEXT'], ['last_seen', 'INTEGER']]) if (!colsOf('sessions').includes(c)) db.exec(`ALTER TABLE sessions ADD COLUMN ${c} ${t}`);
 for (const [c, t] of [['title', 'TEXT'], ['thread_id', 'TEXT']]) if (!colsOf('messages').includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`);
 if (!colsOf('servers').includes('welcome')) db.exec('ALTER TABLE servers ADD COLUMN welcome TEXT');
+if (!colsOf('channels').includes('locked')) db.exec('ALTER TABLE channels ADD COLUMN locked INTEGER DEFAULT 0');
 db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
 CREATE TABLE IF NOT EXISTS friend_nicks (owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, target_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, nick TEXT NOT NULL, PRIMARY KEY (owner_id, target_id));
 CREATE TABLE IF NOT EXISTS daily_tasks (user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, day INTEGER NOT NULL, task TEXT NOT NULL, progress INTEGER NOT NULL DEFAULT 0, done_at INTEGER, PRIMARY KEY (user_id, day, task));
@@ -689,6 +690,7 @@ app.post('/api/channels/:id/messages', auth, wrap(req => {
   const c = getChannelOr404(req.params.id, req.user.id);
   if (c.type === 'voice') throw fail(400, 'Lounges don’t have text chat');
   if (c.server_id && !has(memberPerms(c.server_id, req.user.id), P.SEND_MESSAGES)) throw fail(403, 'You can’t send messages in this room.');
+  if (c.server_id && c.locked && !has(memberPerms(c.server_id, req.user.id), P.ADMINISTRATOR)) throw fail(403, 'Only admins can post in this room.');
   if (c.type === 'dm') {
     const other = db.prepare('SELECT user_id FROM channel_members WHERE channel_id=? AND user_id<>?').get(c.id, req.user.id);
     if (other && isBlocked(req.user.id, other.user_id)) throw fail(403, 'You cannot message this user.');
@@ -807,7 +809,7 @@ function serverDetail(sid, uid) {
   if (!s || !perms) throw fail(404, 'Community not found');
   const channels = db.prepare('SELECT * FROM channels WHERE server_id=? ORDER BY position, created_at').all(sid)
     .map(c => ({ id: c.id, type: c.type, name: c.name, topic: c.topic, position: c.position,
-      categoryId: c.category_id || null, unread: c.type !== 'voice' ? unreadCount(uid, c.id) : 0 }));
+      categoryId: c.category_id || null, locked: !!c.locked, unread: c.type !== 'voice' ? unreadCount(uid, c.id) : 0 }));
   const categories = db.prepare('SELECT * FROM categories WHERE server_id=? ORDER BY position, created_at').all(sid)
     .map((c) => ({ id: c.id, name: c.name, position: c.position }));
   const roles = db.prepare('SELECT * FROM roles WHERE server_id=? ORDER BY position DESC').all(sid)
@@ -893,8 +895,8 @@ app.post('/api/servers/:id/channels', auth, wrap(req => {
   const name = sanitizeName(req.body.name, 100) || ({ text: 'New room', voice: 'Lounge', board: 'Board', gallery: 'Gallery' })[type];
   const pos = (db.prepare(`SELECT MAX(position) p FROM channels WHERE server_id=? AND type${type === 'voice' ? "='voice'" : "<>'voice'"}`).get(sid).p ?? (type === 'voice' ? 99 : -1)) + 1;
   const cat = req.body.categoryId && db.prepare('SELECT id FROM categories WHERE id=? AND server_id=?').get(req.body.categoryId, sid);
-  db.prepare('INSERT INTO channels (id,server_id,type,name,topic,position,category_id,created_at) VALUES (?,?,?,?,?,?,?,?)')
-    .run(id(), sid, type, name, String(req.body.topic || '').slice(0, 300), pos, cat ? cat.id : null, now());
+  db.prepare('INSERT INTO channels (id,server_id,type,name,topic,position,category_id,created_at,locked) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(id(), sid, type, name, String(req.body.topic || '').slice(0, 300), pos, cat ? cat.id : null, now(), type !== 'voice' && req.body.locked ? 1 : 0);
   io.to(`server:${sid}`).emit('server:update', { serverId: sid });
   return { ok: true };
 }));
@@ -909,7 +911,8 @@ app.patch('/api/channels/:id', auth, wrap(req => {
     const cat = req.body.categoryId && db.prepare('SELECT id FROM categories WHERE id=? AND server_id=?').get(req.body.categoryId, c.server_id);
     categoryId = cat ? cat.id : null;
   }
-  db.prepare('UPDATE channels SET name=?, topic=?, position=?, category_id=? WHERE id=?').run(name, topic, position, categoryId, c.id);
+  const locked = req.body.locked !== undefined ? (c.type !== 'voice' && req.body.locked ? 1 : 0) : (c.locked || 0);
+  db.prepare('UPDATE channels SET name=?, topic=?, position=?, category_id=?, locked=? WHERE id=?').run(name, topic, position, categoryId, locked, c.id);
   io.to(`server:${c.server_id}`).emit('server:update', { serverId: c.server_id });
   return { ok: true };
 }));

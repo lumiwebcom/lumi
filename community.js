@@ -9,6 +9,9 @@ const ROOM_TYPES = {
   voice: { icon: 'waves', label: 'Lounge', short: 'Lounge', desc: 'Drop-in voice and video' },
 };
 const isChatRoom = (c) => c && c.type !== 'voice';
+// rooms can be locked so only the owner and Administrator roles can post
+const canPost = (sd, c) => can(sd, P.SEND_MESSAGES) && (!c?.locked || can(sd, P.ADMINISTRATOR));
+const lockTag = (c) => (c?.locked ? `<span class="lock-tag" data-tip="Only admins can post">${icon('lock', 'xs')}</span>` : '');
 const roomIcon = (c, cls = 'sm') => icon((ROOM_TYPES[c?.type] || ROOM_TYPES.text).icon, cls);
 
 // ------------------------------------------------------------------ levels (mirror of the server)
@@ -114,8 +117,8 @@ async function editWelcome(sid) {
 function renderRoomView(main, sd, ch) {
   const isBoard = ch.type === 'board';
   const th = S.thread && S.thread.channelId === ch.id ? S.thread : null;
-  main.innerHTML = `<header class="main-head">${mobileBtn()}<div class="t">${roomIcon(ch)} ${esc(ch.name)}<span class="type-chip">${ROOM_TYPES[ch.type].short}</span></div>${ch.topic ? `<div class="topic" data-tip="${esc(ch.topic)}">${esc(ch.topic)}</div>` : ''}
-    <div class="tools">${can(sd, P.SEND_MESSAGES) ? `<button class="btn primary sm" data-act="${isBoard ? 'new-thread' : 'new-photo'}">${icon(isBoard ? 'edit' : 'image', 'sm')} ${isBoard ? 'New thread' : 'Share a photo'}</button>` : ''}
+  main.innerHTML = `<header class="main-head">${mobileBtn()}<div class="t">${roomIcon(ch)} ${esc(ch.name)}<span class="type-chip">${ROOM_TYPES[ch.type].short}</span>${lockTag(ch)}</div>${ch.topic ? `<div class="topic" data-tip="${esc(ch.topic)}">${esc(ch.topic)}</div>` : ''}
+    <div class="tools">${canPost(sd, ch) ? `<button class="btn primary sm" data-act="${isBoard ? 'new-thread' : 'new-photo'}">${icon(isBoard ? 'edit' : 'image', 'sm')} ${isBoard ? 'New thread' : 'Share a photo'}</button>` : ''}
       <button class="icon-btn ${S.showMembers ? 'active' : ''}" data-act="toggle-members" data-tip="Member list">${icon('users', 'sm')}</button></div></header>
     <div class="content"><div class="room-scroll" id="room-body"></div><div id="right-slot" style="display:contents"></div></div>`;
   renderRight();
@@ -147,11 +150,11 @@ function renderRoomBody() {
   if (ch.type === 'board') {
     const list = [...st.list].sort((a, b) => (b.lastReplyAt || b.createdAt) - (a.lastReplyAt || a.createdAt));
     el.innerHTML = list.length ? `<div class="board">${list.map((t) => threadCard(sd, t)).join('')}${more}</div>`
-      : `<div class="empty"><div class="art">${icon('board')}</div><h3>No threads yet</h3><p>Boards keep conversations tidy: every topic gets a title and its own replies.</p>${can(sd, P.SEND_MESSAGES) ? '<button class="btn primary" data-act="new-thread">Start the first thread</button>' : ''}</div>`;
+      : `<div class="empty"><div class="art">${icon('board')}</div><h3>No threads yet</h3><p>Boards keep conversations tidy: every topic gets a title and its own replies.</p>${canPost(sd, ch) ? '<button class="btn primary" data-act="new-thread">Start the first thread</button>' : ''}</div>`;
   } else {
     const list = [...st.list].reverse();
     el.innerHTML = list.length ? `<div class="gallery">${list.map((m) => photoTile(sd, m)).join('')}</div>${more}`
-      : `<div class="empty"><div class="art">${icon('gallery')}</div><h3>The wall is empty</h3><p>Share photos and clips. Everyone can react and comment on each one.</p>${can(sd, P.SEND_MESSAGES) ? '<button class="btn primary" data-act="new-photo">Share the first one</button>' : ''}</div>`;
+      : `<div class="empty"><div class="art">${icon('gallery')}</div><h3>The wall is empty</h3><p>Share photos and clips. Everyone can react and comment on each one.</p>${canPost(sd, ch) ? '<button class="btn primary" data-act="new-photo">Share the first one</button>' : ''}</div>`;
   }
 }
 function threadCard(sd, t) {
@@ -208,7 +211,7 @@ function renderThread() {
     </article>
     <div class="t-count">${d.replies.length ? replies(d.replies.length) : 'No replies yet'}</div>
     <div class="t-replies">${d.replies.map((m) => replyRow(sd, m)).join('')}</div>
-    ${can(sd, P.SEND_MESSAGES) ? `<form class="t-compose" id="t-compose"><textarea id="t-input" rows="1" maxlength="4000" placeholder="Write a reply…"></textarea><button class="btn primary" type="submit">Reply</button></form>` : ''}
+    ${canPost(sd, ch) ? `<form class="t-compose" id="t-compose"><textarea id="t-input" rows="1" maxlength="4000" placeholder="Write a reply…"></textarea><button class="btn primary" type="submit">Reply</button></form>` : ''}
   </div>`;
   const f = $('#t-compose');
   if (f) {

@@ -192,7 +192,7 @@ function renderServerSide(el) {
   const collapsed = S.collapsedCats || (S.collapsedCats = new Set(JSON.parse(localStorage.getItem('lumi.collapsed') || '[]')));
   const order = (a, b) => ((a.type === 'voice') - (b.type === 'voice')) || a.position - b.position;
   const chanRow = (c) => `<div class="nav-item chan t-${c.type} ${S.view.channelId === c.id ? 'active' : ''} ${c.unread && S.view.channelId !== c.id ? 'unread' : ''}" data-chan="${c.id}">
-      ${roomIcon(c)}<span class="n" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span>
+      ${roomIcon(c)}<span class="n" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span>${lockTag(c)}
       <span class="tools">${can(sd, P.CREATE_INVITE) ? `<button data-act="invite" data-tip="Create invite">${icon('userPlus', 'xs')}</button>` : ''}${manage ? `<button data-act="edit-chan" data-tip="Edit">${icon('settings', 'xs')}</button>` : ''}</span>
       ${c.unread && S.view.channelId !== c.id ? '<span class="unread-dot"></span>' : ''}</div>`;
   const voiceUsers = (c) => {
@@ -420,7 +420,7 @@ function renderChatView(main) {
       <input class="search" id="msg-search" placeholder="Search">`;
   } else {
     const ch = sd.channels.find((c) => c.id === cid);
-    head = `<div class="t">${icon('room', 'sm')} ${esc(ch.name)}</div>${ch.topic ? `<div class="topic" data-tip="${esc(ch.topic)}">${esc(ch.topic)}</div>` : ''}`;
+    head = `<div class="t">${icon('room', 'sm')} ${esc(ch.name)}${lockTag(ch)}</div>${ch.topic ? `<div class="topic" data-tip="${esc(ch.topic)}">${esc(ch.topic)}</div>` : ''}`;
     tools = `<button class="icon-btn ${S.panel?.type === 'pins' ? 'active' : ''}" data-act="pins" data-tip="Pinned messages">${icon('pin', 'sm')}</button>
       <button class="icon-btn ${S.showMembers ? 'active' : ''}" data-act="toggle-members" data-tip="Member list">${icon('users', 'sm')}</button>
       <input class="search" id="msg-search" placeholder="Search">`;
@@ -603,9 +603,10 @@ function renderTyping() {
 function renderComposer() {
   const wrap = $('#composer-wrap'); if (!wrap) return;
   const sd = currentServer(); const v = S.view;
-  const allowed = sd ? can(sd, P.SEND_MESSAGES) : true;
+  const room = sd?.channels.find((c) => c.id === v.channelId);
+  const allowed = sd ? canPost(sd, room) : true;
   let ph = 'Message…';
-  if (sd) ph = allowed ? `Message ${sd.channels.find((c) => c.id === v.channelId)?.name}` : 'You can’t send messages in this room';
+  if (sd) ph = allowed ? `Message ${room?.name}` : room?.locked && can(sd, P.SEND_MESSAGES) ? 'Only admins can post in this room' : 'You can’t send messages in this room';
   else { const dm = S.dms.find((d) => d.id === v.dmId); ph = `Message ${dmName(dm)}…`; }
   wrap.innerHTML = `<div id="composer-extras"></div><div class="composer ${allowed ? '' : 'disabled'}">
     <button class="icon-btn" data-act="emoji" data-tip="Emoji">${icon('smile')}</button>

@@ -1256,3 +1256,5 @@ i.on { width: 7px; height: 7px; border-radius: 50%; background: var(--green); di
 .tpl-t { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .tpl-t b { font-weight: 600; } .tpl-t span { font-size: 13px; color: var(--text2); }
 .tpl-go { transform: rotate(-90deg); color: var(--text3); }
+.lock-tag { display: inline-grid; color: var(--text3); margin-left: 4px; flex: none; }
+.main-head .lock-tag { color: var(--text2); }
