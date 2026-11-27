@@ -1366,3 +1366,9 @@ img.mark { border-radius: 24%; object-fit: cover; }
 .lcard .lc-foot { margin-top: 10px; font-size: 12px; color: var(--text3); }
 .lumi-only { display: flex; align-items: center; justify-content: flex-start; gap: 8px; margin: 0 16px 16px; padding: 10px 16px; border-radius: 999px; border: 1px dashed var(--border2); color: var(--text3); font-size: 13px; text-align: left; }
 .lumi-only .i { flex: 0 0 auto; color: #6d4aff; }
+
+/* forgot-password link on the auth screen */
+.auth-forgot { text-align: center; margin-top: 14px; }
+.auth-forgot button, .linklike { background: none; border: 0; padding: 0; color: var(--text3); font: inherit; font-size: 13px; cursor: pointer; text-decoration: underline; }
+.auth-forgot button:hover, .linklike:hover { color: #6d4aff; }
+.linklike { color: #6d4aff; }

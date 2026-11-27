@@ -29,6 +29,7 @@ window.addEventListener('focus', checkForUpdate);
 async function boot() {
   applyTheme();
   checkForUpdate();
+  if (location.pathname === '/reset') { try { S.config = await api('GET', '/api/config'); } catch {} return renderReset(); }
   try { S.config = await api('GET', '/api/config'); } catch {}
   try { const r = await api('GET', '/api/me'); onSignedIn(r.user); }
   catch {

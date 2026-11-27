@@ -490,6 +490,70 @@ function uniqueUsername(base) {
   return name;
 }
 
+// ---- email (used for password resets). Prefers Resend (set RESEND_API_KEY), otherwise
+// reuses the Gmail the Venmo bot already signs in with (VENMO_EMAIL + VENMO_EMAIL_PASSWORD).
+const EMAIL_FROM = process.env.EMAIL_FROM || process.env.RESEND_FROM || (process.env.VENMO_EMAIL ? `lumi <${process.env.VENMO_EMAIL}>` : 'lumi <onboarding@resend.dev>');
+const emailReady = () => !!(process.env.RESEND_API_KEY || (process.env.VENMO_EMAIL && process.env.VENMO_EMAIL_PASSWORD));
+let _mailer = null;
+async function sendEmail(to, subject, html, text) {
+  if (process.env.RESEND_API_KEY) {
+    const r = await fetch('https://api.resend.com/emails', { method: 'POST',
+      headers: { Authorization: 'Bearer ' + process.env.RESEND_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: EMAIL_FROM, to, subject, html, text }) });
+    if (!r.ok) throw new Error('Resend ' + r.status + ' ' + (await r.text()).slice(0, 200));
+    return;
+  }
+  if (process.env.VENMO_EMAIL && process.env.VENMO_EMAIL_PASSWORD) {
+    _mailer ||= require('nodemailer').createTransport({ host: 'smtp.gmail.com', port: 465, secure: true,
+      auth: { user: process.env.VENMO_EMAIL, pass: process.env.VENMO_EMAIL_PASSWORD } });
+    await _mailer.sendMail({ from: EMAIL_FROM, to, subject, html, text });
+    return;
+  }
+  throw new Error('Email is not configured');
+}
+const esc1 = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---- password reset by emailed one-time link
+db.exec('CREATE TABLE IF NOT EXISTS password_resets (token_hash TEXT PRIMARY KEY, user_id TEXT, expires INTEGER, used INTEGER DEFAULT 0, created INTEGER)');
+app.post('/api/auth/forgot', wrap(async (req, res) => {
+  rateLimit('forgot:' + req.ip, 5, 600_000);
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const generic = { ok: true }; // never reveal whether an email has an account
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return generic;
+  const u = db.prepare('SELECT * FROM users WHERE email=?').get(email);
+  if (!u || !u.password_hash) return generic; // no account, or Google-only
+  if (!emailReady()) { console.warn('  Password reset requested but email is not set up (set RESEND_API_KEY, or VENMO_EMAIL + VENMO_EMAIL_PASSWORD).'); return generic; }
+  const token = crypto.randomBytes(32).toString('base64url');
+  const hash = crypto.createHash('sha256').update(token).digest('hex');
+  db.prepare('DELETE FROM password_resets WHERE user_id=?').run(u.id);
+  db.prepare('INSERT INTO password_resets (token_hash,user_id,expires,created) VALUES (?,?,?,?)').run(hash, u.id, Date.now() + 3600_000, Date.now());
+  const link = `${publicOrigin(req)}/reset?token=${token}`;
+  try {
+    await sendEmail(email, 'Reset your lumi password',
+      `<div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:460px;margin:auto;color:#1a1a1a">
+        <h2 style="color:#6d4aff;margin:0 0 12px">Reset your lumi password</h2>
+        <p>Hi ${esc1(u.display_name)}, someone asked to reset the password for your lumi account. Pick a new one with the button below. This link works once and expires in an hour.</p>
+        <p style="margin:22px 0"><a href="${link}" style="display:inline-block;background:#6d4aff;color:#fff;padding:12px 22px;border-radius:10px;text-decoration:none;font-weight:600">Reset password</a></p>
+        <p style="color:#777;font-size:13px">If you didn't ask for this, ignore this email and your password stays the same.</p>
+      </div>`,
+      `Reset your lumi password: ${link}\nThis link expires in 1 hour. If you didn't ask for it, ignore this email.`);
+  } catch (e) { console.error('  Reset email failed:', e.message); }
+  return generic;
+}));
+app.post('/api/auth/reset', wrap((req, res) => {
+  const token = String(req.body.token || '');
+  const next = String(req.body.password || '');
+  if (next.length < 8) throw fail(400, 'Password must be at least 8 characters.');
+  const hash = crypto.createHash('sha256').update(token).digest('hex');
+  const row = db.prepare('SELECT * FROM password_resets WHERE token_hash=?').get(hash);
+  if (!row || row.used || row.expires < Date.now()) throw fail(400, 'This reset link is invalid or has expired. Request a new one.');
+  db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(next, 10), row.user_id);
+  db.prepare('UPDATE password_resets SET used=1 WHERE token_hash=?').run(hash);
+  db.prepare('DELETE FROM sessions WHERE user_id=?').run(row.user_id); // sign out everywhere
+  try { io.to(`user:${row.user_id}`).emit('session:revoked'); } catch {}
+  return { ok: true };
+}));
+
 app.post('/api/auth/signup', wrap((req, res) => {
   rateLimit('signup:' + req.ip);
   const email = String(req.body.email || '').trim().toLowerCase();
@@ -499,6 +563,7 @@ app.post('/api/auth/signup', wrap((req, res) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw fail(400, 'Enter a valid email address.');
   if (!/^[a-z0-9_.]{2,24}$/.test(username)) throw fail(400, 'Username must be 2–24 characters: letters, numbers, _ or .');
   if (password.length < 8) throw fail(400, 'Password must be at least 8 characters.');
+  if (moderation.isOffensiveText(username, displayName)) throw fail(400, 'That name isn’t allowed. Please choose another.');
   if (db.prepare('SELECT 1 FROM users WHERE email=?').get(email)) throw fail(409, 'That email is already registered.');
   if (db.prepare('SELECT 1 FROM users WHERE username=?').get(username)) throw fail(409, 'That username is taken.');
   const uid = id();
@@ -615,10 +680,12 @@ app.patch('/api/me', auth, wrap(req => {
     accent: b.accent !== undefined && /^#[0-9a-f]{6}$/i.test(b.accent) ? b.accent : u.accent,
     username: u.username,
   };
+  if (b.displayName !== undefined && moderation.isOffensiveText(fields.display_name)) throw fail(400, 'That name isn’t allowed. Please choose another.');
   if (b.username !== undefined && b.username !== u.username) {
     const un = String(b.username).trim().toLowerCase();
     if (!/^[a-z0-9_.]{2,24}$/.test(un)) throw fail(400, 'Username must be 2–24 characters: letters, numbers, _ or .');
     if (db.prepare('SELECT 1 FROM users WHERE username=? AND id<>?').get(un, u.id)) throw fail(409, 'That username is taken.');
+    if (moderation.isOffensiveText(un)) throw fail(400, 'That username isn’t allowed. Please choose another.');
     fields.username = un;
   }
   if (b.nameFont !== undefined) {

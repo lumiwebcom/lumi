@@ -41,6 +41,7 @@ function renderAuth(mode = 'login') {
           <button class="btn primary lg block" type="submit">${signup ? 'Create account' : 'Log in'}</button>
           <div class="err" id="auth-err" style="margin-top:12px"></div>
         </form>
+        ${signup ? '' : '<div class="auth-forgot"><button type="button" data-forgot>Forgot password?</button></div>'}
         <div class="auth-switch">${signup ? 'Already have an account? <button data-mode="login">Log in</button>' : 'New to lumi? <button data-mode="signup">Create an account</button>'}</div>
       </div>
       <a class="pc-dl" id="pc-dl" hidden href="${PC_DOWNLOAD}" rel="noopener">
@@ -51,6 +52,7 @@ function renderAuth(mode = 'login') {
     </section>
   </div>`;
   root.querySelector('[data-mode]').onclick = (e) => renderAuth(e.target.dataset.mode);
+  root.querySelector('[data-forgot]')?.addEventListener('click', () => renderForgot());
   showPcDownload();
   const form = $('#auth-form');
   form.onsubmit = async (e) => {
@@ -115,5 +117,74 @@ function openGoogleSetup() {
       const mode = $('[data-mode]')?.dataset.mode === 'login' ? 'signup' : 'login';
       renderAuth(mode);
     } catch (e) { m.el.querySelector('#gerr').textContent = e.message; }
+  };
+}
+
+// ---- forgot password: ask for email, server emails a one-time reset link
+function renderForgot() {
+  const root = $('#root');
+  root.innerHTML = `
+  <div class="auth"><section class="auth-panel"><div class="auth-card">
+    ${wordmark()}
+    <h2>Reset your password</h2>
+    <p class="muted" style="margin:-4px 0 22px">Enter your email and we'll send a link to set a new password.</p>
+    <form id="forgot-form">
+      <input class="input" name="email" type="email" placeholder="Email" autocomplete="email" required autofocus>
+      <button class="btn primary lg block" type="submit">Send reset link</button>
+      <div class="err" id="auth-err" style="margin-top:12px"></div>
+    </form>
+    <div class="auth-switch"><button type="button" data-back>Back to log in</button></div>
+  </div></section></div>`;
+  root.querySelector('[data-back]').onclick = () => renderAuth('login');
+  const form = $('#forgot-form');
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const email = form.email.value;
+    const btn = form.querySelector('button[type=submit]'); btn.disabled = true; $('#auth-err').textContent = '';
+    try {
+      await api('POST', '/api/auth/forgot', { email });
+      root.querySelector('.auth-card').innerHTML = `${wordmark()}
+        <h2>Check your email</h2>
+        <p class="muted" style="line-height:1.55">If an account uses <b>${esc(email)}</b>, a reset link is on its way. It expires in an hour.</p>
+        <p class="muted" style="font-size:13px">Can't find it? Check your spam folder, or <button type="button" class="linklike" data-again>try again</button>.</p>
+        <div class="auth-switch"><button type="button" data-back>Back to log in</button></div>`;
+      root.querySelector('[data-back]').onclick = () => renderAuth('login');
+      root.querySelector('[data-again]').onclick = () => renderForgot();
+    } catch (err) { if ($('#auth-err')) $('#auth-err').textContent = err.message; btn.disabled = false; }
+  };
+}
+
+// ---- reset page: /reset?token=... , set a new password
+function renderReset() {
+  const token = new URLSearchParams(location.search).get('token') || '';
+  const root = $('#root');
+  root.innerHTML = `
+  <div class="auth"><section class="auth-panel"><div class="auth-card">
+    ${wordmark()}
+    <h2>Set a new password</h2>
+    <p class="muted" style="margin:-4px 0 22px">Pick a new password for your lumi account.</p>
+    <form id="reset-form">
+      <input class="input" name="password" type="password" placeholder="New password (8+ characters)" autocomplete="new-password" required minlength="8" autofocus>
+      <input class="input" name="confirm" type="password" placeholder="Confirm new password" autocomplete="new-password" required minlength="8">
+      <button class="btn primary lg block" type="submit">Change password</button>
+      <div class="err" id="auth-err" style="margin-top:12px"></div>
+    </form>
+  </div></section></div>`;
+  const form = $('#reset-form');
+  if (!token) $('#auth-err').textContent = 'This reset link is missing its code. Request a new one from the log in page.';
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    $('#auth-err').textContent = '';
+    if (form.password.value !== form.confirm.value) { $('#auth-err').textContent = "The passwords don't match."; return; }
+    const btn = form.querySelector('button[type=submit]'); btn.disabled = true;
+    try {
+      await api('POST', '/api/auth/reset', { token, password: form.password.value });
+      history.replaceState({}, '', '/');
+      root.querySelector('.auth-card').innerHTML = `${wordmark()}
+        <h2>Password changed ✓</h2>
+        <p class="muted" style="margin-bottom:18px">You're all set. Log in with your new password.</p>
+        <button class="btn primary lg block" type="button" data-login>Log in</button>`;
+      root.querySelector('[data-login]').onclick = () => renderAuth('login');
+    } catch (err) { if ($('#auth-err')) $('#auth-err').textContent = err.message; btn.disabled = false; }
   };
 }
