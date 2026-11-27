@@ -763,10 +763,12 @@ function openAdminPanel() {
         const canBan = s.owner?.id !== S.me.id && (owner || s.owner?.siteRole !== 'owner');
         return `<div class="row-line"><div class="av" style="width:42px;height:42px;font-size:42px;border-radius:12px;background:var(--bg3)">${s.icon ? `<img src="${esc(s.icon)}" alt="">` : `<div class="ph" style="--ph:${colorFor(s.id)}">${esc(initials(s.name))}</div>`}</div><div class="meta">
           <div class="bold">${esc(s.name)}</div>
-          <div class="small muted">${s.members} ${s.members === 1 ? 'member' : 'members'} · owner ${s.owner ? '@' + esc(s.owner.username) : 'unknown'} · made ${new Date(s.createdAt).toLocaleDateString()}</div></div>
-          <div style="display:flex;gap:6px">${canBan ? `<button class="btn danger" data-ban-server="${s.id}">${icon('hammer', 'sm')} Ban</button>` : ''}</div></div>`;
+          <div class="small muted">${s.members} ${s.members === 1 ? 'member' : 'members'} · owner ${s.owner ? '@' + esc(s.owner.username) : 'unknown'} · made ${new Date(s.createdAt).toLocaleDateString()}${s.onStargaze ? ' · on Stargaze' : ''}${s.stargazeBlocked ? ' · <span class="ban-tag">taken off Stargaze</span>' : ''}</div></div>
+          <div style="display:flex;gap:6px">${s.stargazeBlocked ? `<button class="btn" data-relist="${s.id}">Allow on Stargaze</button>` : canBan && s.onStargaze ? `<button class="btn" data-unlist="${s.id}" data-tip="Take off Stargaze">${icon('eyeOff', 'sm')}</button>` : ''}${canBan ? `<button class="btn danger" data-ban-server="${s.id}">${icon('hammer', 'sm')} Ban</button>` : ''}</div></div>`;
       }).join('') || '<div class="empty" style="padding:30px"><p>No communities match.</p></div>';
       el.querySelectorAll('[data-ban-server]').forEach((b) => (b.onclick = () => { const s = r.servers.find((x) => x.id === b.dataset.banServer); banServer(s, load); }));
+      el.querySelectorAll('[data-unlist]').forEach((b) => (b.onclick = () => unlistFromStargaze(r.servers.find((x) => x.id === b.dataset.unlist), load)));
+      el.querySelectorAll('[data-relist]').forEach((b) => (b.onclick = async () => { try { await api('DELETE', `/api/admin/servers/${b.dataset.relist}/unlist`); toast('It can be listed on Stargaze again'); load(); } catch (e) { toast(e.message, true); } }));
       return;
     }
     let r; try { r = await api('GET', `/api/admin/users?q=${encodeURIComponent(q)}&filter=${filter}`); } catch (e) { return toast(e.message, true); }

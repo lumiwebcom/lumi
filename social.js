@@ -258,6 +258,31 @@ function renderStargazeList() {
   const rest = feat.length ? L.filter((s) => !s.featured) : L;
   el.innerHTML = head + `<div class="sg-grid">${[...feat, ...rest].map(sgCard).join('')}</div>`;
 }
+// lumi owners and admins: right-click a community on Stargaze
+function stargazeMenu(anchor, id) {
+  const s = (S.star.list || []).find((x) => x.id === id); if (!s) return;
+  const mine = s.owner?.id === S.me.id, protectedOwner = s.owner?.siteRole === 'owner' && S.me.siteRole !== 'owner';
+  openMenu(anchor, [
+    { label: s.joined ? 'Open' : 'Join', icon: s.joined ? 'home' : 'userPlus', onClick: () => joinFromStargaze(id) },
+    !protectedOwner && 'sep',
+    !protectedOwner && { label: 'Take off Stargaze', icon: 'eyeOff', danger: true, onClick: () => unlistFromStargaze(s) },
+    !protectedOwner && !mine && { label: 'Ban community', icon: 'hammer', danger: true, onClick: () => banServer(s, () => { S.star.list = S.star.list.filter((x) => x.id !== id); renderStargazeList(); }) },
+  ]);
+}
+function unlistFromStargaze(s, after) {
+  const m = openModal({ title: `Take ${s.name} off Stargaze?`, body: `<p class="muted" style="margin:0 0 14px">It disappears from Stargaze and can’t be listed again until a lumi owner or admin allows it. The community itself keeps working. The owner gets a DM from lumi with your reason.</p>
+    <div class="field"><label>Reason (optional)</label><input class="input" id="ul-reason" maxlength="200" placeholder="e.g. misleading description, spam"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-cancel>Cancel</button><button class="btn danger" data-go>${icon('eyeOff', 'sm')} Take off Stargaze</button></div>` });
+  m.el.querySelector('[data-cancel]').onclick = () => m.close();
+  m.el.querySelector('[data-go]').onclick = async () => {
+    try {
+      await api('POST', `/api/admin/servers/${s.id}/unlist`, { reason: m.el.querySelector('#ul-reason').value });
+      m.close(); toast(`${s.name} was taken off Stargaze`);
+      if (S.star?.list) { S.star.list = S.star.list.filter((x) => x.id !== s.id); renderStargazeList(); }
+      after?.();
+    } catch (e) { toast(e.message, true); }
+  };
+}
 async function joinFromStargaze(id) {
   const s = (S.star.list || []).find((x) => x.id === id);
   if (s?.joined || S.servers.find((x) => x.id === id)) return navigate('/channels/' + id);

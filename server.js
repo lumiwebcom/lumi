@@ -158,7 +158,7 @@ function ensureOwner() {
     if (name !== PRIMARY_OWNER) db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('owner_seeded:' + name, String(Date.now()));
   }
 }
-for (const [c, t] of [['discoverable', 'INTEGER DEFAULT 0'], ['discover_category', 'TEXT']]) if (!colsOf('servers').includes(c)) db.exec(`ALTER TABLE servers ADD COLUMN ${c} ${t}`);
+for (const [c, t] of [['discoverable', 'INTEGER DEFAULT 0'], ['discover_category', 'TEXT'], ['stargaze_blocked', 'INTEGER DEFAULT 0']]) if (!colsOf('servers').includes(c)) db.exec(`ALTER TABLE servers ADD COLUMN ${c} ${t}`);
 ensureOwner();
 const isSiteAdmin = (u) => u && (u.site_role === 'owner' || u.site_role === 'admin');
 
@@ -1200,10 +1200,30 @@ db.exec('CREATE TABLE IF NOT EXISTS banned_servers (id TEXT PRIMARY KEY, name TE
 app.get('/api/admin/servers', auth, adminOnly, wrap(req => {
   const q = `%${String(req.query.q || '').trim().toLowerCase()}%`;
   const rows = db.prepare(`SELECT s.id, s.name, s.icon, s.owner_id, s.created_at, (SELECT COUNT(*) FROM members m WHERE m.server_id=s.id) n
-    FROM servers s LEFT JOIN users u ON u.id=s.owner_id WHERE lower(s.name) LIKE ? OR u.username LIKE ? OR lower(u.display_name) LIKE ? ORDER BY n DESC, s.created_at DESC LIMIT 100`).all(q, q, q);
+    , s.discoverable, s.stargaze_blocked FROM servers s LEFT JOIN users u ON u.id=s.owner_id WHERE lower(s.name) LIKE ? OR u.username LIKE ? OR lower(u.display_name) LIKE ? ORDER BY n DESC, s.created_at DESC LIMIT 100`).all(q, q, q);
   const total = db.prepare('SELECT COUNT(*) n FROM servers').get().n;
   return { total, banned: db.prepare('SELECT COUNT(*) n FROM banned_servers').get().n,
-    servers: rows.map((r) => { const o = getUser(r.owner_id); return { id: r.id, name: r.name, icon: r.icon, members: r.n, createdAt: r.created_at, owner: o ? publicUser(o) : null }; }) };
+    servers: rows.map((r) => { const o = getUser(r.owner_id); return { id: r.id, name: r.name, icon: r.icon, members: r.n, createdAt: r.created_at, owner: o ? publicUser(o) : null, onStargaze: !!r.discoverable && !r.stargaze_blocked, stargazeBlocked: !!r.stargaze_blocked }; }) };
+}));
+// take a community off Stargaze (it keeps running, it just can't be listed there until lumi allows it again)
+app.post('/api/admin/servers/:id/unlist', auth, adminOnly, wrap(req => {
+  const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
+  if (!s) throw fail(404, 'Community not found');
+  const o = getUser(s.owner_id);
+  if (o && o.site_role === 'owner' && req.user.site_role !== 'owner') throw fail(403, 'Only lumi owners can take down a community run by an owner.');
+  const reason = String(req.body.reason || '').trim().slice(0, 200) || null;
+  db.prepare('UPDATE servers SET discoverable=0, stargaze_blocked=1 WHERE id=?').run(s.id);
+  io.to(`server:${s.id}`).emit('server:update', { serverId: s.id });
+  officialDM(s.owner_id, { tone: 'warn', title: 'Your community was taken off Stargaze', body: `**${s.name}** is no longer listed on Stargaze. The community itself is still open, and members and invites work as before.`, reason: reason || 'It doesn’t meet lumi’s rules for Stargaze.', foot: 'Think this was a mistake? DM cook or type.' });
+  console.log(`  Admin: a community was taken off Stargaze by @${req.user.username}`);
+  return { ok: true };
+}));
+app.delete('/api/admin/servers/:id/unlist', auth, adminOnly, wrap(req => {
+  const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
+  if (!s) throw fail(404, 'Community not found');
+  db.prepare('UPDATE servers SET stargaze_blocked=0 WHERE id=?').run(s.id);
+  officialDM(s.owner_id, { tone: 'good', title: 'Stargaze is open to your community again', body: `**${s.name}** can be listed on Stargaze again. Turn it back on in Community settings › Access.` });
+  return { ok: true };
 }));
 app.post('/api/admin/servers/:id/ban', auth, adminOnly, wrap(req => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
@@ -1492,7 +1512,7 @@ const discoverExempt = (s) => { const o = getUser(s.owner_id); return o?.site_ro
 const featuredServer = (s) => getUser(s.owner_id)?.site_role === 'owner';
 function discoverStatus(s) {
   const count = memberCountOf(s.id), exempt = discoverExempt(s);
-  return { enabled: !!s.discoverable, eligible: exempt || count >= DISCOVER_MIN, exempt, viaSparks: exempt && !featuredServer(s), memberCount: count, minimum: DISCOVER_MIN, category: s.discover_category || null };
+  return { enabled: !!s.discoverable, blocked: !!s.stargaze_blocked, eligible: exempt || count >= DISCOVER_MIN, exempt, viaSparks: exempt && !featuredServer(s), memberCount: count, minimum: DISCOVER_MIN, category: s.discover_category || null };
 }
 app.get('/api/servers/:id/discovery', auth, wrap(req => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
@@ -1504,6 +1524,7 @@ app.put('/api/servers/:id/discovery', auth, wrap(req => {
   if (!has(memberPerms(sid, req.user.id), P.MANAGE_SERVER)) throw fail(403, 'You need the Manage Community permission.');
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid);
   const on = req.body.enabled === undefined ? !!s.discoverable : !!req.body.enabled, st = discoverStatus(s);
+  if (on && s.stargaze_blocked) throw fail(403, 'The lumi team took this community off Stargaze, so it can’t be listed there.');
   if (on && !st.eligible) throw fail(403, `Communities need at least ${DISCOVER_MIN.toLocaleString('en-US')} members to be listed on Stargaze.`);
   // owners write their own genre (short free text)
   const cat = req.body.category !== undefined ? (String(req.body.category || '').replace(/\s+/g, ' ').trim().slice(0, 24) || null) : s.discover_category;
@@ -1514,7 +1535,8 @@ app.put('/api/servers/:id/discovery', auth, wrap(req => {
 }));
 app.get('/api/discover', auth, wrap(req => {
   const q = String(req.query.q || '').trim().toLowerCase();
-  const rows = db.prepare('SELECT * FROM servers WHERE discoverable=1').all();
+  const rows = db.prepare('SELECT * FROM servers WHERE discoverable=1 AND COALESCE(stargaze_blocked,0)=0').all();
+  const staff = isSiteAdmin(req.user);
   const out = [];
   for (const s of rows) {
     const st = discoverStatus(s);
@@ -1522,14 +1544,15 @@ app.get('/api/discover', auth, wrap(req => {
     if (q && !(s.name.toLowerCase().includes(q) || String(s.description || '').toLowerCase().includes(q) || String(s.discover_category || '').toLowerCase().includes(q))) continue;
     const online = db.prepare('SELECT user_id FROM members WHERE server_id=?').all(s.id).filter((m) => isOnline(m.user_id)).length;
     out.push({ id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, category: s.discover_category || null,
-      memberCount: st.memberCount, onlineCount: online, featured: featuredServer(s), joined: !!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(s.id, req.user.id) });
+      memberCount: st.memberCount, onlineCount: online, featured: featuredServer(s), joined: !!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(s.id, req.user.id),
+      owner: staff ? publicUser(getUser(s.owner_id)) : undefined });
   }
   out.sort((a, b) => (b.featured - a.featured) || (b.onlineCount - a.onlineCount) || (b.memberCount - a.memberCount));
   return { servers: out.slice(0, 120) };
 }));
 app.post('/api/discover/:id/join', auth, wrap(req => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
-  if (!s || !s.discoverable || !discoverStatus(s).eligible) throw fail(404, 'This community is not on Stargaze.');
+  if (!s || !s.discoverable || s.stargaze_blocked || !discoverStatus(s).eligible) throw fail(404, 'This community is not on Stargaze.');
   if (db.prepare('SELECT 1 FROM bans WHERE server_id=? AND user_id=?').get(s.id, req.user.id)) throw fail(403, 'You are banned from this community.');
   if (!db.prepare('SELECT 1 FROM members WHERE server_id=? AND user_id=?').get(s.id, req.user.id)) {
     addMember(s.id, req.user.id);

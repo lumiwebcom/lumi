@@ -939,6 +939,7 @@ document.addEventListener('contextmenu', (e) => {
   const go = (fn) => { e.preventDefault(); fn(); };
   const msgEl = t.closest('.msg[data-mid]');
   if (msgEl && !t.closest('img, video')) { const m = findMsg(msgEl.dataset.mid); if (m) return go(() => messageMenu({ ...at, el: msgEl }, m)); }
+  const sg = t.closest('.sg-card[data-sg-open]'); if (sg && isSiteAdmin()) return go(() => stargazeMenu(at, sg.dataset.sgOpen));
   const tile = t.closest('.tile[data-uid]'); if (tile && tile.dataset.uid !== S.me.id) return go(() => callUserMenu(at, tile.dataset.uid));
   const vu = t.closest('.voice-user[data-user]'); if (vu && vu.dataset.user !== S.me.id) return go(() => callUserMenu(at, vu.dataset.user));
   const inCall = (el) => el && Call.active && [...Call.active.peers.values()].some((p) => p.userId === el);
