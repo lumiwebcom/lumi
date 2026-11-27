@@ -1372,3 +1372,15 @@ img.mark { border-radius: 24%; object-fit: cover; }
 .auth-forgot button, .linklike { background: none; border: 0; padding: 0; color: var(--text3); font: inherit; font-size: 13px; cursor: pointer; text-decoration: underline; }
 .auth-forgot button:hover, .linklike:hover { color: #6d4aff; }
 .linklike { color: #6d4aff; }
+
+/* ---- Activities (Lumi Arcade) ---- */
+.rail-btn.arcade-rail { background:linear-gradient(135deg,#6d4aff,#9d7bff); color:#fff; }
+.arcade-wrap { flex:1; overflow-y:auto; display:flex; }
+.arcade-soon { margin:auto; text-align:center; padding:40px 24px; max-width:420px; }
+.arcade-soon .as-badge { width:88px; height:88px; margin:0 auto 20px; border-radius:24px; display:grid; place-items:center;
+  background:linear-gradient(135deg,#6d4aff,#9d7bff); color:#fff; box-shadow:0 14px 34px rgba(109,74,255,.4); }
+.arcade-soon .as-badge .i { width:44px; height:44px; }
+.arcade-soon h2 { font-size:28px; font-weight:800; }
+.arcade-soon p { color:var(--text3); margin:8px 0 18px; line-height:1.55; }
+.arcade-soon .as-tag { display:inline-block; font-weight:700; font-size:13px; color:#6d4aff; background:#6d4aff1f; padding:7px 16px; border-radius:999px; }
+.arcade-side-soon { display:flex; align-items:center; gap:8px; padding:10px 14px; color:var(--text3); font-size:13px; }

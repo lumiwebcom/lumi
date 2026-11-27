@@ -44,7 +44,7 @@ async function route() {
   } else if (r.type === 'dm') {
     if (!S.dms.find((d) => d.id === r.dmId)) { await refreshDMs(); if (!S.dms.find((d) => d.id === r.dmId)) return navigate('/channels/@me', true); }
     S.view = { type: 'dm', dmId: r.dmId, channelId: r.dmId };
-  } else { S.thread = null; S.view = { type: ['feed', 'activity', 'stargaze', 'sparks'].includes(r.type) ? r.type : 'home' }; }
+  } else { S.thread = null; S.view = { type: ['feed', 'activity', 'stargaze', 'sparks', 'arcade'].includes(r.type) ? r.type : 'home' }; }
   S.panel = null; S.replyTo = null; S.pending = null; S.editing = null;
   renderAll();
 }
@@ -85,9 +85,10 @@ function railItem({ active, unread, tip, inner, data, badge }) {
 function renderRail() {
   const v = S.view;
   const pending = S.friends.filter((f) => f.type === 'incoming').length;
-  let html = railItem({ active: v.type !== 'server' && v.type !== 'stargaze', tip: 'Chats', inner: `<div class="rail-btn home">${LOGO_MARK}</div>`, data: 'data-go="home"', badge: pending });
+  let html = railItem({ active: !['server','stargaze','arcade'].includes(v.type), tip: 'Chats', inner: `<div class="rail-btn home">${LOGO_MARK}</div>`, data: 'data-go="home"', badge: pending });
   for (const d of S.dms.filter((d) => d.unread > 0).slice(0, 5))
     html += railItem({ tip: dmName(d), inner: `<div class="rail-btn" style="background:none">${dmAvatar(d, 48)}</div>`, data: `data-dm="${d.id}"`, badge: d.unread });
+  html += railItem({ active: v.type === 'arcade', tip: 'Activities', inner: `<div class="rail-btn add arcade-rail">${icon('gamepad')}</div>`, data: 'data-act="activities"' });
   html += '<div class="sep"></div>';
   for (const s of S.servers) {
     const inVoice = Call.active && S.serverData[s.id]?.channels.some((c) => c.id === Call.active.channelId);
@@ -107,6 +108,7 @@ function onRailClick(e) {
   if (it.dataset.act === 'create-server') return openCreateServer();
   if (it.dataset.act === 'join-server') return openCreateServer('join');
   if (it.dataset.act === 'stargaze') return navigate('/stargaze');
+  if (it.dataset.act === 'activities') return navigate('/arcade');
   if (it.dataset.act === 'admin-panel') return openAdminPanel();
 }
 function onRailContext(e) {
@@ -150,6 +152,7 @@ function removeServerLocal(sid) {
 // ------------------------------------------------------------------ sidebar
 function renderSideTop() {
   const v = S.view, el = $('#side-top');
+  if (v.type === 'arcade') { el.innerHTML = `<div class="side-head"><div class="title">Activities</div></div>`; return; }
   if (v.type === 'stargaze') return renderStargazeSide();
   if (v.type === 'server') {
     const sd = S.serverData[v.serverId]; if (!sd) return (el.innerHTML = '');
@@ -163,6 +166,7 @@ function renderSideTop() {
 }
 function renderSideBody() {
   const v = S.view, el = $('#side-body'); if (!el) return;
+  if (v.type === 'arcade') return renderArcadeSide(el);
   if (v.type === 'server') return renderServerSide(el);
   if (v.type === 'stargaze') return renderStargazeSide();
   const q = ($('#dm-search')?.value || '').toLowerCase();
@@ -300,6 +304,7 @@ function renderMain() {
   if (v.type === 'home') return renderHome(main);
   if (v.type === 'feed') return renderFeed(main);
   if (v.type === 'stargaze') return renderStargaze(main);
+  if (v.type === 'arcade') return renderArcade(main);
   if (v.type === 'activity') return renderActivity(main);
   if (v.type === 'sparks') return renderSparks(main);
   if (v.type === 'dm') return renderChatView(main);

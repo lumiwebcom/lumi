@@ -12,6 +12,7 @@ const ICONS = {
   home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>',
   send: '<path d="M22 3 9.2 10.1"/><path d="M22 3l-7 18-3.8-8.9L2.5 8.3z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  gamepad: '<rect x="2" y="6" width="20" height="12" rx="5"/><path d="M7 11v3M5.5 12.5h3"/><circle cx="16" cy="11.5" r=".7"/><circle cx="18" cy="13.5" r=".7"/>',
   compass: '<circle cx="12" cy="12" r="10"/><path d="m16.2 7.8-2.1 6.3-6.3 2.1 2.1-6.3z"/>',
   heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>',
   phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/>',
@@ -414,6 +415,7 @@ function parseRoute(p = location.pathname) {
   if ((m = p.match(/^\/channels\/([\w-]+)(?:\/([\w-]+))?/)) && m[1] !== '@me') return { type: 'server', serverId: m[1], channelId: m[2] || null };
   if (/^\/feed\/?$/.test(p)) return { type: 'feed' };
   if (/^\/stargaze\/?$/.test(p)) return { type: 'stargaze' };
+  if (/^\/arcade\/?$/.test(p)) return { type: 'arcade' };
   if (/^\/activity\/?$/.test(p)) return { type: 'activity' };
   if (/^\/sparks\/?$/.test(p)) return { type: 'sparks' };
   return { type: 'home' };

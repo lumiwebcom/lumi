@@ -330,3 +330,18 @@ async function ssAccess(pane, sid) {
   pane.querySelector('#acc-genre').onsubmit = (e) => { e.preventDefault(); save({ category: e.target.g.value.trim() }); };
   pane.querySelector('[data-acc-go]')?.addEventListener('click', () => S.openServerSettings?.el.querySelector('[data-tab="overview"]')?.click());
 }
+
+// ------------------------------------------------------------------ Activities (Lumi Arcade)
+function renderArcade(main) {
+  main.innerHTML = `<header class="main-head">${mobileBtn()}<div class="t">${icon('gamepad', 'sm')} Activities</div></header>
+    <div class="content arcade-wrap"><div class="arcade-soon">
+      <div class="as-badge">${icon('gamepad')}</div>
+      <h2>Lumi Arcade</h2>
+      <p>Games you can play right inside lumi are on the way.<br>Check back soon.</p>
+      <span class="as-tag">Coming soon</span>
+    </div></div>`;
+}
+function renderArcadeSide(el) {
+  el.innerHTML = `<div class="side-section">Games</div>
+    <div class="arcade-side-soon">${icon('gamepad', 'sm')} Coming soon</div>`;
+}
