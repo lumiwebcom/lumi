@@ -297,6 +297,7 @@ app.post('/api/internal/flush', async (req, res) => {
   // if the new version doesn't take over within a minute (e.g. it failed to start), carry on normally
   setTimeout(() => { if (readOnly) { readOnly = false; console.log('  Handover didn’t finish; taking changes again'); } }, 60_000).unref();
   while (backingUp) await new Promise((r) => setTimeout(r, 200));
+  await Promise.race([Promise.allSettled([...savingUploads]), new Promise((r) => setTimeout(r, 20_000))]);
   await backup(true);
   console.log('  Handing over to the new version: saved and paused changes');
   res.json({ ok: true });
@@ -345,7 +346,8 @@ app.get('/uploads/:name', async (req, res) => {
     try { const buf = await storage.get('up:' + name); if (buf) fs.writeFileSync(file, buf); } catch (e) { console.error(e.message); }
   }
   if (!fs.existsSync(file)) return res.status(404).end();
-  res.sendFile(file, { maxAge: '7d' });
+  // upload names never change, so browsers and Cloudflare can keep them for good
+  res.sendFile(file, { maxAge: '365d', immutable: true });
 });
 
 function createSession(res, userId, req) {
@@ -543,10 +545,19 @@ app.post('/api/upload', auth, upload.single('file'), async (req, res) => {
       }
     }
   }
-  const done = () => res.json({ url: '/uploads/' + req.file.filename, type, name: req.file.originalname.slice(0, 200) });
-  if (!storage.enabled) return done();
-  storage.put('up:' + req.file.filename, fs.readFileSync(req.file.path)).then(done, (e) => { console.error(e.message); res.status(500).json({ error: 'Upload could not be saved. Try again.' }); });
+  res.json({ url: '/uploads/' + req.file.filename, type, name: req.file.originalname.slice(0, 200) });
+  // the file is already on this server's disk, so answer right away and copy it to permanent storage in the background
+  if (storage.enabled) saveUpload(req.file.filename, req.file.path);
 });
+const savingUploads = new Set();
+function saveUpload(name, file, tries = 0) {
+  let buf; try { buf = fs.readFileSync(file); } catch { return; }
+  const job = storage.put('up:' + name, buf).catch((e) => {
+    console.error('  Upload copy failed:', e.message);
+    if (tries < 3) setTimeout(() => saveUpload(name, file, tries + 1), 3000 * (tries + 1));
+  }).finally(() => savingUploads.delete(job));
+  savingUploads.add(job);
+}
 
 // ---------------------------------------------------------------- me / users
 app.get('/api/me', auth, wrap(req => ({ user: { ...publicUser(req.user), email: req.user.email, hasPassword: !!req.user.password_hash } })));
@@ -681,14 +692,24 @@ function serializeDM(c, uid) {
     lastMessage: last ? { content: last.content, authorId: last.author_id, createdAt: last.created_at, attachmentType: last.attachment_type } : null,
     lastActivity: last ? last.created_at : c.created_at, unread: unreadCount(uid, c.id), streak: c.type === 'dm' ? dmStreak(c.id, members) : 0 };
 }
+db.exec('CREATE TABLE IF NOT EXISTS dm_closed (user_id TEXT, channel_id TEXT, at INTEGER, PRIMARY KEY (user_id, channel_id))');
 app.get('/api/dms', auth, wrap(req => {
   const chans = db.prepare(`SELECT c.* FROM channels c JOIN channel_members m ON m.channel_id=c.id WHERE m.user_id=? AND c.type IN ('dm','group')`).all(req.user.id);
-  return { dms: chans.map(c => serializeDM(c, req.user.id)).sort((a, b) => b.lastActivity - a.lastActivity) };
+  // a closed DM stays out of the list until someone sends a new message in it
+  const closed = new Map(db.prepare('SELECT channel_id, at FROM dm_closed WHERE user_id=?').all(req.user.id).map((r) => [r.channel_id, r.at]));
+  return { dms: chans.map(c => serializeDM(c, req.user.id)).filter((d) => !closed.has(d.id) || d.lastActivity > closed.get(d.id)).sort((a, b) => b.lastActivity - a.lastActivity) };
+}));
+app.post('/api/dms/:id/close', auth, wrap(req => {
+  const c = db.prepare(`SELECT c.* FROM channels c JOIN channel_members m ON m.channel_id=c.id WHERE c.id=? AND m.user_id=? AND c.type IN ('dm','group')`).get(req.params.id, req.user.id);
+  if (!c) throw fail(404, 'Not found');
+  db.prepare('INSERT OR REPLACE INTO dm_closed VALUES (?,?,?)').run(req.user.id, c.id, now());
+  return { ok: true };
 }));
 app.post('/api/dms', auth, wrap(req => {
   const other = getUser(req.body.userId);
   if (!other || other.id === req.user.id) throw fail(404, 'User not found');
   if (isBlocked(req.user.id, other.id)) throw fail(403, 'You cannot message this user.');
+  db.prepare(`DELETE FROM dm_closed WHERE user_id=? AND channel_id IN (SELECT channel_id FROM channel_members WHERE user_id=?)`).run(req.user.id, other.id);
   let c = db.prepare(`SELECT c.* FROM channels c WHERE c.type='dm' AND
     EXISTS (SELECT 1 FROM channel_members WHERE channel_id=c.id AND user_id=?) AND
     EXISTS (SELECT 1 FROM channel_members WHERE channel_id=c.id AND user_id=?)`).get(req.user.id, other.id);
@@ -1238,7 +1259,7 @@ app.get('/api/gifs/search', auth, wrap(async (req) => {
   if (moderation.isNsfwSearch(q)) throw fail(400, 'That search isn’t allowed on lumi.');
   // 2+ letters is fine (gg, ok, hi); a few short starts of bad words are refused outright
   if (q && (q.match(/[a-z0-9]/gi) || []).length < 2) return { items: [], more: false, short: true };
-  if (/^(se|sx|s3|po|p0|nu|bo|b0|ti|t1|di|d1|pu|cu|xx|ho|ns|tw|nk|as)$/i.test(q.replace(/[^a-z0-9]/gi, ''))) return { items: [], more: false, short: true };
+  if (/^(se|sx|s3|po|p0|nu|bo|b0|ti|t1|di|d1|pu|cu|xx|ho|ns|tw|nk|as|pp|pe)$/i.test(q.replace(/[^a-z0-9]/gi, ''))) return { items: [], more: false, short: true };
   const r = await gifQuery(q ? 'search' : 'trending', q, page, req.user.id);
   return { ...r, items: r.items.filter((g) => gifVerdicts.get(g.url) !== false) };
 }));

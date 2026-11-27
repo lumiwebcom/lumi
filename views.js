@@ -813,6 +813,7 @@ function friendMenu(anchor, uid) {
     'sep',
     { label: 'Remove friend', icon: 'x', danger: true, onClick: async () => { if (await confirmDialog(`Remove '${nameOf(u)}'`, `Are you sure you want to remove <b>${esc(nameOf(u))}</b> from your friends?`, 'Remove Friend')) api('DELETE', `/api/friends/${uid}`); } },
     { label: 'Block', icon: 'block', danger: true, onClick: () => blockUser(uid) },
+    ...volumeItems(uid),
   ], { align: 'right' });
 }
 async function blockUser(uid) {
@@ -876,6 +877,7 @@ function userMenu(anchor, uid) {
     !me && { label: 'Call', icon: 'phone', onClick: async () => { const d = await openDM(uid); if (d) joinCall(d.id); } },
     !me && friend && { label: S.nicks?.[uid] ? 'Change nickname' : 'Give a nickname', icon: 'edit', onClick: () => setNickname(uid) },
     { label: 'Copy username', icon: 'copy', onClick: () => copyText('@' + u.username, 'Username copied') },
+    ...volumeItems(uid),
   ]);
 }
 function dmMenu(anchor, dmId) {
@@ -888,6 +890,22 @@ function dmMenu(anchor, dmId) {
     { label: 'Start voice call', icon: 'phone', onClick: () => { navigate('/channels/@me/' + dm.id); joinCall(dm.id, { video: false }); } },
     { label: 'Start video call', icon: 'video', onClick: () => { navigate('/channels/@me/' + dm.id); joinCall(dm.id, { video: true }); } },
     other && { label: S.nicks?.[other.id] ? 'Change nickname' : 'Give a nickname', icon: 'edit', onClick: () => setNickname(other.id) },
+    ...(other ? volumeItems(other.id) : []),
+    'sep',
+    { label: 'Close DM', icon: 'x', onClick: () => closeDM(dm.id) },
+  ]);
+}
+async function closeDM(id) {
+  S.dms = S.dms.filter((d) => d.id !== id);
+  if (S.view.channelId === id) navigate('/channels/@me'); else { renderSideBody(); renderRail(); }
+  try { await api('POST', `/api/dms/${id}/close`); } catch (e) { toast(e.message, true); refreshDMs().then(() => renderSideBody()); }
+}
+// right-click someone who's in your call (their tile, or their name in a lounge)
+function callUserMenu(anchor, uid) {
+  openMenu(anchor, [
+    { label: 'View profile', icon: 'user', onClick: () => openProfile(uid) },
+    { label: 'Message', icon: 'chat', onClick: () => openDM(uid) },
+    ...volumeItems(uid),
   ]);
 }
 document.addEventListener('contextmenu', (e) => {
@@ -899,6 +917,10 @@ document.addEventListener('contextmenu', (e) => {
   const go = (fn) => { e.preventDefault(); fn(); };
   const msgEl = t.closest('.msg[data-mid]');
   if (msgEl && !t.closest('img, video')) { const m = findMsg(msgEl.dataset.mid); if (m) return go(() => messageMenu({ ...at, el: msgEl }, m)); }
+  const tile = t.closest('.tile[data-uid]'); if (tile && tile.dataset.uid !== S.me.id) return go(() => callUserMenu(at, tile.dataset.uid));
+  const vu = t.closest('.voice-user[data-user]'); if (vu && vu.dataset.user !== S.me.id) return go(() => callUserMenu(at, vu.dataset.user));
+  const inCall = (el) => el && Call.active && [...Call.active.peers.values()].some((p) => p.userId === el);
+  if (inCall(t.closest('[data-fid]')?.dataset.fid)) return go(() => callUserMenu(at, t.closest('[data-fid]').dataset.fid));
   const fid = t.closest('[data-fid]'); if (fid && S.userCache[fid.dataset.fid]) return go(() => ((S.friends || []).some((f) => f.user?.id === fid.dataset.fid && f.type === 'friend') ? friendMenu(at, fid.dataset.fid) : userMenu(at, fid.dataset.fid)));
   const sid = S.view.type === 'server' ? S.view.serverId : null;
   const chan = t.closest('[data-chan]'); if (chan && sid && chan.dataset.chan !== 'lobby') return go(() => roomMenu(at, sid, chan.dataset.chan));

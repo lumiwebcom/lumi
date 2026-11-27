@@ -37,6 +37,7 @@ const ICONS = {
   image: '<rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
   hash: '<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/>',
   volume: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>',
+  volumeOff: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6M16 9l6 6"/>',
   chevron: '<path d="m6 9 6 6 6-6"/>',
   up: '<path d="m18 15-6-6-6 6"/>',
   more: '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
@@ -162,7 +163,31 @@ function showBannedScreen({ reason, until } = {}) {
   };
   paint(); if (until) _banTimer = setInterval(paint, 30000);
 }
-async function uploadFile(file) {
+// big photos are shrunk in the browser first, so they upload and load much faster
+async function shrinkImage(file, max = 2048) {
+  if (!/^image\/(jpeg|png|webp|bmp)$/.test(file.type)) return file; // GIFs keep their animation
+  let bm; try { bm = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch { return file; }
+  const sc = Math.min(1, max / Math.max(bm.width, bm.height));
+  if (sc === 1 && file.size < 400 * 1024) { bm.close?.(); return file; }
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(bm.width * sc)); c.height = Math.max(1, Math.round(bm.height * sc));
+  c.getContext('2d').drawImage(bm, 0, 0, c.width, c.height); bm.close?.();
+  const clear = file.type !== 'image/jpeg' && file.type !== 'image/bmp'; // keep see-through parts
+  const type = clear ? 'image/webp' : 'image/jpeg';
+  const blob = await new Promise((ok) => c.toBlob(ok, type, 0.88));
+  if (!blob || blob.size >= file.size) return file;
+  return new File([blob], (file.name || 'image').replace(/\.[^.]*$/, '') + (clear ? '.webp' : '.jpg'), { type });
+}
+const preloadImg = (url) => new Promise((ok) => { const i = new Image(); i.onload = i.onerror = () => ok(); i.src = url; });
+// pick a profile picture, icon or banner: it shows straight away while it uploads in the background
+async function pickImage(max, show) {
+  const f = await pickFile(); if (!f) return null;
+  const local = URL.createObjectURL(f); show(local);
+  const job = uploadFile(f, max).then(async (d) => { await preloadImg(d.url); return d.url; });
+  job.catch((e) => toast(e.message, true));
+  return { job }; // wrapped so awaiting the pick doesn't wait for the upload
+}
+async function uploadFile(file, max) {
+  if (file.type?.startsWith('image/')) file = await shrinkImage(file, max).catch(() => file);
   if (file.size > 25 * 1024 * 1024) throw new Error('Files can be up to 25 MB.');
   let r, d;
   for (let tries = 0; ; tries++) {

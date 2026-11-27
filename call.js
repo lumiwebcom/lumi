@@ -52,7 +52,7 @@ function callConnectionLost() {
 function rejoinCall() {
   const c = Call.active; if (!c) return;
   // our old socket is gone, so every peer connection tied to it is dead: rebuild them on the new socket
-  for (const [sid, p] of c.peers) { try { p.pc.close(); } catch {} p.audioEl?.remove(); meterRemove(sid); Call.tiles.get(sid)?.remove(); Call.tiles.delete(sid); }
+  for (const [sid, p] of c.peers) { try { p.pc.close(); } catch {} dropAudio(p); meterRemove(sid); Call.tiles.get(sid)?.remove(); Call.tiles.delete(sid); }
   c.peers.clear();
   Call.tiles.forEach((t) => t.remove()); Call.tiles.clear(); Call.focusSid = null;
   socket.emit('voice:join', { channelId: c.channelId, rejoin: true }, (res) => {
@@ -68,8 +68,8 @@ function rejoinCall() {
 function cleanupCall() {
   const c = Call.active; if (!c) return;
   clearTimeout(c.giveUpT);
-  for (const p of c.peers.values()) { try { p.pc.close(); } catch {} p.audioEl?.remove(); meterRemove(p.sid); }
-  c.local.getTracks().forEach((t) => t.stop()); c.camTrack?.stop(); c.screenTrack?.stop();
+  for (const p of c.peers.values()) { try { p.pc.close(); } catch {} dropAudio(p); meterRemove(p.sid); }
+  c.local.getTracks().forEach((t) => t.stop()); c.camTrack?.stop(); c.screenTrack?.stop(); c.screenAudio?.stop();
   meterRemove('self');
   Call.tiles.forEach((t) => t.remove()); Call.tiles.clear(); Call.focusSid = null;
   clearInterval(Call.timer);
@@ -86,16 +86,16 @@ function signal(to, data) { socket.emit('rtc:signal', { to, data }); }
 function createPeer(sid, userId, initiator) {
   const c = Call.active; if (!c) return null;
   const pc = new RTCPeerConnection(rtcConfig());
-  const peer = { sid, userId, pc, stream: new MediaStream(), polite: socket.id > sid, makingOffer: false, ignoreOffer: false, ready: false, queue: Promise.resolve(), audioEl: null };
+  const peer = { sid, userId, pc, stream: new MediaStream(), polite: socket.id > sid, makingOffer: false, ignoreOffer: false, ready: false, queue: Promise.resolve() };
   c.peers.set(sid, peer);
   pc.onicecandidate = (e) => { if (e.candidate) signal(sid, { candidate: e.candidate }); };
   pc.ontrack = (e) => {
     peer.stream.addTrack(e.track);
     if (e.track.kind === 'audio') {
-      if (!peer.audioEl) { peer.audioEl = h('<audio autoplay playsinline></audio>'); $('#audio-sink').appendChild(peer.audioEl); }
-      peer.audioEl.srcObject = new MediaStream(peer.stream.getAudioTracks());
-      peer.audioEl.muted = c.deafened; peer.audioEl.play().catch(() => {});
-      meterAdd(sid, peer.audioEl.srcObject, userId);
+      // the first audio slot is their mic, the second is the sound from their screen share
+      const slot = pc.getTransceivers().filter((t) => t.receiver.track.kind === 'audio').indexOf(e.transceiver) === 1 ? 'screen' : 'mic';
+      const o = playTrack(peer, e.track, slot);
+      if (slot === 'mic') meterAdd(sid, o.el.srcObject, userId);
     }
     e.track.onunmute = () => renderCallUI();
     renderCallUI();
@@ -117,6 +117,7 @@ function createPeer(sid, userId, initiator) {
   if (initiator) {
     pc.addTransceiver(c.audioTrack || 'audio', { direction: 'sendrecv' });
     pc.addTransceiver(currentVideoTrack() || 'video', { direction: 'sendrecv' });
+    pc.addTransceiver(c.screenAudio || 'audio', { direction: 'sendrecv' });
     peer.ready = true;
   }
   return peer;
@@ -134,9 +135,10 @@ function onSignal({ from, userId, data }) {
         await pc.setRemoteDescription(data.description);
         if (data.description.type === 'offer') {
           if (!peer.ready) {
+            let audios = 0;
             for (const t of pc.getTransceivers()) {
               const kind = t.receiver.track.kind; t.direction = 'sendrecv';
-              await t.sender.replaceTrack(kind === 'audio' ? c.audioTrack : currentVideoTrack());
+              await t.sender.replaceTrack(kind === 'audio' ? (audios++ === 0 ? c.audioTrack : c.screenAudio || null) : currentVideoTrack());
             }
             peer.ready = true;
           }
@@ -151,9 +153,15 @@ function onSignal({ from, userId, data }) {
 }
 function onPeerLeft({ socketId }) {
   const c = Call.active; const p = c?.peers.get(socketId); if (!p) return;
-  try { p.pc.close(); } catch {} p.audioEl?.remove(); meterRemove(socketId);
+  try { p.pc.close(); } catch {} dropAudio(p); meterRemove(socketId);
   c.peers.delete(socketId); Call.tiles.get(socketId)?.remove(); Call.tiles.delete(socketId);
   renderCallUI();
+}
+async function replaceScreenAudio(track) {
+  for (const p of Call.active.peers.values()) {
+    const t = p.pc.getTransceivers().filter((t) => t.receiver.track.kind === 'audio')[1];
+    if (t) try { await t.sender.replaceTrack(track); } catch (e) { console.warn(e); }
+  }
 }
 async function replaceSenders(kind, track) {
   for (const p of Call.active.peers.values()) {
@@ -173,7 +181,61 @@ async function toggleMute() {
   playSound(c.muted ? 'leave' : 'join');
   socket.emit('voice:update', { muted: c.muted, deafened: c.deafened }); renderCallUI();
 }
-function applyDeafen() { for (const p of Call.active.peers.values()) if (p.audioEl) p.audioEl.muted = Call.active.deafened; }
+function applyDeafen() { applyVolumes(); }
+// ---- per-person volume and mute, kept on this device
+let VolPrefs = {}; try { VolPrefs = JSON.parse(localStorage.getItem('lumi.vol') || '{}'); } catch {}
+const volOf = (uid) => VolPrefs[uid] || {};
+function setVol(uid, patch) {
+  VolPrefs[uid] = { ...volOf(uid), ...patch };
+  try { localStorage.setItem('lumi.vol', JSON.stringify(VolPrefs)); } catch {}
+  applyVolumes();
+}
+let audioCtx = null;
+function getAudioCtx() {
+  try { audioCtx ||= new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {}); } catch { audioCtx = null; }
+  return audioCtx;
+}
+// play someone's audio through a volume knob that can go up to 200%
+function playTrack(peer, track, slot) {
+  const k = slot + 'Out'; let o = peer[k];
+  if (!o) { o = peer[k] = { el: h('<audio autoplay playsinline></audio>') }; $('#audio-sink').appendChild(o.el); }
+  o.el.srcObject = new MediaStream([track]);
+  const ctx = getAudioCtx();
+  if (ctx) {
+    try { o.src?.disconnect(); o.gain ||= ctx.createGain(); o.gain.connect(ctx.destination); o.src = ctx.createMediaStreamSource(o.el.srcObject); o.src.connect(o.gain); o.web = true; } catch { o.web = false; }
+  }
+  o.el.play().catch(() => {});
+  applyVolumes();
+  return o;
+}
+function dropAudio(p) { for (const k of ['micOut', 'screenOut']) { const o = p[k]; if (!o) continue; try { o.src?.disconnect(); o.gain?.disconnect(); } catch {} o.el.remove(); p[k] = null; } }
+function applyVolumes() {
+  const c = Call.active; if (!c) return;
+  for (const p of c.peers.values()) {
+    const pr = volOf(p.userId);
+    for (const [slot, vk, mk] of [['mic', 'v', 'm'], ['screen', 'sv', 'sm']]) {
+      const o = p[slot + 'Out']; if (!o) continue;
+      const vol = c.deafened || pr[mk] ? 0 : (pr[vk] ?? 1);
+      if (o.web) { o.el.muted = true; o.gain.gain.value = vol; } else { o.el.muted = vol === 0; o.el.volume = Math.min(1, vol); }
+    }
+  }
+}
+// menu rows: volume sliders and mute buttons for someone (their voice, and their stream if they're sharing)
+function volumeItems(uid) {
+  if (!uid || uid === S.me?.id || typeof Call === 'undefined') return [];
+  const part = Object.values(S.voice || {}).flat().find((p) => p.userId === uid);
+  const inMyCall = Call.active && [...Call.active.peers.values()].some((p) => p.userId === uid);
+  if (!part && !inMyCall) return [];
+  const pr = volOf(uid);
+  const slider = (label, key) => {
+    const v = Math.round((pr[key] ?? 1) * 100);
+    return { html: `<div class="menu-vol"><div class="mv-top"><span>${label}</span><b>${v}%</b></div><input type="range" min="0" max="200" step="5" value="${v}"></div>`,
+      mount: (el) => { const r = el.querySelector('input'), b = el.querySelector('b'); r.oninput = () => { b.textContent = r.value + '%'; setVol(uid, { [key]: r.value / 100 }); }; el.onclick = (e) => e.stopPropagation(); } };
+  };
+  const items = ['sep', slider('User volume', 'v'), { label: pr.m ? 'Unmute' : 'Mute', icon: pr.m ? 'mic' : 'micOff', onClick: () => { setVol(uid, { m: !pr.m }); renderCallUI(); } }];
+  if (part?.screen) items.push('sep', slider('Stream volume', 'sv'), { label: pr.sm ? 'Unmute stream' : 'Mute stream', icon: pr.sm ? 'volume' : 'volumeOff', onClick: () => setVol(uid, { sm: !pr.sm }) });
+  return items;
+}
 function toggleDeafen() {
   const c = Call.active;
   if (!c) { S.selfDeaf = !S.selfDeaf; if (S.selfDeaf) S.selfMute = true; return renderSideFoot(); }
@@ -199,16 +261,19 @@ async function toggleScreen() {
   if (c.screen) return stopScreen();
   if (!navigator.mediaDevices.getDisplayMedia) return toast('Screen sharing is not supported on this device.', true);
   try {
-    const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: false });
+    const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: true });
     c.screenTrack = s.getVideoTracks()[0]; c.screen = true;
+    c.screenAudio = s.getAudioTracks()[0] || null; // sound from the shared tab or screen, if the browser offers it
     c.screenTrack.onended = stopScreen;
     await replaceSenders('video', c.screenTrack);
+    if (c.screenAudio) await replaceScreenAudio(c.screenAudio);
     socket.emit('voice:update', { screen: true }); renderCallUI();
   } catch {}
 }
 async function stopScreen() {
   const c = Call.active; if (!c || !c.screen) return;
   c.screenTrack?.stop(); c.screenTrack = null; c.screen = false;
+  if (c.screenAudio) { c.screenAudio.stop(); c.screenAudio = null; await replaceScreenAudio(null); }
   await replaceSenders('video', currentVideoTrack());
   socket.emit('voice:update', { screen: false }); renderCallUI();
 }
@@ -312,7 +377,7 @@ function updateStage() {
     }
     const st = self ? { muted: c.muted, deafened: c.deafened, video: c.video, screen: c.screen } : p;
     const showVideo = !!(st.video || st.screen);
-    tile.classList.toggle('has-video', showVideo); tile.classList.toggle('screen', !!st.screen);
+    tile.classList.toggle('has-video', showVideo); tile.classList.toggle('screen', !!st.screen); tile.dataset.uid = p.userId;
     tile.querySelector('.bgblur').style.backgroundImage = u?.avatar ? `url('${u.avatar}')` : `linear-gradient(135deg, ${colorFor(p.userId)}, #222)`;
     const avHtml = avatar(u, 84, { ring: 'seen', speak: true });
     if (tile.querySelector('.tile-av').dataset.uid !== p.userId) { tile.querySelector('.tile-av').innerHTML = avHtml; tile.querySelector('.tile-av').dataset.uid = p.userId; }

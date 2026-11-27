@@ -21,13 +21,15 @@ function openCreateServer(start = 'create') {
       <div style="display:flex;justify-content:center;margin-bottom:18px"><div class="ring" style="cursor:pointer" id="cs-icon"><div class="av" style="width:88px;height:88px;font-size:88px;background:var(--bg3);color:var(--text2)"><div class="ph" style="--ph:var(--bg3);color:var(--text2);font-size:12px">${icon('image')}<br>Upload</div></div></div></div>
       <div class="field"><label>Community name</label><input class="input" id="cs-name" value="${esc(S.me.displayName)}'s ${esc(label === 'Friends' ? 'hangout' : label === 'Something else' ? 'place' : label.toLowerCase())}" maxlength="100" autofocus></div>
       <div style="display:flex;gap:8px;margin-top:20px"><button class="btn" data-back>Back</button><button class="btn grad" style="flex:1" data-create>Create</button></div>`;
+    let iconJob = null;
     body.querySelector('#cs-icon').onclick = async () => {
-      const f = await pickFile(); if (!f) return;
-      try { iconUrl = (await uploadFile(f)).url; body.querySelector('#cs-icon .av').innerHTML = `<img src="${esc(iconUrl)}">`; } catch (e) { toast(e.message, true); }
+      const pick = await pickImage(512, (src) => (body.querySelector('#cs-icon .av').innerHTML = `<img src="${esc(src)}">`)); if (!pick) return;
+      iconJob = pick.job.then((u) => (iconUrl = u), () => { body.querySelector('#cs-icon .av').innerHTML = ''; });
     };
     body.querySelector('[data-back]').onclick = step1;
     const go = async () => {
       const name = body.querySelector('#cs-name').value.trim(); if (!name) return toast('Name your community', true);
+      if (iconJob) await iconJob;
       try {
         const d = await api('POST', '/api/servers', { name, icon: iconUrl, template: tpl });
         S.serverData[d.server.id] = d; S.servers.push({ id: d.server.id, name: d.server.name, icon: d.server.icon, unread: 0 });
@@ -215,11 +217,13 @@ function ssOverview(pane, sid) {
   const bar = pane.querySelector('.save-bar'); bar.style.visibility = 'hidden';
   const dirty = () => (bar.style.visibility = 'visible');
   pane.querySelectorAll('input,textarea,select').forEach((i) => (i.oninput = dirty));
-  pane.querySelector('[data-up-icon]').onclick = async () => { const f = await pickFile(); if (!f) return; try { s.icon = (await uploadFile(f)).url; pane.querySelector('#ss-icon').innerHTML = `<img src="${esc(s.icon)}">`; dirty(); } catch (e) { toast(e.message, true); } };
+  const jobs = new Set(); const track = (pick, ok, fail) => { if (!pick) return; const j = pick.job.then(ok, fail).finally(() => jobs.delete(j)); jobs.add(j); dirty(); };
+  pane.querySelector('[data-up-icon]').onclick = async () => { const before = s.icon; track(await pickImage(512, (src) => (pane.querySelector('#ss-icon').innerHTML = `<img src="${esc(src)}">`)), (u) => (s.icon = u), () => (pane.querySelector('#ss-icon').innerHTML = before ? `<img src="${esc(before)}">` : `<div class="ph">${esc(initials(s.name))}</div>`)); };
   pane.querySelector('[data-rm-icon]')?.addEventListener('click', () => { s.icon = null; pane.querySelector('#ss-icon').innerHTML = `<div class="ph">${esc(initials(s.name))}</div>`; dirty(); });
-  pane.querySelector('#ss-banner').onclick = async () => { const f = await pickFile(); if (!f) return; try { s.banner = (await uploadFile(f)).url; pane.querySelector('#ss-banner').style.backgroundImage = `url('${s.banner}')`; dirty(); } catch (e) { toast(e.message, true); } };
+  pane.querySelector('#ss-banner').onclick = async () => { const el = pane.querySelector('#ss-banner'), before = el.style.backgroundImage; track(await pickImage(1600, (src) => (el.style.backgroundImage = `url('${src}')`)), (u) => (s.banner = u), () => (el.style.backgroundImage = before)); };
   pane.querySelector('[data-reset]').onclick = () => ssOverview(pane, sid);
   pane.querySelector('[data-save]').onclick = async () => {
+    if (jobs.size) { const b = pane.querySelector('[data-save]'); b.disabled = true; b.textContent = 'Saving…'; await Promise.all([...jobs]); b.disabled = false; b.textContent = 'Save changes'; }
     const body = { name: pane.querySelector('#ss-name').value, description: pane.querySelector('#ss-desc').value, welcome: pane.querySelector('#ss-welcome').value, icon: s.icon, banner: s.banner };
     const newOwner = pane.querySelector('#ss-owner')?.value;
     if (newOwner && newOwner !== s.ownerId) {
@@ -450,10 +454,12 @@ function usProfile(pane) {
     <div class="field"><label>Bio</label><textarea class="textarea" id="p-bio" maxlength="190" placeholder="Tell people a bit about yourself">${esc(u.bio || '')}</textarea><div class="hint" id="bio-count">${(u.bio || '').length} / 190</div></div>
     <div class="save-bar"><span></span><button class="btn primary" data-save>Save</button></div>`;
   pane.querySelector('#p-bio').oninput = (e) => (pane.querySelector('#bio-count').textContent = `${e.target.value.length} / 190`);
-  pane.querySelector('[data-av]').onclick = async () => { const f = await pickFile(); if (!f) return; try { u.avatar = (await uploadFile(f)).url; pane.querySelector('#up-av').innerHTML = avatar(u, 88, { ring: true }); } catch (e) { toast(e.message, true); } };
+  const jobs = new Set(); const track = (pick, ok, fail) => { if (!pick) return; const j = pick.job.then(ok, fail).finally(() => jobs.delete(j)); jobs.add(j); };
+  pane.querySelector('[data-av]').onclick = async () => { const before = u.avatar; track(await pickImage(512, (src) => (pane.querySelector('#up-av').innerHTML = avatar({ ...u, avatar: src }, 88, { ring: true }))), (url) => (u.avatar = url), () => (pane.querySelector('#up-av').innerHTML = avatar({ ...u, avatar: before }, 88, { ring: true }))); };
   pane.querySelector('[data-rmav]')?.addEventListener('click', () => { u.avatar = null; pane.querySelector('#up-av').innerHTML = avatar(u, 88, { ring: true }); });
-  pane.querySelector('#up-banner').onclick = async () => { const f = await pickFile(); if (!f) return; try { u.banner = (await uploadFile(f)).url; pane.querySelector('#up-banner').style.background = `url('${u.banner}') center/cover`; } catch (e) { toast(e.message, true); } };
+  pane.querySelector('#up-banner').onclick = async () => { const el = pane.querySelector('#up-banner'), before = el.style.background; track(await pickImage(1600, (src) => (el.style.background = `url('${src}') center/cover`)), (url) => (u.banner = url), () => (el.style.background = before)); };
   pane.querySelector('[data-save]').onclick = async () => {
+    if (jobs.size) { const b = pane.querySelector('[data-save]'); b.disabled = true; b.textContent = 'Saving…'; await Promise.all([...jobs]); b.disabled = false; b.textContent = 'Save'; }
     try {
       const r = await api('PATCH', '/api/me', { displayName: pane.querySelector('#p-name').value, username: pane.querySelector('#p-user').value, customStatus: pane.querySelector('#p-status').value,
         bio: pane.querySelector('#p-bio').value, avatar: u.avatar, banner: u.banner, accent: u.accent });
