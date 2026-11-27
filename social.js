@@ -351,7 +351,7 @@ async function renderArcade(main) {
   body.classList.add('arcade-grid-wrap');
   body.innerHTML = `<div class="arcade-grid">${r.games.map((g, i) => `
     <button class="game-card ${g.playable ? '' : 'locked'}" data-game="${g.id}" style="--gc:${['#6d4aff', '#e0558e', '#2bb3a3', '#f2a23c', '#4a9dff', '#b06dff'][i % 6]}">
-      <div class="gc-art">${icon('gamepad')}${g.playable ? '' : `<span class="gc-lock">${icon('lock', 'sm')}</span>`}</div>
+      <div class="gc-art${g.thumb ? ' has-thumb' : ''}"${g.thumb ? ` style="background-image:url('${esc(g.thumb)}')"` : ''}>${g.thumb ? '' : icon('gamepad')}${g.playable ? '' : `<span class="gc-lock">${icon('lock', 'sm')}</span>`}</div>
       <div class="gc-name">${esc(g.title)}</div>
       <div class="gc-tag">${g.price ? (g.playable ? 'Sparks' : priceTag(g.price)) : 'Free'}</div>
     </button>`).join('')}</div>`;
@@ -368,8 +368,14 @@ function openGame(g, r) {
     lm.el.querySelector('[data-sparks]').onclick = () => { lm.close(); navigate('/sparks'); };
     return;
   }
-  const m = openModal({ title: g.title, cls: 'game-modal wide', body: `<iframe class="game-frame" src="/play/${g.id}" title="${esc(g.title)}" allow="fullscreen; autoplay; gamepad" sandbox="allow-scripts allow-pointer-lock allow-forms allow-modals allow-popups"></iframe>` });
+  const m = openModal({ title: g.title, cls: 'game-modal wide', body: `<div class="game-stage">
+    <div class="game-loading" id="game-loading"><div class="gl-spin"></div><div class="gl-txt">Loading ${esc(g.title)}…</div></div>
+    <iframe class="game-frame" id="game-frame" src="/play/${g.id}" title="${esc(g.title)}" allow="fullscreen; autoplay; gamepad" sandbox="allow-scripts allow-pointer-lock allow-forms allow-modals allow-popups"></iframe></div>` });
   m.el.classList.add('game-playing');
+  const fr = m.el.querySelector('#game-frame'), ld = m.el.querySelector('#game-loading');
+  const done = () => { if (ld) ld.remove(); fr.classList.add('ready'); };
+  fr.addEventListener('load', done);
+  setTimeout(done, 8000); // never leave the spinner stuck if the load event is missed
 }
 function renderArcadeSide(el) {
   const r = S.arcade;

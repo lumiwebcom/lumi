@@ -734,29 +734,55 @@ function banServer(s, after) {
     } catch (e) { toast(e.message, true); }
   };
 }
-// admin panel → Games: post an HTML game file to Activities with a title and price
+// Shrink an image file to a small JPEG data URL (keeps thumbnails light so cards load fast).
+function shrinkImage(file, max = 480, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    if (!file || !/^image\//.test(file.type)) return reject(new Error('Pick an image file.'));
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let w = img.width, h = img.height; const s = Math.min(1, max / Math.max(w, h));
+      w = Math.max(1, Math.round(w * s)); h = Math.max(1, Math.round(h * s));
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Couldn’t read that image.')); };
+    img.src = url;
+  });
+}
+// admin panel → Games: post an HTML game file to Activities with a title, price and optional thumbnail
 async function adminGamesPane(pane, reload) {
   pane.innerHTML = '<div class="hint" style="padding:20px 0">Loading…</div>';
   let r; try { r = await api('GET', '/api/admin/games'); } catch (e) { pane.innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
   const kb = (n) => n < 1024 * 1024 ? Math.max(1, Math.round(n / 1024)) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+  const rowThumb = (g) => g.thumb
+    ? `<div class="av gm-rowthumb" style="width:52px;height:40px;border-radius:9px;background:#201a33 center/cover no-repeat;background-image:url('${esc(g.thumb)}')"></div>`
+    : `<div class="av" style="width:52px;height:40px;border-radius:9px;background:var(--bg3);display:grid;place-items:center;color:#743afb">${icon('gamepad', 'sm')}</div>`;
   pane.innerHTML = `
     <form class="game-add" id="gm-form">
       <div class="ga-row">
         <input class="input" id="gm-title" maxlength="80" placeholder="Game title (e.g. Chess)" autocomplete="off" required>
         <div class="ga-price"><span>$</span><input class="input" id="gm-price" type="number" min="0" step="0.01" value="0" placeholder="0"></div>
       </div>
-      <label class="ga-file" id="gm-drop">
-        <input type="file" id="gm-input" accept=".html,.htm,text/html" hidden>
-        <span id="gm-fname">${icon('plus', 'sm')} Choose an HTML game file</span>
-      </label>
+      <div class="ga-two">
+        <label class="ga-file" id="gm-drop">
+          <input type="file" id="gm-input" accept=".html,.htm,text/html" hidden>
+          <span id="gm-fname">${icon('plus', 'sm')} Choose an HTML game file</span>
+        </label>
+        <label class="ga-thumb" id="gm-thumbpick" data-tip="Optional cover image">
+          <input type="file" id="gm-thumbinput" accept="image/*" hidden>
+          <span id="gm-thumbhint">${icon('image', 'sm')} Add thumbnail</span>
+        </label>
+      </div>
       <div class="ga-foot"><span class="hint">Free when the price is 0. People with Sparks play every game free.</span>
         <button class="btn primary" type="submit" id="gm-post" disabled>${icon('gamepad', 'sm')} Post game</button></div>
     </form>
     <div class="hint" style="margin:16px 0 8px">${r.games.length} ${r.games.length === 1 ? 'game' : 'games'} on Activities</div>
-    <div id="gm-list">${r.games.map((g) => `<div class="row-line"><div class="av" style="width:42px;height:42px;border-radius:12px;background:var(--bg3);display:grid;place-items:center;color:#743afb">${icon('gamepad')}</div>
+    <div id="gm-list">${r.games.map((g) => `<div class="row-line">${rowThumb(g)}
       <div class="meta"><div class="bold">${esc(g.title)}</div><div class="small muted">${g.price ? '$' + (g.price / 100).toFixed(g.price % 100 ? 2 : 0) : 'Free'} · ${kb(g.size)}${g.by ? ' · by @' + esc(g.by) : ''} · ${new Date(g.createdAt).toLocaleDateString()}</div></div>
-      <button class="btn danger" data-del-game="${g.id}">${icon('trash', 'sm')} Remove</button></div>`).join('') || '<div class="empty" style="padding:24px"><p>No games yet. Post the first one above.</p></div>'}</div>`;
-  let fileText = '';
+      <div style="display:flex;gap:6px"><button class="btn" data-thumb-game="${g.id}">${icon('image', 'sm')} ${g.thumb ? 'Change' : 'Thumbnail'}</button><button class="btn danger" data-del-game="${g.id}">${icon('trash', 'sm')} Remove</button></div></div>`).join('') || '<div class="empty" style="padding:24px"><p>No games yet. Post the first one above.</p></div>'}</div>`;
+  let fileText = '', thumbData = '';
   const input = pane.querySelector('#gm-input'), fname = pane.querySelector('#gm-fname'), post = pane.querySelector('#gm-post'), drop = pane.querySelector('#gm-drop');
   const take = (f) => {
     if (!f) return;
@@ -770,6 +796,12 @@ async function adminGamesPane(pane, reload) {
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
   drop.ondragleave = () => drop.classList.remove('over');
   drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); take(e.dataTransfer.files[0]); };
+  const tpick = pane.querySelector('#gm-thumbpick'), thint = pane.querySelector('#gm-thumbhint');
+  pane.querySelector('#gm-thumbinput').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try { thumbData = await shrinkImage(f); tpick.style.backgroundImage = `url('${thumbData}')`; tpick.classList.add('has'); thint.textContent = ''; }
+    catch (err) { toast(err.message, true); }
+  };
   pane.querySelector('#gm-form').onsubmit = async (e) => {
     e.preventDefault();
     const title = pane.querySelector('#gm-title').value.trim();
@@ -777,9 +809,18 @@ async function adminGamesPane(pane, reload) {
     if (!title) return toast('Give the game a title.', true);
     if (!fileText) return toast('Choose an HTML game file first.', true);
     post.disabled = true; post.textContent = 'Posting…';
-    try { await api('POST', '/api/admin/games', { title, price, html: fileText }); toast(`“${title}” is live on Activities`); reload(); }
+    try { await api('POST', '/api/admin/games', { title, price, html: fileText, thumb: thumbData || undefined }); toast(`“${title}” is live on Activities`); reload(); }
     catch (err) { toast(err.message, true); post.disabled = false; post.innerHTML = `${icon('gamepad', 'sm')} Post game`; }
   };
+  pane.querySelectorAll('[data-thumb-game]').forEach((b) => (b.onclick = () => {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*';
+    inp.onchange = async () => {
+      const f = inp.files[0]; if (!f) return;
+      try { const t = await shrinkImage(f); await api('PATCH', `/api/admin/games/${b.dataset.thumbGame}`, { thumb: t }); toast('Thumbnail updated'); reload(); }
+      catch (err) { toast(err.message, true); }
+    };
+    inp.click();
+  }));
   pane.querySelectorAll('[data-del-game]').forEach((b) => (b.onclick = async () => {
     const g = r.games.find((x) => x.id === b.dataset.delGame);
     if (!(await confirmDialog(`Remove “${g.title}”?`, 'It’s taken off Activities for everyone. You can always post it again.', 'Remove game'))) return;

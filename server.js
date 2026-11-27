@@ -142,6 +142,8 @@ CREATE TABLE IF NOT EXISTS post_comments (id TEXT PRIMARY KEY, post_id TEXT NOT 
 // Activities (arcade): admins post self-contained HTML game files, set a title and a price (0 = free).
 db.exec(`CREATE TABLE IF NOT EXISTS games (id TEXT PRIMARY KEY, title TEXT NOT NULL, price_cents INTEGER NOT NULL DEFAULT 0,
   html TEXT NOT NULL, created_by TEXT, created_at INTEGER NOT NULL, position INTEGER NOT NULL DEFAULT 0);`);
+// thumb: a small image data URL shown on the game card. html_gz: the game pre-gzipped, so /play serves fast.
+for (const [c, t] of [['thumb', 'TEXT'], ['html_gz', 'BLOB']]) if (!colsOf('games').includes(c)) db.exec(`ALTER TABLE games ADD COLUMN ${c} ${t}`);
 
 // The site owner is the account with this username (default "cook"). Once set, ownership stays with that account.
 // lumi owners (comma-separated OWNER_USERNAMES env adds more)
@@ -339,14 +341,16 @@ app.post('/api/admin/games', auth, adminOnly, express.json({ limit: '12mb' }), (
     const title = String(req.body.title || '').trim();
     const html = String(req.body.html || '');
     const price = Math.max(0, Math.min(100000, Math.round((Number(req.body.price) || 0) * 100)));
+    const thumb = cleanThumb(req.body.thumb);
     if (!title) throw fail(400, 'Give the game a title.');
     if (title.length > 80) throw fail(400, 'That title is too long.');
     if (moderation.isOffensiveText(title)) throw fail(400, 'Please pick a different title.');
     if (!/<\s*(html|!doctype|body|canvas|script|div|svg)/i.test(html)) throw fail(400, 'That doesn’t look like an HTML game file.');
     if (html.length > 11 * 1024 * 1024) throw fail(400, 'That file is too big (max about 11 MB).');
     const gid = id();
-    db.prepare('INSERT INTO games (id,title,price_cents,html,created_by,created_at,position) VALUES (?,?,?,?,?,?,?)')
-      .run(gid, title, price, html, req.user.id, now(), now());
+    const gz = zlib.gzipSync(Buffer.from(html, 'utf8'));
+    db.prepare('INSERT INTO games (id,title,price_cents,html,html_gz,thumb,created_by,created_at,position) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(gid, title, price, html, gz, thumb, req.user.id, now(), now());
     res.json({ ok: true, id: gid });
   } catch (e) { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Server error' }); }
 });
@@ -448,34 +452,58 @@ const wrap = (fn) => (req, res) => {
 };
 const fail = (status, message, extra) => Object.assign(new Error(message), { status, extra });
 
+// A game thumbnail is a small image data URL. Keep it modest so cards and the DB stay light.
+function cleanThumb(v) {
+  const s = String(v || '');
+  if (!s) return null;
+  if (!/^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(s)) throw fail(400, 'That thumbnail isn’t a supported image.');
+  if (s.length > 700 * 1024) throw fail(400, 'That thumbnail is too big — use a smaller image.');
+  return s;
+}
 // ---- Activities (games) read routes (the big upload route is registered earlier, before the 1 MB parser) ----
 app.get('/api/admin/games', auth, adminOnly, wrap(() =>
-  ({ games: db.prepare('SELECT id,title,price_cents,created_by,created_at,LENGTH(html) AS size FROM games ORDER BY position DESC, created_at DESC').all()
-    .map((g) => ({ id: g.id, title: g.title, price: g.price_cents || 0, size: g.size, createdAt: g.created_at, by: getUser(g.created_by)?.username || null })) })));
+  ({ games: db.prepare('SELECT id,title,price_cents,thumb,created_by,created_at,LENGTH(html) AS size FROM games ORDER BY position DESC, created_at DESC').all()
+    .map((g) => ({ id: g.id, title: g.title, price: g.price_cents || 0, size: g.size, thumb: g.thumb || null, createdAt: g.created_at, by: getUser(g.created_by)?.username || null })) })));
 app.delete('/api/admin/games/:id', auth, adminOnly, wrap((req) => {
   const g = db.prepare('SELECT id FROM games WHERE id=?').get(req.params.id);
   if (!g) throw fail(404, 'No such game.');
   db.prepare('DELETE FROM games WHERE id=?').run(g.id);
   return { ok: true };
 }));
+// Set or change a game's thumbnail (small body, so the normal parser is fine).
+app.patch('/api/admin/games/:id', auth, adminOnly, wrap((req) => {
+  const g = db.prepare('SELECT id FROM games WHERE id=?').get(req.params.id);
+  if (!g) throw fail(404, 'No such game.');
+  if (req.body.thumb !== undefined) db.prepare('UPDATE games SET thumb=? WHERE id=?').run(cleanThumb(req.body.thumb), g.id);
+  return { ok: true };
+}));
 // Everyone can see the list; free games (or anyone with Sparks) can play.
 app.get('/api/games', auth, wrap((req) => ({
-  games: db.prepare('SELECT id,title,price_cents FROM games ORDER BY position DESC, created_at DESC').all()
-    .map((g) => ({ id: g.id, title: g.title, price: g.price_cents || 0, playable: !g.price_cents || hasSparks(req.user) })),
+  games: db.prepare('SELECT id,title,price_cents,thumb FROM games ORDER BY position DESC, created_at DESC').all()
+    .map((g) => ({ id: g.id, title: g.title, price: g.price_cents || 0, thumb: g.thumb || null, playable: !g.price_cents || hasSparks(req.user) })),
   sparks: hasSparks(req.user), venmo: venmoHandle() })));
 // The game itself, served sandboxed: the CSP keeps it from touching lumi accounts, cookies or APIs.
+// Served gzipped with a cache tag (the content never changes for an id) so repeat plays load instantly.
 app.get('/play/:id', (req, res) => {
   const s = sessionFromCookieHeader(req.headers.cookie);
   const u = s && getUser(s.user_id);
   const page = (msg) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;height:100vh;display:grid;place-items:center;background:#0c0920;color:#cfc6ff;font-family:system-ui,sans-serif;text-align:center"><div style="opacity:.8">${msg}</div></body>`;
-  res.set('Cache-Control', 'no-store');
   res.set('X-Content-Type-Options', 'nosniff');
-  if (!u) return res.status(401).type('html').send(page('Sign in to lumi to play.'));
-  const g = db.prepare('SELECT * FROM games WHERE id=?').get(req.params.id);
-  if (!g) return res.status(404).type('html').send(page('This game isn’t here anymore.'));
-  if (g.price_cents && !hasSparks(u)) return res.status(403).type('html').send(page('This game is locked. Get Sparks to play it.'));
+  if (!u) { res.set('Cache-Control', 'no-store'); return res.status(401).type('html').send(page('Sign in to lumi to play.')); }
+  const g = db.prepare('SELECT id, price_cents, html, html_gz FROM games WHERE id=?').get(req.params.id);
+  if (!g) { res.set('Cache-Control', 'no-store'); return res.status(404).type('html').send(page('This game isn’t here anymore.')); }
+  if (g.price_cents && !hasSparks(u)) { res.set('Cache-Control', 'no-store'); return res.status(403).type('html').send(page('This game is locked. Get Sparks to play it.')); }
   res.set('Content-Security-Policy', "sandbox allow-scripts allow-pointer-lock allow-forms allow-modals allow-popups");
-  res.type('html').send(g.html);
+  res.type('html');
+  // immutable per id; private so a shared cache never serves a paid game to the wrong person
+  res.set('Cache-Control', 'private, max-age=86400');
+  const tag = '"' + g.id + '"';
+  res.set('ETag', tag);
+  if (req.headers['if-none-match'] === tag) return res.status(304).end();
+  const accepts = String(req.headers['accept-encoding'] || '').includes('gzip');
+  const gz = g.html_gz || (accepts ? zlib.gzipSync(Buffer.from(g.html, 'utf8')) : null);
+  if (accepts && gz) { res.set('Content-Encoding', 'gzip'); res.set('Vary', 'Accept-Encoding'); return res.end(gz); }
+  res.send(g.html);
 });
 
 // site bans: banned_at set + optional ban_until (ms). Expired bans are lifted on first check.
