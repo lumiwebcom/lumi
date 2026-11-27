@@ -277,6 +277,7 @@ function isBlocked(a, b) {
   return !!db.prepare('SELECT 1 FROM blocks WHERE (user_id=? AND blocked_id=?) OR (user_id=? AND blocked_id=?)').get(a, b, b, a);
 }
 function sanitizeName(s, max = 100) { return String(s || '').trim().slice(0, max); }
+const NO_SWEARS = 'Swears and slurs aren’t allowed in community names, rooms, descriptions or welcome notes.';
 function slugChannel(s) {
   return sanitizeName(s, 100).toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-_À-￿]/g, '') || 'channel';
 }
@@ -977,6 +978,7 @@ function removeFromServerRooms(sid, uid) {
 app.post('/api/servers', auth, wrap(req => {
   const name = sanitizeName(req.body.name, 100);
   if (!name) throw fail(400, 'Give your community a name.');
+  if (moderation.isOffensiveText(name, req.body.description)) throw fail(400, NO_SWEARS);
   if (moderation.isNsfwText(name, req.body.description)) {
     const banned = nsfwStrike(req.user, null, 'community name', null, true);
     throw fail(403, banned ? 'NSFW communities aren’t allowed on lumi. Your account has been permanently banned.' : 'NSFW communities aren’t allowed on lumi.');
@@ -1003,6 +1005,7 @@ app.patch('/api/servers/:id', auth, wrap(req => {
   if (!has(memberPerms(sid, req.user.id), P.MANAGE_SERVER)) throw fail(403, 'You need the Manage Community permission.');
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid);
   const b = req.body;
+  if (moderation.isOffensiveText(b.name, b.description, b.welcome)) throw fail(400, NO_SWEARS);
   if (moderation.isNsfwText(b.name, b.description, b.welcome)) {
     const banned = nsfwStrike(req.user, sid, 'community name', null, true);
     throw fail(403, banned ? 'NSFW communities aren’t allowed on lumi. Your account has been permanently banned.' : 'NSFW communities aren’t allowed on lumi.');
@@ -1041,6 +1044,8 @@ app.post('/api/servers/:id/channels', auth, wrap(req => {
   if (!has(memberPerms(sid, req.user.id), P.MANAGE_CHANNELS)) throw fail(403, 'You need the Manage Rooms permission.');
   const type = ['voice', 'board', 'gallery'].includes(req.body.type) ? req.body.type : 'text';
   const name = sanitizeName(req.body.name, 100) || ({ text: 'New room', voice: 'Lounge', board: 'Board', gallery: 'Gallery' })[type];
+  if (moderation.isOffensiveText(name, req.body.topic)) throw fail(400, NO_SWEARS);
+
   const pos = (db.prepare(`SELECT MAX(position) p FROM channels WHERE server_id=? AND type${type === 'voice' ? "='voice'" : "<>'voice'"}`).get(sid).p ?? (type === 'voice' ? 99 : -1)) + 1;
   const cat = req.body.categoryId && db.prepare('SELECT id FROM categories WHERE id=? AND server_id=?').get(req.body.categoryId, sid);
   db.prepare('INSERT INTO channels (id,server_id,type,name,topic,position,category_id,created_at,locked,admin_only,owner_post) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
@@ -1053,6 +1058,8 @@ app.patch('/api/channels/:id', auth, wrap(req => {
   if (!c || !c.server_id || !has(memberPerms(c.server_id, req.user.id), P.MANAGE_CHANNELS)) throw fail(403, 'Not allowed');
   const name = req.body.name !== undefined ? (sanitizeName(req.body.name, 100) || c.name) : c.name;
   const topic = req.body.topic !== undefined ? String(req.body.topic).slice(0, 300) : c.topic;
+  if (moderation.isOffensiveText(req.body.name, req.body.topic)) throw fail(400, NO_SWEARS);
+
   const position = Number.isFinite(req.body.position) ? req.body.position : c.position;
   let categoryId = c.category_id;
   if (req.body.categoryId !== undefined) {
@@ -1082,6 +1089,8 @@ app.post('/api/servers/:id/categories', auth, wrap(req => {
   if (!has(memberPerms(sid, req.user.id), P.MANAGE_CHANNELS)) throw fail(403, 'You need the Manage Rooms permission.');
   const name = sanitizeName(req.body.name, 60);
   if (!name) throw fail(400, 'Give the section a name.');
+  if (moderation.isOffensiveText(name)) throw fail(400, NO_SWEARS);
+
   const pos = (db.prepare('SELECT MAX(position) p FROM categories WHERE server_id=?').get(sid).p ?? -1) + 1;
   const cid = id();
   db.prepare('INSERT INTO categories (id,server_id,name,position,created_at) VALUES (?,?,?,?,?)').run(cid, sid, name, pos, now());
@@ -1095,6 +1104,7 @@ function loadCategory(cid, uid) {
 }
 app.patch('/api/categories/:id', auth, wrap(req => {
   const c = loadCategory(req.params.id, req.user.id);
+  if (moderation.isOffensiveText(req.body.name)) throw fail(400, NO_SWEARS);
   if (req.body.name !== undefined) db.prepare('UPDATE categories SET name=? WHERE id=?').run(sanitizeName(req.body.name, 60) || c.name, c.id);
   if (req.body.move === 'up' || req.body.move === 'down') {
     const list = db.prepare('SELECT id FROM categories WHERE server_id=? ORDER BY position, created_at').all(c.server_id).map((x) => x.id);
@@ -1138,6 +1148,29 @@ function assertCanModerateSite(actor, target) {
   if (target.site_role === 'owner') throw fail(403, "lumi owners can't be banned.");
   if (target.site_role === 'admin' && actor.site_role !== 'owner') throw fail(403, 'Only the owner can ban admins.');
 }
+// ---- lumi owners and admins can see every community and ban one (it's removed for everyone)
+db.exec('CREATE TABLE IF NOT EXISTS banned_servers (id TEXT PRIMARY KEY, name TEXT, owner_id TEXT, by_id TEXT, reason TEXT, at INTEGER)');
+app.get('/api/admin/servers', auth, adminOnly, wrap(req => {
+  const q = `%${String(req.query.q || '').trim().toLowerCase()}%`;
+  const rows = db.prepare(`SELECT s.id, s.name, s.icon, s.owner_id, s.created_at, (SELECT COUNT(*) FROM members m WHERE m.server_id=s.id) n
+    FROM servers s LEFT JOIN users u ON u.id=s.owner_id WHERE lower(s.name) LIKE ? OR u.username LIKE ? OR lower(u.display_name) LIKE ? ORDER BY n DESC, s.created_at DESC LIMIT 100`).all(q, q, q);
+  const total = db.prepare('SELECT COUNT(*) n FROM servers').get().n;
+  return { total, banned: db.prepare('SELECT COUNT(*) n FROM banned_servers').get().n,
+    servers: rows.map((r) => { const o = getUser(r.owner_id); return { id: r.id, name: r.name, icon: r.icon, members: r.n, createdAt: r.created_at, owner: o ? publicUser(o) : null }; }) };
+}));
+app.post('/api/admin/servers/:id/ban', auth, adminOnly, wrap(req => {
+  const s = db.prepare('SELECT * FROM servers WHERE id=?').get(req.params.id);
+  if (!s) throw fail(404, 'Community not found');
+  const o = getUser(s.owner_id);
+  if (o && o.site_role === 'owner' && req.user.site_role !== 'owner') throw fail(403, 'Only lumi owners can ban a community run by an owner.');
+  const reason = String(req.body.reason || '').trim().slice(0, 200) || null;
+  db.prepare('INSERT OR REPLACE INTO banned_servers VALUES (?,?,?,?,?,?)').run(s.id, s.name, s.owner_id, req.user.id, reason, now());
+  if (req.body.banOwner && o && o.id !== req.user.id && !o.site_role) siteBan(o.id, reason ? `Ran a banned community: ${reason}` : 'Ran a community that was banned');
+  io.to(`server:${s.id}`).emit('server:removed', { serverId: s.id, reason: 'removed' });
+  db.prepare('DELETE FROM servers WHERE id=?').run(s.id);
+  console.log(`  Admin: a community was banned by @${req.user.username}`);
+  return { ok: true };
+}));
 // permanently delete an account and everything it made (owners only; can't be undone)
 app.delete('/api/admin/users/:id', auth, wrap(req => {
   if (req.user.site_role !== 'owner') throw fail(403, 'Only lumi owners can delete accounts.');

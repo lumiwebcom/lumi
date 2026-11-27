@@ -127,6 +127,7 @@ async function serverMenu(sid, anchor) {
     'sep',
     !owner && { label: 'Leave community', icon: 'logout', danger: true, onClick: () => leaveServer(sid) },
     owner && can(sd, P.MANAGE_SERVER) && { label: 'Delete community', icon: 'trash', danger: true, onClick: () => openServerSettings(sid, 'delete') },
+    isSiteAdmin() && !owner && { label: 'Ban community', icon: 'hammer', danger: true, onClick: () => banServer({ id: sid, name: sd.server.name }) },
   ]);
 }
 async function markServerRead(sid) {
@@ -198,7 +199,7 @@ function renderServerSide(el) {
   const voiceUsers = (c) => {
     const parts = S.voice[c.id] || [];
     return parts.length ? `<div class="voice-users">${parts.map((p) => `<div class="voice-user" data-user="${p.userId}">
-      ${avatar(p.user, 24, { ring: 'seen', speak: true })}<span>${esc(memberInfo(sd, p.userId).name)}</span>
+      ${avatar(p.user, 24, { ring: 'seen', speak: true })}${typeof volOf === 'function' && p.userId !== S.me.id && volOf(p.userId).m ? `<span class="you-muted" data-tip="You muted them">${icon('micOff', 'xs')}</span>` : ''}<span>${esc(memberInfo(sd, p.userId).name)}</span>
       <span class="vu-icons">${p.screen ? '<span class="live">LIVE</span>' : ''}${p.video ? icon('video', 'xs') : ''}${p.muted ? icon('micOff', 'xs') : ''}${p.deafened ? icon('headphonesOff', 'xs') : ''}</span></div>`).join('')}</div>` : '';
   };
   const rows = (list) => list.sort(order).map((c) => chanRow(c) + (c.type === 'voice' ? voiceUsers(c) : '')).join('');

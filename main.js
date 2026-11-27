@@ -132,6 +132,7 @@ function connectSocket() {
     if (reason === 'kicked') toast(`You were removed from ${name}`, true);
     if (reason === 'banned') toast(`You were banned from ${name}`, true);
     if (reason === 'deleted') toast(`${name} was deleted`);
+    if (reason === 'removed') toast(`${name} was removed by lumi`, true);
   });
   socket.on('voice:state', ({ channelId, participants }) => {
     const before = (S.voice[channelId] || []).length;

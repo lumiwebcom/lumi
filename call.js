@@ -189,6 +189,7 @@ function setVol(uid, patch) {
   VolPrefs[uid] = { ...volOf(uid), ...patch };
   try { localStorage.setItem('lumi.vol', JSON.stringify(VolPrefs)); } catch {}
   applyVolumes();
+  if ('m' in patch) { renderCallUI(); if (S.view.type === 'server') renderSideBody(); }
 }
 let audioCtx = null;
 function getAudioCtx() {
@@ -232,7 +233,7 @@ function volumeItems(uid) {
     return { html: `<div class="menu-vol"><div class="mv-top"><span>${label}</span><b>${v}%</b></div><input type="range" min="0" max="200" step="5" value="${v}"></div>`,
       mount: (el) => { const r = el.querySelector('input'), b = el.querySelector('b'); r.oninput = () => { b.textContent = r.value + '%'; setVol(uid, { [key]: r.value / 100 }); }; el.onclick = (e) => e.stopPropagation(); } };
   };
-  const items = ['sep', slider('User volume', 'v'), { label: pr.m ? 'Unmute' : 'Mute', icon: pr.m ? 'mic' : 'micOff', onClick: () => { setVol(uid, { m: !pr.m }); renderCallUI(); } }];
+  const items = ['sep', slider('User volume', 'v'), { label: pr.m ? 'Unmute' : 'Mute', icon: pr.m ? 'mic' : 'micOff', onClick: () => setVol(uid, { m: !pr.m }) }];
   if (part?.screen) items.push('sep', slider('Stream volume', 'sv'), { label: pr.sm ? 'Unmute stream' : 'Mute stream', icon: pr.sm ? 'volume' : 'volumeOff', onClick: () => setVol(uid, { sm: !pr.sm }) });
   return items;
 }
@@ -261,9 +262,16 @@ async function toggleScreen() {
   if (c.screen) return stopScreen();
   if (!navigator.mediaDevices.getDisplayMedia) return toast('Screen sharing is not supported on this device.', true);
   try {
-    const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: true });
+    // sound: only from a shared tab, never the whole computer's sound and never lumi's own audio,
+    // otherwise everyone in the call would hear themselves back through the stream.
+    // The desktop app can only capture the whole computer's sound, so it shares no sound.
+    const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } },
+      audio: window.lumiDesktop ? false : { restrictOwnAudio: true, echoCancellation: true, suppressLocalAudioPlayback: false },
+      systemAudio: 'exclude', selfBrowserSurface: 'exclude', restrictOwnAudio: true });
     c.screenTrack = s.getVideoTracks()[0]; c.screen = true;
-    c.screenAudio = s.getAudioTracks()[0] || null; // sound from the shared tab or screen, if the browser offers it
+    c.screenAudio = s.getAudioTracks()[0] || null; // sound from the shared tab, if the browser offers it
+    const surface = c.screenTrack.getSettings?.().displaySurface;
+    if (c.screenAudio && surface && surface !== 'browser') { c.screenAudio.stop(); c.screenAudio = null; } // a whole screen or window: its sound would include the call
     c.screenTrack.onended = stopScreen;
     await replaceSenders('video', c.screenTrack);
     if (c.screenAudio) await replaceScreenAudio(c.screenAudio);
@@ -391,7 +399,8 @@ function updateStage() {
     v.play?.().catch(() => {});
     const peer = c.peers.get(p.socketId);
     const conn = !self && peer && !['connected', 'completed'].includes(peer.pc.connectionState) ? ` <span style="opacity:.6;font-weight:400">connecting…</span>` : '';
-    tile.querySelector('.lbl').innerHTML = `${st.muted ? `<span class="mic-off">${icon('micOff', 'xs')}</span>` : ''}${st.deafened ? icon('headphonesOff', 'xs') : ''}${esc(self ? 'You' : memberInfo(sd, p.userId).name)}${st.screen ? ' <span class="live" style="background:var(--red);padding:0 5px;border-radius:4px;font-size:10px">LIVE</span>' : ''}${conn}`;
+    const youMuted = !self && volOf(p.userId).m && !st.muted;
+    tile.querySelector('.lbl').innerHTML = `${st.muted ? `<span class="mic-off">${icon('micOff', 'xs')}</span>` : ''}${youMuted ? `<span class="you-muted" data-tip="You muted them">${icon('micOff', 'xs')}</span>` : ''}${st.deafened ? icon('headphonesOff', 'xs') : ''}${esc(self ? 'You' : memberInfo(sd, p.userId).name)}${st.screen ? ' <span class="live" style="background:var(--red);padding:0 5px;border-radius:4px;font-size:10px">LIVE</span>' : ''}${conn}`;
     if (tile.parentNode !== grid) grid.appendChild(tile);
   }
   // keep self last

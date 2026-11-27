@@ -717,6 +717,22 @@ function banDialog(u) {
     el.querySelector('[data-ok]').onclick = () => { done = true; resolve({ minutes: minutes() || null, reason: el.querySelector('#bn-r').value.trim() }); m.close(); };
   });
 }
+// lumi owners and admins: remove a community for everyone, and optionally ban the person who runs it
+function banServer(s, after) {
+  const ownerUser = s.owner || S.userCache[S.serverData[s.id]?.server.ownerId];
+  const canBanOwner = ownerUser && !ownerUser.siteRole && ownerUser.id !== S.me.id;
+  const m = openModal({ title: `Ban ${s.name}?`, body: `<p class="muted" style="margin:0 0 14px">The community is removed for everyone: its rooms, messages and members are gone, and it can’t be brought back.</p>
+    <div class="field"><label>Reason (optional)</label><input class="input" id="bs-reason" maxlength="200" placeholder="e.g. hate speech, NSFW, spam"></div>
+    ${canBanOwner ? `<label class="check-row" style="display:flex;gap:10px;align-items:center;margin:4px 0 16px;cursor:pointer"><input type="checkbox" id="bs-owner"> <span>Also ban the owner, <b>@${esc(ownerUser.username)}</b>, from lumi</span></label>` : ''}
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-cancel>Cancel</button><button class="btn danger" data-go>${icon('hammer', 'sm')} Ban community</button></div>` });
+  m.el.querySelector('[data-cancel]').onclick = () => m.close();
+  m.el.querySelector('[data-go]').onclick = async () => {
+    try {
+      await api('POST', `/api/admin/servers/${s.id}/ban`, { reason: m.el.querySelector('#bs-reason').value, banOwner: !!m.el.querySelector('#bs-owner')?.checked });
+      m.close(); toast(`${s.name} was banned`); after?.();
+    } catch (e) { toast(e.message, true); }
+  };
+}
 function openAdminPanel() {
   if (!isSiteAdmin()) return;
   const owner = S.me.siteRole === 'owner';
@@ -726,6 +742,7 @@ function openAdminPanel() {
       <button data-f="banned">${icon('hammer', 'sm')} Banned</button>
       <button data-f="owners">${POTION.replace('<svg', '<svg class="i sm"')} Owners</button>
       <button data-f="admins">${SHIELD_BLUE.replace('<svg', '<svg class="i sm"')} Owners & admins</button>
+      <button data-f="servers">${icon('compass', 'sm')} Communities</button>
       ${owner ? `<button data-f="sparks">${icon('gem', 'sm')} Sparks</button><button data-reset-tasks>${icon('glow', 'sm')} New tasks for everyone</button>` : ''}
       <div class="lbl" style="margin-top:14px">You are</div><div style="padding:4px 12px;display:flex;align-items:center;gap:6px;font-weight:600">${owner ? POTION.replace('<svg', '<svg style="width:18px;height:18px"') + ' Owner' : SHIELD_BLUE.replace('<svg', '<svg style="width:18px;height:18px"') + ' Admin'}</div></nav>
     <div class="settings-pane"><h2 id="ap-title">Everyone</h2><input class="input" id="ap-q" placeholder="Search by name or username${owner ? ' or email' : ''}" autocomplete="off" style="margin-bottom:6px"><div class="hint" id="ap-count" style="margin-bottom:10px"></div><div id="ap-list"></div><div id="ap-sparks" hidden></div></div>` });
@@ -736,6 +753,21 @@ function openAdminPanel() {
     ['#ap-q', '#ap-count', '#ap-list'].forEach((s) => el.querySelector(s).hidden = sp); el.querySelector('#ap-sparks').hidden = !sp;
     if (sp) return adminSparksPane(el.querySelector('#ap-sparks'), load);
     const q = el.querySelector('#ap-q').value;
+    el.querySelector('#ap-q').placeholder = filter === 'servers' ? 'Search by community name or owner' : `Search by name or username${owner ? ' or email' : ''}`;
+    if (filter === 'servers') {
+      let r; try { r = await api('GET', `/api/admin/servers?q=${encodeURIComponent(q)}`); } catch (e) { return toast(e.message, true); }
+      el.querySelector('#ap-count').textContent = `${r.total} communities · ${r.banned} banned${r.servers.length === 100 ? ' · showing first 100 matches' : ''}`;
+      el.querySelector('#ap-list').innerHTML = r.servers.map((s) => {
+        if (s.owner) cacheUser(s.owner);
+        const canBan = s.owner?.id !== S.me.id && (owner || s.owner?.siteRole !== 'owner');
+        return `<div class="row-line"><div class="av" style="width:42px;height:42px;font-size:42px;border-radius:12px;background:var(--bg3)">${s.icon ? `<img src="${esc(s.icon)}" alt="">` : `<div class="ph" style="--ph:${colorFor(s.id)}">${esc(initials(s.name))}</div>`}</div><div class="meta">
+          <div class="bold">${esc(s.name)}</div>
+          <div class="small muted">${s.members} ${s.members === 1 ? 'member' : 'members'} · owner ${s.owner ? '@' + esc(s.owner.username) : 'unknown'} · made ${new Date(s.createdAt).toLocaleDateString()}</div></div>
+          <div style="display:flex;gap:6px">${canBan ? `<button class="btn danger" data-ban-server="${s.id}">${icon('hammer', 'sm')} Ban</button>` : ''}</div></div>`;
+      }).join('') || '<div class="empty" style="padding:30px"><p>No communities match.</p></div>';
+      el.querySelectorAll('[data-ban-server]').forEach((b) => (b.onclick = () => { const s = r.servers.find((x) => x.id === b.dataset.banServer); banServer(s, load); }));
+      return;
+    }
     let r; try { r = await api('GET', `/api/admin/users?q=${encodeURIComponent(q)}&filter=${filter}`); } catch (e) { return toast(e.message, true); }
     el.querySelector('#ap-count').textContent = `${r.total} accounts · ${r.bannedCount} banned${r.users.length === 100 ? ' · showing first 100 matches' : ''}`;
     el.querySelector('#ap-list').innerHTML = r.users.map((u) => {
@@ -793,7 +825,7 @@ function openAdminPanel() {
   });
   el.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => {
     filter = b.dataset.f; el.querySelectorAll('[data-f]').forEach((x) => x.classList.toggle('active', x === b));
-    el.querySelector('#ap-title').textContent = { all: 'Everyone', banned: 'Banned', owners: 'Owners', admins: 'Owners & admins', sparks: 'Sparks' }[filter]; load();
+    el.querySelector('#ap-title').textContent = { all: 'Everyone', banned: 'Banned', owners: 'Owners', admins: 'Owners & admins', servers: 'Communities', sparks: 'Sparks' }[filter]; load();
   }));
   load();
 }

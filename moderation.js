@@ -153,4 +153,22 @@ function checkImage(file) {
 }
 const warmUp = () => worker();
 
-module.exports = { checkImage, warmUp, nsfwScore, isNsfwText, isNsfwSearch };
+// ---- slurs and swears: not allowed in community, room or section names, descriptions or welcome notes
+// whole words (after undoing l33t speak, so "b1tch" and "sh!t" count too)
+const BAD_WORDS = /\b(n+[i1!|]+(g{2,}\w*|g+(a|ah|as|az|uh|uhs|let|lets)s?)|negro(es)?|fag+(s|got\w*|ot\w*|gy)?|dykes?|tr[a@]nn(y|ies)|retard(s|ed|ation)?|tard(s|ed)?|spics?|spicks?|chinks?|kikes?|gooks?|wetbacks?|beaners?|coons?|jigaboos?|porch ?monkeys?|towel ?heads?|ragheads?|cunts?|cunty|cnt|twats?|f[uv]+c?k+\w*|fuk\w*|fck\w*|phuck\w*|motherf\w*|mf+ers?|shit(?!ake)\w*|bullshit\w*|bitch\w*|biatch\w*|bastards?|assholes?|arseholes?|dumbass\w*|jackass\w*|whores?|sluts?|slutty|cocksuck\w*|dickheads?|pricks?|wankers?|wank\w*|piss(ed|ing)?|kys)\b/;
+// slurs and the worst swears even when they're glued to other words ("bigfuck", "xxniggaxx")
+const BAD_GLUED = /(nigg|niga|faggot|tranny|cunt|f[uv]ck|motherf|bitch|shit(?!ake)|whore|cocksuck|wetback|jigaboo|retard(?!ant))/;
+const GLUED_OK = /(snigg|scunth|shiitake|shitake)/g; // real words that happen to contain one
+function isOffensiveText(...parts) {
+  return parts.some((p) => {
+    if (typeof p !== 'string' || !p.trim()) return false;
+    const raw = p.toLowerCase();
+    // undo l33t speak; symbols used to hide letters (c*nt, f.u.c.k) are dropped, other symbols split words
+    const n = normalizeSearch(p).replace(/[^a-z\s]/g, (c) => (/[*_.\-~^%#'’]/.test(c) ? '' : ' '));
+    if (BAD_WORDS.test(raw) || BAD_WORDS.test(n)) return true;
+    const glued = n.replace(/[^a-z]/g, '').replace(GLUED_OK, ''), squashed = glued.replace(/(.)\1{2,}/g, '$1$1');
+    return BAD_GLUED.test(glued) || BAD_GLUED.test(squashed);
+  });
+}
+
+module.exports = { checkImage, warmUp, nsfwScore, isNsfwText, isNsfwSearch, isOffensiveText };

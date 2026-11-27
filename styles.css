@@ -1352,3 +1352,6 @@ img.mark { border-radius: 24%; object-fit: cover; }
 .menu-vol .mv-top { display: flex; justify-content: space-between; font-weight: 500; font-size: 13px; margin-bottom: 6px; }
 .menu-vol .mv-top b { color: var(--text2); font-weight: 600; }
 .menu-vol input[type=range] { width: 100%; accent-color: var(--brand, #7C5CFF); cursor: pointer; }
+/* someone you muted for yourself: white mic-off next to their name */
+.you-muted { color: #fff; display: inline-flex; align-items: center; margin-right: 3px; }
+.voice-user .you-muted { color: var(--text); margin-right: 0; }
