@@ -621,7 +621,7 @@ function renderComposer() {
   else {
     const dm = S.dms.find((d) => d.id === v.dmId || d.id === v.channelId);
     if (officialDm(dm)) {
-      wrap.innerHTML = `<div class="lumi-only">${icon('sparkle', 'sm')}<span>Only lumi posts here: updates and news about your account. We’ll never ask for your password.</span></div>`;
+      wrap.innerHTML = `<div class="lumi-only">${icon('sparkle', 'sm')}<span>Only lumi posts here: updates and news about your account.</span></div>`;
       return;
     }
     ph = `Message ${dmName(dm)}…`;

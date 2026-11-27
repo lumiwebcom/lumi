@@ -242,8 +242,9 @@ if (!colsOf('messages').includes('card')) db.exec('ALTER TABLE messages ADD COLU
 if (!getUser(OFFICIAL_ID)) {
   const uname = db.prepare('SELECT 1 FROM users WHERE username=?').get('lumi') ? 'lumi.official' : 'lumi';
   db.prepare('INSERT INTO users (id,email,username,display_name,avatar,bio,accent,created_at) VALUES (?,?,?,?,?,?,?,?)')
-    .run(OFFICIAL_ID, null, uname, 'lumi', '/favicon.svg?v=2', 'Official lumi notifications: new updates, and news about your account and communities. lumi will never ask for your password.', '#7C5CFF', Date.now());
+    .run(OFFICIAL_ID, null, uname, 'lumi', '/favicon.svg?v=2', 'Official lumi notifications: new updates, and news about your account and communities.', '#7C5CFF', Date.now());
 }
+db.prepare('UPDATE users SET bio=? WHERE id=?').run('Official lumi notifications: new updates, and news about your account and communities.', OFFICIAL_ID);
 const isOfficialDM = (cid) => !!db.prepare('SELECT 1 FROM channel_members WHERE channel_id=? AND user_id=?').get(cid, OFFICIAL_ID);
 // card: { title, body (markdown), items: [..], reason, foot, tone: 'info' | 'warn' | 'good' | 'update' }
 function officialDM(uid, card) {
