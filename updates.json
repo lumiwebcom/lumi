@@ -1,5 +1,14 @@
 [
   {
+    "id": "2026-11-27",
+    "title": "lumi just got an update",
+    "body": "A couple of new things:",
+    "items": [
+      "**Forgot your password?** There's a reset link on the login screen now — we'll email you a one-time link to set a new one.",
+      "**Cleaner names:** usernames and display names can no longer be slurs or swears."
+    ]
+  },
+  {
     "id": "2026-11-26",
     "title": "lumi just got an update",
     "body": "Here’s what’s new:",
