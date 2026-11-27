@@ -90,7 +90,6 @@ const SHIELD_BLUE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.
 const isOfficialUser = (u) => !!u && (u.official || S.userCache[u.id]?.official || u.id === 'lumi-official');
 const officialDm = (dm) => !!dm && dm.type === 'dm' && (dm.recipients || []).some(isOfficialUser);
 function roleBadge(u) {
-  if (isOfficialUser(u)) return `<span class="official-tag" data-tip="Official lumi account">${icon('check', 'xs')}OFFICIAL</span>`;
   const r = (u && (S.userCache[u.id]?.siteRole ?? u.siteRole)) || null;
   if (r === 'owner') return `<span class="rbadge" data-tip="lumi owner">${POTION}</span>`;
   if (r === 'admin') return `<span class="rbadge" data-tip="lumi admin">${SHIELD_BLUE}</span>`;
