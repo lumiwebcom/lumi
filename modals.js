@@ -734,6 +734,58 @@ function banServer(s, after) {
     } catch (e) { toast(e.message, true); }
   };
 }
+// admin panel → Games: post an HTML game file to Activities with a title and price
+async function adminGamesPane(pane, reload) {
+  pane.innerHTML = '<div class="hint" style="padding:20px 0">Loading…</div>';
+  let r; try { r = await api('GET', '/api/admin/games'); } catch (e) { pane.innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+  const kb = (n) => n < 1024 * 1024 ? Math.max(1, Math.round(n / 1024)) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+  pane.innerHTML = `
+    <form class="game-add" id="gm-form">
+      <div class="ga-row">
+        <input class="input" id="gm-title" maxlength="80" placeholder="Game title (e.g. Chess)" autocomplete="off" required>
+        <div class="ga-price"><span>$</span><input class="input" id="gm-price" type="number" min="0" step="0.01" value="0" placeholder="0"></div>
+      </div>
+      <label class="ga-file" id="gm-drop">
+        <input type="file" id="gm-input" accept=".html,.htm,text/html" hidden>
+        <span id="gm-fname">${icon('plus', 'sm')} Choose an HTML game file</span>
+      </label>
+      <div class="ga-foot"><span class="hint">Free when the price is 0. People with Sparks play every game free.</span>
+        <button class="btn primary" type="submit" id="gm-post" disabled>${icon('gamepad', 'sm')} Post game</button></div>
+    </form>
+    <div class="hint" style="margin:16px 0 8px">${r.games.length} ${r.games.length === 1 ? 'game' : 'games'} on Activities</div>
+    <div id="gm-list">${r.games.map((g) => `<div class="row-line"><div class="av" style="width:42px;height:42px;border-radius:12px;background:var(--bg3);display:grid;place-items:center;color:#743afb">${icon('gamepad')}</div>
+      <div class="meta"><div class="bold">${esc(g.title)}</div><div class="small muted">${g.price ? '$' + (g.price / 100).toFixed(g.price % 100 ? 2 : 0) : 'Free'} · ${kb(g.size)}${g.by ? ' · by @' + esc(g.by) : ''} · ${new Date(g.createdAt).toLocaleDateString()}</div></div>
+      <button class="btn danger" data-del-game="${g.id}">${icon('trash', 'sm')} Remove</button></div>`).join('') || '<div class="empty" style="padding:24px"><p>No games yet. Post the first one above.</p></div>'}</div>`;
+  let fileText = '';
+  const input = pane.querySelector('#gm-input'), fname = pane.querySelector('#gm-fname'), post = pane.querySelector('#gm-post'), drop = pane.querySelector('#gm-drop');
+  const take = (f) => {
+    if (!f) return;
+    if (f.size > 11 * 1024 * 1024) return toast('That file is too big (max 11 MB).', true);
+    const rd = new FileReader();
+    rd.onload = () => { fileText = String(rd.result || ''); fname.innerHTML = `${icon('file', 'sm')} ${esc(f.name)} · ${kb(f.size)}`; post.disabled = false; };
+    rd.onerror = () => toast('Couldn’t read that file.', true);
+    rd.readAsText(f);
+  };
+  input.onchange = () => take(input.files[0]);
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); take(e.dataTransfer.files[0]); };
+  pane.querySelector('#gm-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const title = pane.querySelector('#gm-title').value.trim();
+    const price = Number(pane.querySelector('#gm-price').value) || 0;
+    if (!title) return toast('Give the game a title.', true);
+    if (!fileText) return toast('Choose an HTML game file first.', true);
+    post.disabled = true; post.textContent = 'Posting…';
+    try { await api('POST', '/api/admin/games', { title, price, html: fileText }); toast(`“${title}” is live on Activities`); reload(); }
+    catch (err) { toast(err.message, true); post.disabled = false; post.innerHTML = `${icon('gamepad', 'sm')} Post game`; }
+  };
+  pane.querySelectorAll('[data-del-game]').forEach((b) => (b.onclick = async () => {
+    const g = r.games.find((x) => x.id === b.dataset.delGame);
+    if (!(await confirmDialog(`Remove “${g.title}”?`, 'It’s taken off Activities for everyone. You can always post it again.', 'Remove game'))) return;
+    try { await api('DELETE', `/api/admin/games/${g.id}`); toast('Game removed'); reload(); } catch (e) { toast(e.message, true); }
+  }));
+}
 function openAdminPanel() {
   if (!isSiteAdmin()) return;
   const owner = S.me.siteRole === 'owner';
@@ -744,14 +796,17 @@ function openAdminPanel() {
       <button data-f="owners">${POTION.replace('<svg', '<svg class="i sm"')} Owners</button>
       <button data-f="admins">${SHIELD_BLUE.replace('<svg', '<svg class="i sm"')} Owners & admins</button>
       <button data-f="servers">${icon('compass', 'sm')} Communities</button>
+      <button data-f="games">${icon('gamepad', 'sm')} Games</button>
       ${owner ? `<button data-f="sparks">${icon('gem', 'sm')} Sparks</button><button data-reset-tasks>${icon('glow', 'sm')} New tasks for everyone</button>` : ''}
       <div class="lbl" style="margin-top:14px">You are</div><div style="padding:4px 12px;display:flex;align-items:center;gap:6px;font-weight:600">${owner ? POTION.replace('<svg', '<svg style="width:18px;height:18px"') + ' Owner' : SHIELD_BLUE.replace('<svg', '<svg style="width:18px;height:18px"') + ' Admin'}</div></nav>
-    <div class="settings-pane"><h2 id="ap-title">Everyone</h2><input class="input" id="ap-q" placeholder="Search by name or username${owner ? ' or email' : ''}" autocomplete="off" style="margin-bottom:6px"><div class="hint" id="ap-count" style="margin-bottom:10px"></div><div id="ap-list"></div><div id="ap-sparks" hidden></div></div>` });
+    <div class="settings-pane"><h2 id="ap-title">Everyone</h2><input class="input" id="ap-q" placeholder="Search by name or username${owner ? ' or email' : ''}" autocomplete="off" style="margin-bottom:6px"><div class="hint" id="ap-count" style="margin-bottom:10px"></div><div id="ap-list"></div><div id="ap-sparks" hidden></div><div id="ap-games" hidden></div></div>` });
   const el = m.el;
   let timer;
   const load = async () => {
-    const sp = filter === 'sparks';
-    ['#ap-q', '#ap-count', '#ap-list'].forEach((s) => el.querySelector(s).hidden = sp); el.querySelector('#ap-sparks').hidden = !sp;
+    const sp = filter === 'sparks', gm = filter === 'games';
+    ['#ap-q', '#ap-count', '#ap-list'].forEach((s) => el.querySelector(s).hidden = sp || gm);
+    el.querySelector('#ap-sparks').hidden = !sp; el.querySelector('#ap-games').hidden = !gm;
+    if (gm) return adminGamesPane(el.querySelector('#ap-games'), load);
     if (sp) return adminSparksPane(el.querySelector('#ap-sparks'), load);
     const q = el.querySelector('#ap-q').value;
     el.querySelector('#ap-q').placeholder = filter === 'servers' ? 'Search by community name or owner' : `Search by name or username${owner ? ' or email' : ''}`;
@@ -828,7 +883,7 @@ function openAdminPanel() {
   });
   el.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => {
     filter = b.dataset.f; el.querySelectorAll('[data-f]').forEach((x) => x.classList.toggle('active', x === b));
-    el.querySelector('#ap-title').textContent = { all: 'Everyone', banned: 'Banned', owners: 'Owners', admins: 'Owners & admins', servers: 'Communities', sparks: 'Sparks' }[filter]; load();
+    el.querySelector('#ap-title').textContent = { all: 'Everyone', banned: 'Banned', owners: 'Owners', admins: 'Owners & admins', servers: 'Communities', games: 'Games', sparks: 'Sparks' }[filter]; load();
   }));
   load();
 }

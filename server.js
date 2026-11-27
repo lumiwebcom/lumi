@@ -139,6 +139,10 @@ CREATE INDEX IF NOT EXISTS idx_posts_time ON posts(created_at);
 CREATE TABLE IF NOT EXISTS post_likes (post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at INTEGER NOT NULL, PRIMARY KEY (post_id, user_id));
 CREATE TABLE IF NOT EXISTS post_comments (id TEXT PRIMARY KEY, post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, content TEXT NOT NULL, created_at INTEGER NOT NULL);`);
 
+// Activities (arcade): admins post self-contained HTML game files, set a title and a price (0 = free).
+db.exec(`CREATE TABLE IF NOT EXISTS games (id TEXT PRIMARY KEY, title TEXT NOT NULL, price_cents INTEGER NOT NULL DEFAULT 0,
+  html TEXT NOT NULL, created_by TEXT, created_at INTEGER NOT NULL, position INTEGER NOT NULL DEFAULT 0);`);
+
 // The site owner is the account with this username (default "cook"). Once set, ownership stays with that account.
 // lumi owners (comma-separated OWNER_USERNAMES env adds more)
 const OWNER_USERNAMES = [...new Set([(process.env.OWNER_USERNAME || 'cook'), 'type', ...String(process.env.OWNER_USERNAMES || '').split(',')]
@@ -328,6 +332,24 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { maxHttpBufferSize: 1e6, pingInterval: 20000, pingTimeout: 40000 });
 app.post('/api/stripe/webhook', express.raw({ type: '*/*', limit: '1mb' }), (req, res) => stripeWebhook(req, res));
+// Admins upload a whole HTML game file, so this one route takes a bigger body than the rest of the API.
+// It's registered before the global 1 MB JSON parser and handles its own errors (wrap() isn't defined yet here).
+app.post('/api/admin/games', auth, adminOnly, express.json({ limit: '12mb' }), (req, res) => {
+  try {
+    const title = String(req.body.title || '').trim();
+    const html = String(req.body.html || '');
+    const price = Math.max(0, Math.min(100000, Math.round((Number(req.body.price) || 0) * 100)));
+    if (!title) throw fail(400, 'Give the game a title.');
+    if (title.length > 80) throw fail(400, 'That title is too long.');
+    if (moderation.isOffensiveText(title)) throw fail(400, 'Please pick a different title.');
+    if (!/<\s*(html|!doctype|body|canvas|script|div|svg)/i.test(html)) throw fail(400, 'That doesn’t look like an HTML game file.');
+    if (html.length > 11 * 1024 * 1024) throw fail(400, 'That file is too big (max about 11 MB).');
+    const gid = id();
+    db.prepare('INSERT INTO games (id,title,price_cents,html,created_by,created_at,position) VALUES (?,?,?,?,?,?,?)')
+      .run(gid, title, price, html, req.user.id, now(), now());
+    res.json({ ok: true, id: gid });
+  } catch (e) { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Server error' }); }
+});
 app.use(express.json({ limit: '1mb' }));
 // During an update the new server asks this (old) one to save everything and stop taking changes,
 // then loads that save, so nothing done in the last few minutes is lost.
@@ -425,6 +447,37 @@ const wrap = (fn) => (req, res) => {
   } catch (e) { wrapFail(res, e); }
 };
 const fail = (status, message, extra) => Object.assign(new Error(message), { status, extra });
+
+// ---- Activities (games) read routes (the big upload route is registered earlier, before the 1 MB parser) ----
+app.get('/api/admin/games', auth, adminOnly, wrap(() =>
+  ({ games: db.prepare('SELECT id,title,price_cents,created_by,created_at,LENGTH(html) AS size FROM games ORDER BY position DESC, created_at DESC').all()
+    .map((g) => ({ id: g.id, title: g.title, price: g.price_cents || 0, size: g.size, createdAt: g.created_at, by: getUser(g.created_by)?.username || null })) })));
+app.delete('/api/admin/games/:id', auth, adminOnly, wrap((req) => {
+  const g = db.prepare('SELECT id FROM games WHERE id=?').get(req.params.id);
+  if (!g) throw fail(404, 'No such game.');
+  db.prepare('DELETE FROM games WHERE id=?').run(g.id);
+  return { ok: true };
+}));
+// Everyone can see the list; free games (or anyone with Sparks) can play.
+app.get('/api/games', auth, wrap((req) => ({
+  games: db.prepare('SELECT id,title,price_cents FROM games ORDER BY position DESC, created_at DESC').all()
+    .map((g) => ({ id: g.id, title: g.title, price: g.price_cents || 0, playable: !g.price_cents || hasSparks(req.user) })),
+  sparks: hasSparks(req.user), venmo: venmoHandle() })));
+// The game itself, served sandboxed: the CSP keeps it from touching lumi accounts, cookies or APIs.
+app.get('/play/:id', (req, res) => {
+  const s = sessionFromCookieHeader(req.headers.cookie);
+  const u = s && getUser(s.user_id);
+  const page = (msg) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;height:100vh;display:grid;place-items:center;background:#0c0920;color:#cfc6ff;font-family:system-ui,sans-serif;text-align:center"><div style="opacity:.8">${msg}</div></body>`;
+  res.set('Cache-Control', 'no-store');
+  res.set('X-Content-Type-Options', 'nosniff');
+  if (!u) return res.status(401).type('html').send(page('Sign in to lumi to play.'));
+  const g = db.prepare('SELECT * FROM games WHERE id=?').get(req.params.id);
+  if (!g) return res.status(404).type('html').send(page('This game isn’t here anymore.'));
+  if (g.price_cents && !hasSparks(u)) return res.status(403).type('html').send(page('This game is locked. Get Sparks to play it.'));
+  res.set('Content-Security-Policy', "sandbox allow-scripts allow-pointer-lock allow-forms allow-modals allow-popups");
+  res.type('html').send(g.html);
+});
+
 // site bans: banned_at set + optional ban_until (ms). Expired bans are lifted on first check.
 function activeBan(u) {
   if (!u || !u.banned_at) return false;
@@ -2437,7 +2490,7 @@ app.get('/terms', (req, res) => res.send(legalPage('Terms of service', `
 <p>You keep ownership of what you post, and you give lumi permission to store and show it to the people you share it with.</p>`)));
 
 // SPA fallback (for /invite/CODE links etc.)
-app.get(/^\/(?!api|uploads|socket\.io|fonts|privacy|terms).*/, (req, res) => res.sendFile(INDEX_FILE));
+app.get(/^\/(?!api|uploads|socket\.io|fonts|privacy|terms|play).*/, (req, res) => res.sendFile(INDEX_FILE));
 
 // ---------------------------------------------------------------- realtime
 const onlineCounts = new Map(); // userId -> number of sockets

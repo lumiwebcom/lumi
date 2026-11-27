@@ -332,17 +332,50 @@ async function ssAccess(pane, sid) {
 }
 
 // ------------------------------------------------------------------ Activities (Lumi Arcade)
-function renderArcade(main) {
-  main.innerHTML = `<header class="main-head">${mobileBtn()}<div class="t">${icon('gamepad', 'sm')} Activities</div></header>
-    <div class="content arcade-wrap"><div class="arcade-cab"><div class="arcade-screen">
+const arcadeSoon = () => `<div class="arcade-cab"><div class="arcade-screen">
       <div class="ac-title">LUMI<span>ARCADE</span></div>
       <div class="ac-sub">loading the fun</div>
       <div class="ac-dots"><i></i><i></i><i></i><i></i></div>
       <div class="ac-coin">INSERT COIN</div>
       <div class="ac-soon">&#9656; coming soon &#9666;</div>
-    </div></div></div>`;
+    </div></div>`;
+const priceTag = (c) => '$' + (c / 100).toFixed(c % 100 ? 2 : 0);
+async function renderArcade(main) {
+  main.innerHTML = `<header class="main-head">${mobileBtn()}<div class="t">${icon('gamepad', 'sm')} Activities</div></header>
+    <div class="content arcade-wrap" id="arcade-body"><div class="arcade-cab"><div class="arcade-screen"><div class="ac-title">LUMI<span>ARCADE</span></div><div class="ac-sub">loading…</div><div class="ac-dots"><i></i><i></i><i></i><i></i></div></div></div></div>`;
+  let r; try { r = await api('GET', '/api/games'); } catch { r = { games: [] }; }
+  S.arcade = r;
+  if (S.view.type === 'arcade') renderSideBody(); // the sidebar list rendered before this fetch finished
+  const body = main.querySelector('#arcade-body'); if (!body) return;
+  if (!r.games.length) { body.innerHTML = arcadeSoon(); return; }
+  body.classList.add('arcade-grid-wrap');
+  body.innerHTML = `<div class="arcade-grid">${r.games.map((g, i) => `
+    <button class="game-card ${g.playable ? '' : 'locked'}" data-game="${g.id}" style="--gc:${['#6d4aff', '#e0558e', '#2bb3a3', '#f2a23c', '#4a9dff', '#b06dff'][i % 6]}">
+      <div class="gc-art">${icon('gamepad')}${g.playable ? '' : `<span class="gc-lock">${icon('lock', 'sm')}</span>`}</div>
+      <div class="gc-name">${esc(g.title)}</div>
+      <div class="gc-tag">${g.price ? (g.playable ? 'Sparks' : priceTag(g.price)) : 'Free'}</div>
+    </button>`).join('')}</div>`;
+  body.querySelectorAll('[data-game]').forEach((b) => (b.onclick = () => openGame(r.games.find((x) => x.id === b.dataset.game), r)));
+}
+function openGame(g, r) {
+  if (!g) return;
+  if (!g.playable) {
+    const lm = openModal({ title: g.title, cls: 'game-lock-modal', body: `<div style="text-align:center;padding:6px 4px 2px">
+      <div class="gl-badge">${icon('lock')}</div>
+      <p style="margin:12px 0 4px;font-weight:700;font-size:16px">${esc(g.title)} costs ${priceTag(g.price)}</p>
+      <p class="muted" style="margin:0 0 16px">It’s free with Sparks, or pay once${r.venmo ? ` with Venmo (<b>@${esc(r.venmo)}</b>)` : ''}.</p>
+      <button class="btn primary" data-sparks>${icon('gem', 'sm')} Get Sparks — all games free</button></div>` });
+    lm.el.querySelector('[data-sparks]').onclick = () => { lm.close(); navigate('/sparks'); };
+    return;
+  }
+  const m = openModal({ title: g.title, cls: 'game-modal wide', body: `<iframe class="game-frame" src="/play/${g.id}" title="${esc(g.title)}" allow="fullscreen; autoplay; gamepad" sandbox="allow-scripts allow-pointer-lock allow-forms allow-modals allow-popups"></iframe>` });
+  m.el.classList.add('game-playing');
 }
 function renderArcadeSide(el) {
-  el.innerHTML = `<div class="side-section">Games</div>
-    <div class="arcade-side-soon">${icon('gamepad', 'sm')} Coming soon</div>`;
+  const r = S.arcade;
+  const list = r && r.games.length
+    ? r.games.map((g) => `<button class="side-game" data-game="${g.id}">${icon('gamepad', 'sm')} <span>${esc(g.title)}</span>${g.price ? `<span class="sg-tag">${g.playable ? '★' : priceTag(g.price)}</span>` : ''}</button>`).join('')
+    : `<div class="arcade-side-soon">${icon('gamepad', 'sm')} Coming soon</div>`;
+  el.innerHTML = `<div class="side-section">Games</div>${list}`;
+  el.querySelectorAll('[data-game]').forEach((b) => (b.onclick = () => openGame(r.games.find((x) => x.id === b.dataset.game), r)));
 }
