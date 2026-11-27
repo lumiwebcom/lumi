@@ -376,6 +376,9 @@ function openGame(g, r) {
   const done = () => { if (ld) ld.remove(); fr.classList.add('ready'); };
   fr.addEventListener('load', done);
   setTimeout(done, 8000); // never leave the spinner stuck if the load event is missed
+  const onMsg = (ev) => { if (ev.data && ev.data.__lumiGame && ev.data.error) console.warn('[game:' + g.title + ']', ev.data.error); };
+  window.addEventListener('message', onMsg);
+  const iv = setInterval(() => { if (!document.body.contains(m.el)) { window.removeEventListener('message', onMsg); clearInterval(iv); } }, 2000);
 }
 function renderArcadeSide(el) {
   const r = S.arcade;

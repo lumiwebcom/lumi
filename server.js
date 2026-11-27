@@ -144,6 +144,24 @@ db.exec(`CREATE TABLE IF NOT EXISTS games (id TEXT PRIMARY KEY, title TEXT NOT N
   html TEXT NOT NULL, created_by TEXT, created_at INTEGER NOT NULL, position INTEGER NOT NULL DEFAULT 0);`);
 // thumb: a small image data URL shown on the game card. html_gz: the game pre-gzipped, so /play serves fast.
 for (const [c, t] of [['thumb', 'TEXT'], ['html_gz', 'BLOB']]) if (!colsOf('games').includes(c)) db.exec(`ALTER TABLE games ADD COLUMN ${c} ${t}`);
+// Games run in a locked-down sandbox with no storage, so touching localStorage throws and many games
+// hang on their loading screen. This shim gives them a safe in-memory storage and reports errors to the parent.
+const GAME_SHIM = '<!--lumi-shim-v1--><script>(function(){function mk(){var m=Object.create(null);return{getItem:function(k){k=\'\'+k;return k in m?m[k]:null;},setItem:function(k,v){m[\'\'+k]=\'\'+v;},removeItem:function(k){delete m[\'\'+k];},clear:function(){for(var k in m)delete m[k];},key:function(i){return Object.keys(m)[i]||null;},get length(){return Object.keys(m).length;}};}[\'localStorage\',\'sessionStorage\'].forEach(function(n){try{window[n].getItem(\'__t\');}catch(e){try{Object.defineProperty(window,n,{value:mk(),configurable:true,writable:true});}catch(_){try{window[n]=mk();}catch(__){}}}});function rep(m){try{parent.postMessage({__lumiGame:1,error:String(m)},\'*\');}catch(e){}}window.addEventListener(\'error\',function(e){rep((e&&e.message)||\'Script error\');});window.addEventListener(\'unhandledrejection\',function(e){rep(\'Unhandled rejection: \'+((e&&e.reason&&e.reason.message)||(e&&e.reason)||\'\'));});})();</script>';
+function prepareGameHtml(raw) {
+  const s = String(raw || '');
+  if (s.includes('<!--lumi-shim-v1-->')) return s;
+  if (/<head[^>]*>/i.test(s)) return s.replace(/<head[^>]*>/i, (m) => m + GAME_SHIM);
+  if (/<html[^>]*>/i.test(s)) return s.replace(/<html[^>]*>/i, (m) => m + GAME_SHIM);
+  if (/<!doctype[^>]*>/i.test(s)) return s.replace(/<!doctype[^>]*>/i, (m) => m + GAME_SHIM);
+  return GAME_SHIM + s;
+}
+// One-time: fold the shim into games posted before it existed.
+for (const g of db.prepare('SELECT id, html FROM games').all()) {
+  if (!g.html.includes('<!--lumi-shim-v1-->')) {
+    const prepared = prepareGameHtml(g.html);
+    db.prepare('UPDATE games SET html=?, html_gz=? WHERE id=?').run(prepared, zlib.gzipSync(Buffer.from(prepared, 'utf8')), g.id);
+  }
+}
 
 // The site owner is the account with this username (default "cook"). Once set, ownership stays with that account.
 // lumi owners (comma-separated OWNER_USERNAMES env adds more)
@@ -348,9 +366,10 @@ app.post('/api/admin/games', auth, adminOnly, express.json({ limit: '12mb' }), (
     if (!/<\s*(html|!doctype|body|canvas|script|div|svg)/i.test(html)) throw fail(400, 'That doesn’t look like an HTML game file.');
     if (html.length > 11 * 1024 * 1024) throw fail(400, 'That file is too big (max about 11 MB).');
     const gid = id();
-    const gz = zlib.gzipSync(Buffer.from(html, 'utf8'));
+    const prepared = prepareGameHtml(html);
+    const gz = zlib.gzipSync(Buffer.from(prepared, 'utf8'));
     db.prepare('INSERT INTO games (id,title,price_cents,html,html_gz,thumb,created_by,created_at,position) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run(gid, title, price, html, gz, thumb, req.user.id, now(), now());
+      .run(gid, title, price, prepared, gz, thumb, req.user.id, now(), now());
     res.json({ ok: true, id: gid });
   } catch (e) { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Server error' }); }
 });
