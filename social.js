@@ -334,12 +334,13 @@ async function ssAccess(pane, sid) {
 // ------------------------------------------------------------------ Activities (Lumi Arcade)
 function renderArcade(main) {
   main.innerHTML = `<header class="main-head">${mobileBtn()}<div class="t">${icon('gamepad', 'sm')} Activities</div></header>
-    <div class="content arcade-wrap"><div class="arcade-soon">
-      <div class="as-badge">${icon('gamepad')}</div>
-      <h2>Lumi Arcade</h2>
-      <p>Games you can play right inside lumi are on the way.<br>Check back soon.</p>
-      <span class="as-tag">Coming soon</span>
-    </div></div>`;
+    <div class="content arcade-wrap"><div class="arcade-cab"><div class="arcade-screen">
+      <div class="ac-title">LUMI<span>ARCADE</span></div>
+      <div class="ac-sub">loading the fun</div>
+      <div class="ac-dots"><i></i><i></i><i></i><i></i></div>
+      <div class="ac-coin">INSERT COIN</div>
+      <div class="ac-soon">&#9656; coming soon &#9666;</div>
+    </div></div></div>`;
 }
 function renderArcadeSide(el) {
   el.innerHTML = `<div class="side-section">Games</div>

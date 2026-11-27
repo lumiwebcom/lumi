@@ -1375,12 +1375,27 @@ img.mark { border-radius: 24%; object-fit: cover; }
 
 /* ---- Activities (Lumi Arcade) ---- */
 .rail-btn.arcade-rail { background:linear-gradient(135deg,#6d4aff,#9d7bff); color:#fff; }
-.arcade-wrap { flex:1; overflow-y:auto; display:flex; }
-.arcade-soon { margin:auto; text-align:center; padding:40px 24px; max-width:420px; }
-.arcade-soon .as-badge { width:88px; height:88px; margin:0 auto 20px; border-radius:24px; display:grid; place-items:center;
-  background:linear-gradient(135deg,#6d4aff,#9d7bff); color:#fff; box-shadow:0 14px 34px rgba(109,74,255,.4); }
-.arcade-soon .as-badge .i { width:44px; height:44px; }
-.arcade-soon h2 { font-size:28px; font-weight:800; }
-.arcade-soon p { color:var(--text3); margin:8px 0 18px; line-height:1.55; }
-.arcade-soon .as-tag { display:inline-block; font-weight:700; font-size:13px; color:#6d4aff; background:#6d4aff1f; padding:7px 16px; border-radius:999px; }
+.arcade-wrap { flex:1; overflow-y:auto; display:flex; padding:28px; }
+.arcade-cab { margin:auto; width:min(520px,100%); }
+.arcade-screen { position:relative; overflow:hidden; border-radius:18px; padding:46px 28px 38px; text-align:center;
+  background:radial-gradient(120% 120% at 50% 0%, #1c1548 0%, #0c0920 72%); border:1px solid #3a2d7a;
+  box-shadow:0 0 0 4px #120d2e, 0 22px 50px rgba(0,0,0,.45), inset 0 0 60px rgba(109,74,255,.16); }
+.arcade-screen::before { content:''; position:absolute; inset:0; pointer-events:none;
+  background:repeating-linear-gradient(to bottom, rgba(255,255,255,.045) 0 1px, transparent 1px 3px); }
+.arcade-screen::after { content:''; position:absolute; inset:0; pointer-events:none;
+  background:radial-gradient(120% 85% at 50% 50%, transparent 58%, rgba(0,0,0,.45)); }
+.ac-title { font-family:"Courier New",ui-monospace,monospace; font-weight:800; font-size:46px; line-height:.92; letter-spacing:5px; color:#fff;
+  text-shadow:0 0 10px #8b6bff, 0 0 28px #6d4aff; }
+.ac-title span { display:block; color:#bda9ff; font-size:38px; }
+.ac-sub { color:#9f97c8; margin-top:14px; font-size:13px; letter-spacing:3px; text-transform:uppercase; }
+.ac-dots { display:flex; gap:9px; justify-content:center; margin:22px 0 26px; }
+.ac-dots i { width:13px; height:13px; border-radius:3px; background:#6d4aff; box-shadow:0 0 10px currentColor; color:#6d4aff; animation:acBounce 1s infinite ease-in-out; }
+.ac-dots i:nth-child(2){ animation-delay:.12s; background:#4ad6c4; color:#4ad6c4; }
+.ac-dots i:nth-child(3){ animation-delay:.24s; background:#ff5a7a; color:#ff5a7a; }
+.ac-dots i:nth-child(4){ animation-delay:.36s; background:#ffd23c; color:#ffd23c; }
+@keyframes acBounce { 0%,100%{ transform:translateY(0) } 50%{ transform:translateY(-13px) } }
+.ac-coin { font-family:"Courier New",monospace; font-weight:800; letter-spacing:4px; color:#ffd23c; text-shadow:0 0 12px rgba(255,210,60,.6);
+  animation:acBlink 1.1s steps(1,end) infinite; }
+@keyframes acBlink { 0%,55%{ opacity:1 } 56%,100%{ opacity:.12 } }
+.ac-soon { margin-top:11px; color:#8077ad; font-size:12px; letter-spacing:3px; text-transform:uppercase; }
 .arcade-side-soon { display:flex; align-items:center; gap:8px; padding:10px 14px; color:var(--text3); font-size:13px; }

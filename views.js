@@ -95,7 +95,6 @@ function renderRail() {
     html += railItem({ active: v.serverId === s.id, unread: s.unread > 0, tip: s.name + (inVoice ? ' • in a lounge' : ''),
       inner: `<div class="rail-ring"><div class="rail-btn srv ${s.icon ? 'has-img' : ''}" style="--c:${colorFor(s.id)}">${serverIcon(s)}</div></div>`, data: `data-server="${s.id}"` });
   }
-  html += railItem({ tip: 'Create a community', inner: `<div class="rail-btn add">${icon('plus')}</div>`, data: 'data-act="create-server"' });
   html += railItem({ active: v.type === 'stargaze', tip: 'Stargaze', inner: `<div class="rail-btn add sg-rail">${icon('compass')}</div>`, data: 'data-act="stargaze"' });
   if (isSiteAdmin()) html += '<div class="rail-spacer"></div>' + railItem({ tip: 'Admin panel', inner: `<div class="rail-btn add admin-btn">${SHIELD_BLUE}</div>`, data: 'data-act="admin-panel"' });
   $('#rail').innerHTML = html;
