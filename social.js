@@ -347,14 +347,17 @@ async function renderArcade(main) {
   S.arcade = r;
   if (S.view.type === 'arcade') renderSideBody(); // the sidebar list rendered before this fetch finished
   const body = main.querySelector('#arcade-body'); if (!body) return;
-  if (!r.games.length) { body.innerHTML = arcadeSoon(); return; }
   body.classList.add('arcade-grid-wrap');
-  body.innerHTML = `<div class="arcade-grid">${r.games.map((g, i) => `
+  const chessCard = `<button class="game-card builtin" data-builtin="chess" style="--gc:#2bb3a3">
+      <div class="gc-art chess-art"><span class="ca-pieces">♜♞♝♛♚</span></div>
+      <div class="gc-name">Chess</div><div class="gc-tag">Online · Free</div></button>`;
+  body.innerHTML = `<div class="arcade-grid">${chessCard}${r.games.map((g, i) => `
     <button class="game-card ${g.playable ? '' : 'locked'}" data-game="${g.id}" style="--gc:${['#6d4aff', '#e0558e', '#2bb3a3', '#f2a23c', '#4a9dff', '#b06dff'][i % 6]}">
       <div class="gc-art${g.thumb ? ' has-thumb' : ''}"${g.thumb ? ` style="background-image:url('${esc(g.thumb)}')"` : ''}>${g.thumb ? '' : icon('gamepad')}${g.playable ? '' : `<span class="gc-lock">${icon('lock', 'sm')}</span>`}</div>
       <div class="gc-name">${esc(g.title)}</div>
       <div class="gc-tag">${g.price ? (g.playable ? 'Sparks' : priceTag(g.price)) : 'Free'}</div>
     </button>`).join('')}</div>`;
+  body.querySelector('[data-builtin="chess"]').onclick = () => navigate('/chess');
   body.querySelectorAll('[data-game]').forEach((b) => (b.onclick = () => openGame(r.games.find((x) => x.id === b.dataset.game), r)));
 }
 function openGame(g, r) {
@@ -373,14 +376,23 @@ function openGame(g, r) {
   const src = g.url ? esc(g.url) : `/play/${g.id}`;
   const sandbox = g.url ? 'allow-scripts allow-same-origin allow-pointer-lock allow-forms allow-modals allow-popups'
     : 'allow-scripts allow-pointer-lock allow-forms allow-modals allow-popups';
+  // URL games are embedded from another site; many sites refuse to be framed and show blank, so always
+  // offer an "open in new tab" escape and a fallback note if nothing renders.
+  const openBtn = g.url ? `<a class="game-open" href="${esc(g.url)}" target="_blank" rel="noopener noreferrer">${icon('link', 'sm')} Open in new tab</a>` : '';
   const m = openModal({ title: g.title, cls: 'game-modal wide', body: `<div class="game-stage">
     <div class="game-loading" id="game-loading"><div class="gl-spin"></div><div class="gl-txt">Loading ${esc(g.title)}…</div></div>
-    <iframe class="game-frame" id="game-frame" src="${src}" title="${esc(g.title)}" allow="fullscreen; autoplay; gamepad" sandbox="${sandbox}"></iframe></div>` });
+    ${openBtn}
+    <iframe class="game-frame" id="game-frame" src="${src}" title="${esc(g.title)}" allow="fullscreen; autoplay; gamepad" sandbox="${sandbox}"></iframe>
+    <div class="game-blocked" id="game-blocked" hidden><p>This game didn’t load. The site may not allow being embedded.</p>
+      ${g.url ? `<a class="btn primary" href="${esc(g.url)}" target="_blank" rel="noopener noreferrer">${icon('link', 'sm')} Open in a new tab</a>` : ''}</div></div>` });
   m.el.classList.add('game-playing');
-  const fr = m.el.querySelector('#game-frame'), ld = m.el.querySelector('#game-loading');
-  const done = () => { if (ld) ld.remove(); fr.classList.add('ready'); };
+  const fr = m.el.querySelector('#game-frame'), ld = m.el.querySelector('#game-loading'), blocked = m.el.querySelector('#game-blocked');
+  let loaded = false;
+  const done = () => { loaded = true; if (ld) ld.remove(); fr.classList.add('ready'); };
   fr.addEventListener('load', done);
   setTimeout(done, 8000); // never leave the spinner stuck if the load event is missed
+  // For URL games, if the frame never fires load (blocked), surface the fallback.
+  if (g.url) setTimeout(() => { if (!loaded) { if (ld) ld.remove(); if (blocked) blocked.hidden = false; } }, 6000);
   const onMsg = (ev) => { if (ev.data && ev.data.__lumiGame && ev.data.error) console.warn('[game:' + g.title + ']', ev.data.error); };
   window.addEventListener('message', onMsg);
   const iv = setInterval(() => { if (!document.body.contains(m.el)) { window.removeEventListener('message', onMsg); clearInterval(iv); } }, 2000);

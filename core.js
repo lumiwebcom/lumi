@@ -416,6 +416,7 @@ function parseRoute(p = location.pathname) {
   if (/^\/feed\/?$/.test(p)) return { type: 'feed' };
   if (/^\/stargaze\/?$/.test(p)) return { type: 'stargaze' };
   if (/^\/arcade\/?$/.test(p)) return { type: 'arcade' };
+  if (/^\/chess\/?$/.test(p)) return { type: 'chess' };
   if (/^\/activity\/?$/.test(p)) return { type: 'activity' };
   if (/^\/sparks\/?$/.test(p)) return { type: 'sparks' };
   return { type: 'home' };

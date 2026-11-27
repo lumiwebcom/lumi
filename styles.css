@@ -1446,6 +1446,61 @@ img.mark { border-radius: 24%; object-fit: cover; }
 .ga-thumb:hover { border-color:#743afb; color:var(--text); }
 .ga-thumb.has { border-style:solid; border-color:#743afb; }
 .ga-thumb span { display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; padding:6px; text-align:center; }
+/* URL-game embed fallback */
+.game-open { position:absolute; top:10px; right:10px; z-index:3; display:inline-flex; align-items:center; gap:6px; padding:6px 11px; border-radius:9px; background:rgba(12,9,32,.72); color:#fff; font-size:12px; font-weight:600; text-decoration:none; backdrop-filter:blur(4px); }
+.game-open:hover { background:rgba(12,9,32,.9); }
+.game-blocked { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; padding:24px; color:#cfc6ff; }
+.game-blocked p { margin:0; max-width:320px; opacity:.85; }
+/* Chess: built-in card art */
+.chess-art { background:linear-gradient(140deg,#2bb3a3,#176f67); }
+.chess-art .ca-pieces { font-size:40px; letter-spacing:2px; color:#f3fff9; text-shadow:0 2px 6px rgba(0,0,0,.3); }
+/* Chess: menu */
+.chess-wrap { padding:28px 24px; display:block; }
+.chess-menu { max-width:560px; margin:0 auto; text-align:center; }
+.cm-title { display:inline-flex; align-items:center; gap:10px; font-size:26px; font-weight:800; }
+.cm-title .i { width:26px; height:26px; color:#2bb3a3; }
+.cm-sub { color:var(--text2); margin:8px 0 22px; }
+.cm-cards { display:grid; grid-template-columns:1fr 1fr; gap:14px; text-align:left; }
+.cm-card { display:flex; flex-direction:column; gap:4px; padding:16px; border:none; border-radius:14px; background:var(--bg2); box-shadow:inset 0 0 0 1px var(--border); cursor:pointer; transition:transform .12s, box-shadow .12s; }
+.cm-card:hover { transform:translateY(-2px); box-shadow:inset 0 0 0 1px #2bb3a3, 0 10px 22px -14px #2bb3a3; }
+.cm-ic { display:grid; place-items:center; width:40px; height:40px; border-radius:11px; background:linear-gradient(140deg,#2bb3a3,#176f67); color:#fff; margin-bottom:6px; }
+.cm-ic .i { width:20px; height:20px; }
+.cm-h { font-weight:700; font-size:15px; }
+.cm-d { font-size:12.5px; color:var(--text3); }
+.cm-back { margin-top:20px; }
+.cw-spin { display:grid; place-items:center; margin:18px 0; }
+.cw-code { display:flex; justify-content:center; gap:10px; margin:6px 0 4px; }
+.cw-code span { display:grid; place-items:center; width:52px; height:64px; border-radius:12px; background:var(--bg2); box-shadow:inset 0 0 0 1px var(--border); font-size:30px; font-weight:800; color:#2bb3a3; }
+/* Chess: game */
+.chess-game { max-width:560px; margin:0 auto; display:flex; flex-direction:column; gap:10px; }
+.cg-bar { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.cg-player { display:flex; align-items:center; gap:8px; font-weight:600; font-size:14px; }
+.cg-av { border-radius:50%; object-fit:cover; }
+.cg-av-txt { display:inline-grid; place-items:center; color:#fff; font-size:13px; font-weight:700; }
+.cg-turn { font-size:13px; font-weight:700; color:var(--text2); padding:5px 12px; border-radius:20px; background:var(--bg2); }
+.cg-turn.check { color:#fff; background:#e0558e; }
+.cg-turn.over { color:#fff; background:#2bb3a3; }
+.cg-boardwrap { width:100%; }
+.cg-board { display:grid; grid-template-columns:repeat(8,1fr); aspect-ratio:1; width:100%; border-radius:12px; overflow:hidden; box-shadow:0 10px 30px -18px rgba(0,0,0,.6); }
+.cg-sq { position:relative; display:grid; place-items:center; cursor:pointer; user-select:none; }
+.cg-sq.light { background:#eef2e4; }
+.cg-sq.dark { background:#6a9b6f; }
+.cg-sq.sel { box-shadow:inset 0 0 0 3px #f2c94c; }
+.cg-sq.last { background:#cfd98c; }
+.cg-sq.dark.last { background:#8fae63; }
+.cg-sq.chk { box-shadow:inset 0 0 0 3px #e0558e; }
+.cg-pc { font-size:min(7vw,38px); line-height:1; pointer-events:none; }
+.cg-pc.wp { color:#fbfbf7; text-shadow:0 1px 1px #333,0 -1px 1px #333,1px 0 1px #333,-1px 0 1px #333; }
+.cg-pc.bp { color:#20242b; text-shadow:0 1px 1px rgba(255,255,255,.35); }
+.cg-dot { position:absolute; width:26%; height:26%; border-radius:50%; background:rgba(20,30,20,.35); pointer-events:none; }
+.cg-dot.cap { width:84%; height:84%; background:none; border:4px solid rgba(20,30,20,.35); border-radius:50%; }
+.cg-actions { display:flex; gap:8px; }
+.promo-row { display:flex; gap:10px; justify-content:center; padding:8px 4px; }
+.promo-pc { width:60px; height:60px; border:none; border-radius:12px; background:var(--bg3); cursor:pointer; font-size:38px; line-height:1; }
+.promo-pc.wp { color:#fbfbf7; text-shadow:0 1px 1px #333,0 -1px 1px #333,1px 0 1px #333,-1px 0 1px #333; }
+.promo-pc.bp { color:#20242b; }
+.promo-pc:hover { background:#2bb3a3; }
+@media (max-width:600px){ .cm-cards { grid-template-columns:1fr; } }
 .ga-or { display:flex; align-items:center; gap:10px; color:var(--text3); font-size:12px; text-transform:uppercase; letter-spacing:.5px; }
 .ga-or::before, .ga-or::after { content:''; flex:1; height:1px; background:var(--border); }
 .ga-foot { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }

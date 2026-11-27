@@ -415,7 +415,7 @@ app.use('/api', (req, res, next) => {
 // project root instead, serve just those known files from the root, and never anything else.
 const PUBLIC_DIR = fs.existsSync(path.join(__dirname, 'public', 'index.html')) ? path.join(__dirname, 'public') : null;
 const FLAT_FILES = { '/index.html': 'index.html', '/styles.css': 'styles.css', '/favicon.svg': 'favicon.svg' };
-for (const f of ['core', 'auth', 'views', 'social', 'extras', 'gifs', 'community', 'modals', 'call', 'main']) FLAT_FILES[`/js/${f}.js`] = `${f}.js`;
+for (const f of ['core', 'auth', 'views', 'social', 'extras', 'gifs', 'community', 'modals', 'chess', 'call', 'main']) FLAT_FILES[`/js/${f}.js`] = `${f}.js`;
 const INDEX_FILE = PUBLIC_DIR ? path.join(PUBLIC_DIR, 'index.html') : path.join(__dirname, 'index.html');
 // fingerprint of the front-end: changes whenever a new version is deployed (drives the in-app "Update" button)
 const BUILD_ID = (() => {
@@ -2623,6 +2623,20 @@ io.use((socket, next) => {
   socket.data.userId = u.id; socket.data.sid = sess.sid; next();
 });
 
+// ---- Chess: in-memory matchmaking + move relay (clients enforce the rules; the server pairs players and relays).
+const chessGames = new Map();  // gameId -> { id, white, black, turn }
+const chessTables = new Map(); // code   -> { host: socket, hostUid }
+let chessQueue = [];           // sockets waiting for an online match
+function chessStart(a, b) {
+  chessQueue = chessQueue.filter((s) => s !== a && s !== b);
+  const gid = 'cg_' + id();
+  const whiteSock = Math.random() < 0.5 ? a : b, blackSock = whiteSock === a ? b : a;
+  chessGames.set(gid, { id: gid, white: whiteSock.data.userId, black: blackSock.data.userId, turn: 'w' });
+  a.data.chessGame = gid; b.data.chessGame = gid;
+  whiteSock.emit('chess:start', { gameId: gid, color: 'w', opponent: publicUser(getUser(blackSock.data.userId)) });
+  blackSock.emit('chess:start', { gameId: gid, color: 'b', opponent: publicUser(getUser(whiteSock.data.userId)) });
+}
+
 io.on('connection', (socket) => {
   const uid = socket.data.userId;
   socket.join(`user:${uid}`);
@@ -2699,8 +2713,47 @@ io.on('connection', (socket) => {
     io.to(to).emit('rtc:signal', { from: socket.id, userId: uid, data });
   });
 
+  socket.on('chess:find', ({ mode, code } = {}, ack) => {
+    chessQueue = chessQueue.filter((s) => s !== socket);
+    if (socket.data.chessTableCode) { chessTables.delete(socket.data.chessTableCode); socket.data.chessTableCode = null; }
+    if (mode === 'online') {
+      const opp = chessQueue.find((s) => s.connected && s.data.userId !== uid);
+      if (opp) chessStart(socket, opp); else { chessQueue.push(socket); ack?.({ waiting: true }); }
+    } else if (mode === 'create') {
+      let c; do { c = String(Math.floor(1000 + Math.random() * 9000)); } while (chessTables.has(c));
+      chessTables.set(c, { host: socket, hostUid: uid }); socket.data.chessTableCode = c; ack?.({ code: c });
+    } else if (mode === 'join') {
+      const t = chessTables.get(String(code || '').trim());
+      if (!t || !t.host.connected) return ack?.({ error: 'No open table with that code.' });
+      if (t.hostUid === uid) return ack?.({ error: 'That’s your own code — share it with a friend.' });
+      chessTables.delete(String(code).trim()); t.host.data.chessTableCode = null;
+      ack?.({ ok: true }); chessStart(t.host, socket);
+    } else ack?.({ error: 'Unknown mode.' });
+  });
+  socket.on('chess:cancel', () => {
+    chessQueue = chessQueue.filter((s) => s !== socket);
+    if (socket.data.chessTableCode) { chessTables.delete(socket.data.chessTableCode); socket.data.chessTableCode = null; }
+  });
+  socket.on('chess:move', ({ gameId, move } = {}) => {
+    const g = chessGames.get(gameId); if (!g || (g.white !== uid && g.black !== uid)) return;
+    const myColor = g.white === uid ? 'w' : 'b';
+    if (g.turn !== myColor) return; // ignore out-of-turn / duplicate relays
+    g.turn = myColor === 'w' ? 'b' : 'w';
+    io.to(`user:${g.white === uid ? g.black : g.white}`).emit('chess:move', { gameId, move });
+  });
+  socket.on('chess:resign', ({ gameId } = {}) => {
+    const g = chessGames.get(gameId); if (!g || (g.white !== uid && g.black !== uid)) return;
+    const other = g.white === uid ? g.black : g.white;
+    chessGames.delete(gameId); socket.data.chessGame = null;
+    io.to(`user:${other}`).emit('chess:over', { gameId, result: 'resign', winner: other });
+  });
+
   socket.on('disconnect', () => {
     leaveVoice(socket);
+    chessQueue = chessQueue.filter((s) => s !== socket);
+    if (socket.data.chessTableCode) chessTables.delete(socket.data.chessTableCode);
+    const cg = socket.data.chessGame;
+    if (cg) { const g = chessGames.get(cg); if (g) { const other = g.white === uid ? g.black : g.white; chessGames.delete(cg); io.to(`user:${other}`).emit('chess:over', { gameId: cg, result: 'left', winner: other }); } }
     const n = (onlineCounts.get(uid) || 1) - 1;
     if (n <= 0) {
       onlineCounts.delete(uid);
