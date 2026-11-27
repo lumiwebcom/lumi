@@ -342,19 +342,29 @@ const arcadeSoon = () => `<div class="arcade-cab"><div class="arcade-screen">
 const priceTag = (c) => '$' + (c / 100).toFixed(c % 100 ? 2 : 0);
 // Original illustrated thumbnail for the built-in Chess card (own artwork, not from any game).
 const chessCardArt = () => {
-  const king = (x, fill, stroke) => `<g transform="translate(${x},40) scale(1.15)" fill="${fill}" stroke="${stroke}" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round">${CH_SVG.k}</g>`;
-  const floor = [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => `<rect x="${i * 22 - 10}" y="80" width="22" height="30" fill="${i % 2 ? '#6b9b6e' : '#ece7d6'}"/>`).join('')
-    + [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => `<rect x="${i * 22 - 10}" y="95" width="22" height="15" fill="${i % 2 ? '#ece7d6' : '#6b9b6e'}"/>`).join('');
+  const king = (x, fill, stroke) => `<g transform="translate(${x},36) scale(1.22)" fill="${fill}" stroke="${stroke}" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round">${CH_SVG.k}</g>`;
+  const floor = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => `<rect x="${i * 20 - 14}" y="84" width="20" height="20" fill="${i % 2 ? '#6b9b6e' : '#ece7d6'}"/>`).join('')
+    + [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => `<rect x="${i * 20 - 14}" y="96" width="20" height="8" fill="${i % 2 ? '#ece7d6' : '#6b9b6e'}"/>`).join('');
+  const pop = (x, y) => `<g stroke="#ffd43b" stroke-width="2.3" stroke-linecap="round"><path d="M${x} ${y}l3 4"/><path d="M${x + 5} ${y - 2}l1 4.5"/><path d="M${x - 3} ${y + 5}l4 1"/></g>`;
   return `<svg class="chess-card-svg" viewBox="0 0 168 104" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
-    <defs><linearGradient id="csky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7ec6ff"/><stop offset="1" stop-color="#cdecff"/></linearGradient></defs>
+    <defs><linearGradient id="csky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#53b0f3"/><stop offset="1" stop-color="#aadcff"/></linearGradient></defs>
     <rect width="168" height="104" fill="url(#csky)"/>
-    <ellipse cx="34" cy="24" rx="19" ry="8" fill="#fff" opacity=".75"/>
-    <ellipse cx="132" cy="18" rx="23" ry="9" fill="#fff" opacity=".6"/>
+    <ellipse cx="28" cy="18" rx="15" ry="6" fill="#fff" opacity=".8"/>
+    <ellipse cx="140" cy="14" rx="17" ry="6.5" fill="#fff" opacity=".7"/>
+    <path d="M-5 104 Q22 68 62 92 L62 104z" fill="#79bd58"/>
+    <path d="M173 104 Q150 70 106 92 L106 104z" fill="#79bd58"/>
+    <g fill="#dde1e7" stroke="#bcc1cb" stroke-width="1">
+      <rect x="77" y="42" width="15" height="40"/>
+      <rect x="75" y="38" width="3.2" height="6"/><rect x="80.5" y="38" width="3.2" height="6"/><rect x="86" y="38" width="3.2" height="6"/><rect x="91" y="38" width="3.2" height="6"/>
+      <rect x="81" y="52" width="6" height="8" rx="3" fill="#8f96a4" stroke="none"/>
+    </g>
+    <rect x="91.4" y="26" width="1.6" height="16" fill="#c9a24a"/><path d="M93 27l11 -2.5v6.5l-11 -2.5z" fill="#3a63b0"/>
     <g>${floor}</g>
-    <path d="M84 16l-5 10 7-3 7 3-5-10z" fill="#f6c743" stroke="#d99a1e" stroke-width="1.3" stroke-linejoin="round"/>
-    <circle cx="79" cy="26" r="2.3" fill="#f6c743" stroke="#d99a1e" stroke-width="1"/><circle cx="89" cy="26" r="2.3" fill="#f6c743" stroke="#d99a1e" stroke-width="1"/>
-    ${king(20, '#f4efe2', '#3a342b')}
-    ${king(108, '#2c2a2e', '#0c0b10')}
+    <path d="M78 24l-2.5-9 5.5 4.5 4.5-7 4.5 7 5.5-4.5-2.5 9z" fill="#ffcf3a" stroke="#e0a81e" stroke-width="1.2" stroke-linejoin="round"/>
+    <circle cx="75.5" cy="15.5" r="1.9" fill="#ffcf3a" stroke="#e0a81e" stroke-width=".9"/><circle cx="84.5" cy="12.5" r="2" fill="#ffcf3a" stroke="#e0a81e" stroke-width=".9"/><circle cx="93.5" cy="15.5" r="1.9" fill="#ffcf3a" stroke="#e0a81e" stroke-width=".9"/>
+    ${king(18, '#f4efe2', '#3a342b')}
+    ${king(110, '#2c2a2e', '#0c0b10')}
+    ${pop(50, 30)}${pop(118, 30)}
   </svg>`;
 };
 async function renderArcade(main) {
