@@ -340,6 +340,23 @@ const arcadeSoon = () => `<div class="arcade-cab"><div class="arcade-screen">
       <div class="ac-soon">&#9656; coming soon &#9666;</div>
     </div></div>`;
 const priceTag = (c) => '$' + (c / 100).toFixed(c % 100 ? 2 : 0);
+// Original illustrated thumbnail for the built-in Chess card (own artwork, not from any game).
+const chessCardArt = () => {
+  const king = (x, fill, stroke) => `<g transform="translate(${x},40) scale(1.15)" fill="${fill}" stroke="${stroke}" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round">${CH_SVG.k}</g>`;
+  const floor = [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => `<rect x="${i * 22 - 10}" y="80" width="22" height="30" fill="${i % 2 ? '#6b9b6e' : '#ece7d6'}"/>`).join('')
+    + [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => `<rect x="${i * 22 - 10}" y="95" width="22" height="15" fill="${i % 2 ? '#ece7d6' : '#6b9b6e'}"/>`).join('');
+  return `<svg class="chess-card-svg" viewBox="0 0 168 104" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+    <defs><linearGradient id="csky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7ec6ff"/><stop offset="1" stop-color="#cdecff"/></linearGradient></defs>
+    <rect width="168" height="104" fill="url(#csky)"/>
+    <ellipse cx="34" cy="24" rx="19" ry="8" fill="#fff" opacity=".75"/>
+    <ellipse cx="132" cy="18" rx="23" ry="9" fill="#fff" opacity=".6"/>
+    <g>${floor}</g>
+    <path d="M84 16l-5 10 7-3 7 3-5-10z" fill="#f6c743" stroke="#d99a1e" stroke-width="1.3" stroke-linejoin="round"/>
+    <circle cx="79" cy="26" r="2.3" fill="#f6c743" stroke="#d99a1e" stroke-width="1"/><circle cx="89" cy="26" r="2.3" fill="#f6c743" stroke="#d99a1e" stroke-width="1"/>
+    ${king(20, '#f4efe2', '#3a342b')}
+    ${king(108, '#2c2a2e', '#0c0b10')}
+  </svg>`;
+};
 async function renderArcade(main) {
   main.innerHTML = `<header class="main-head">${mobileBtn()}<div class="t">${icon('gamepad', 'sm')} Activities</div></header>
     <div class="content arcade-wrap" id="arcade-body"><div class="arcade-cab"><div class="arcade-screen"><div class="ac-title">LUMI<span>ARCADE</span></div><div class="ac-sub">loading…</div><div class="ac-dots"><i></i><i></i><i></i><i></i></div></div></div></div>`;
@@ -349,7 +366,7 @@ async function renderArcade(main) {
   const body = main.querySelector('#arcade-body'); if (!body) return;
   body.classList.add('arcade-grid-wrap');
   const chessCard = `<button class="game-card builtin" data-builtin="chess" style="--gc:#2bb3a3">
-      <div class="gc-art chess-art"><span class="ca-pieces">${['r', 'n', 'q', 'k', 'b'].map((t) => pieceSVG(t, 'wp')).join('')}</span></div>
+      <div class="gc-art chess-art">${chessCardArt()}</div>
       <div class="gc-name">Chess</div><div class="gc-tag">Online · Free</div></button>`;
   body.innerHTML = `<div class="arcade-grid">${chessCard}${r.games.map((g, i) => `
     <button class="game-card ${g.playable ? '' : 'locked'}" data-game="${g.id}" style="--gc:${['#6d4aff', '#e0558e', '#2bb3a3', '#f2a23c', '#4a9dff', '#b06dff'][i % 6]}">

@@ -86,6 +86,7 @@ async function renderSparks(main) {
   const perks = [
     ['type', 'Custom fonts', 'Pick a font for your name, and one for the whole app.'],
     ['palette', 'Custom themes', 'Blaze, Blood, Toxic, Frost, Candy, Gold, Void, or any color you pick.'],
+    ['gamepad', 'Every game free', 'Play every paid game on Activities without paying — all games are free with Sparks.'],
     ['compass', 'Stargaze, free', 'List your communities on Stargaze without needing 1,000 members.'],
     ['gem', 'Golden nameplate', 'Your name shows in gold, with a plate in member lists and on your profile.'],
   ];

@@ -1452,9 +1452,8 @@ img.mark { border-radius: 24%; object-fit: cover; }
 .game-blocked { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; padding:24px; color:#cfc6ff; }
 .game-blocked p { margin:0; max-width:320px; opacity:.85; }
 /* Chess: built-in card art */
-.chess-art { background:linear-gradient(140deg,#2bb3a3,#176f67); }
-.chess-art .ca-pieces { display:flex; align-items:flex-end; gap:1px; }
-.chess-art .ca-pieces .pc-svg { width:30px; height:30px; fill:#f3fff9; stroke:#0f5048; stroke-width:1.1; filter:drop-shadow(0 2px 3px rgba(0,0,0,.3)); }
+.chess-art { background:#7ec6ff; padding:0; overflow:hidden; }
+.chess-card-svg { width:100%; height:100%; display:block; }
 /* Chess: menu */
 .chess-wrap { padding:28px 24px; display:block; }
 .chess-menu { max-width:560px; margin:0 auto; text-align:center; }

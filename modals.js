@@ -735,7 +735,7 @@ function banServer(s, after) {
   };
 }
 // Shrink an image file to a small JPEG data URL (keeps thumbnails light so cards load fast).
-function shrinkImage(file, max = 480, quality = 0.82) {
+function thumbDataURL(file, max = 480, quality = 0.82) {
   return new Promise((resolve, reject) => {
     if (!file || !/^image\//.test(file.type)) return reject(new Error('Pick an image file.'));
     const url = URL.createObjectURL(file), img = new Image();
@@ -804,7 +804,7 @@ async function adminGamesPane(pane, reload) {
   const tpick = pane.querySelector('#gm-thumbpick'), thint = pane.querySelector('#gm-thumbhint');
   pane.querySelector('#gm-thumbinput').onchange = async (e) => {
     const f = e.target.files[0]; if (!f) return;
-    try { thumbData = await shrinkImage(f); tpick.style.backgroundImage = `url('${thumbData}')`; tpick.classList.add('has'); thint.textContent = ''; }
+    try { thumbData = await thumbDataURL(f); tpick.style.backgroundImage = `url('${thumbData}')`; tpick.classList.add('has'); thint.textContent = ''; }
     catch (err) { toast(err.message, true); }
   };
   pane.querySelector('#gm-form').onsubmit = async (e) => {
@@ -823,7 +823,7 @@ async function adminGamesPane(pane, reload) {
     const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*';
     inp.onchange = async () => {
       const f = inp.files[0]; if (!f) return;
-      try { const t = await shrinkImage(f); await api('PATCH', `/api/admin/games/${b.dataset.thumbGame}`, { thumb: t }); toast('Thumbnail updated'); reload(); }
+      try { const t = await thumbDataURL(f); await api('PATCH', `/api/admin/games/${b.dataset.thumbGame}`, { thumb: t }); toast('Thumbnail updated'); reload(); }
       catch (err) { toast(err.message, true); }
     };
     inp.click();
