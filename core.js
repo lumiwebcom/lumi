@@ -87,7 +87,10 @@ const ICONS = {
 const LOGO_MARK = '<img class="mark" src="/favicon.svg?v=2" alt="" draggable="false">';
 const POTION = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="1.6" width="6" height="2.6" rx="1.1" fill="#B98A5B"/><path d="M10 4.2h4v3.7a7 7 0 1 1-4 0z" fill="#EDE6FF" stroke="#743AFB" stroke-width="1.5"/><path d="M5.6 14.6a6.4 6.4 0 0 0 12.8 0z" fill="#743AFB"/><circle cx="10.2" cy="16.4" r="1.1" fill="#fff" opacity=".85"/><circle cx="13.6" cy="18.2" r=".75" fill="#fff" opacity=".7"/><circle cx="12.6" cy="11.2" r=".7" fill="#743AFB"/></svg>';
 const SHIELD_BLUE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.8 3.8 5v6.2c0 5.2 3.5 9.6 8.2 11 4.7-1.4 8.2-5.8 8.2-11V5z" fill="#3B82F6"/><path d="m8.3 12.2 2.6 2.6 4.8-5.2" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const isOfficialUser = (u) => !!u && (u.official || S.userCache[u.id]?.official || u.id === 'lumi-official');
+const officialDm = (dm) => !!dm && dm.type === 'dm' && (dm.recipients || []).some(isOfficialUser);
 function roleBadge(u) {
+  if (isOfficialUser(u)) return `<span class="official-tag" data-tip="Official lumi account">${icon('check', 'xs')}OFFICIAL</span>`;
   const r = (u && (S.userCache[u.id]?.siteRole ?? u.siteRole)) || null;
   if (r === 'owner') return `<span class="rbadge" data-tip="lumi owner">${POTION}</span>`;
   if (r === 'admin') return `<span class="rbadge" data-tip="lumi admin">${SHIELD_BLUE}</span>`;
@@ -246,7 +249,7 @@ const S = {
   settings: Object.assign({ sounds: true, notifications: false, theme: 'dark' }, JSON.parse(localStorage.getItem('lumi.settings') || '{}')),
 };
 function saveSettings() { localStorage.setItem('lumi.settings', JSON.stringify(S.settings)); }
-function isOnline(uid) { if (S.me && uid === S.me.id) return true; return !!S.presence[uid]; }
+function isOnline(uid) { if ((S.me && uid === S.me.id) || uid === 'lumi-official') return true; return !!S.presence[uid]; }
 function cacheUser(u) { if (!u) return u; S.userCache[u.id] = { ...(S.userCache[u.id] || {}), ...u }; if (u.online !== undefined) S.presence[u.id] = u.online; return u; }
 // chat settings that change how the app looks
 function applyChatPrefs() {

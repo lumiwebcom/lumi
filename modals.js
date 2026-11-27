@@ -383,6 +383,7 @@ async function openProfile(uid, serverId) {
   const rel = d.relationship;
   let acts = '';
   if (me) acts = `<button class="btn" data-edit>${icon('edit', 'sm')} Edit profile</button>`;
+  else if (isOfficialUser(d.user)) acts = `<button class="btn primary" data-msg>${icon('chat', 'sm')} Open messages</button>`;
   else {
     if (rel === 'friend') acts = `<button class="btn primary" data-msg>${icon('chat', 'sm')} Message</button><button class="btn" data-call>${icon('phone', 'sm')}</button><button class="btn" data-vcall>${icon('video', 'sm')}</button>`;
     else if (rel === 'incoming') acts = `<button class="btn primary" data-accept>Accept request</button><button class="btn" data-msg>Message</button>`;

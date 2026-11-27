@@ -414,8 +414,8 @@ function renderChatView(main) {
     const u = dm.type === 'dm' ? S.userCache[dm.recipients[0]?.id] || dm.recipients[0] : null;
     const sub = u ? (isOnline(u.id) ? 'Active now' : '@' + u.username) : `${dm.members.length} members`;
     head = `<div class="who" data-act="${u ? 'profile' : 'group-settings'}" ${u ? `data-user="${u.id}"` : ''}>${dmAvatar(dm, 40)}<div><div class="t"><span ${u ? nameAttrs(u) : ''}>${esc(dmName(dm))}</span>${u ? roleBadge(u) : ''}</div><div class="sub">${esc(sub)}</div></div></div>`;
-    tools = `<button class="icon-btn" data-act="call-voice" data-tip="Start voice call">${icon('phone')}</button>
-      <button class="icon-btn" data-act="call-video-start" data-tip="Start video call">${icon('video')}</button>
+    tools = `${officialDm(dm) ? '' : `<button class="icon-btn" data-act="call-voice" data-tip="Start voice call">${icon('phone')}</button>
+      <button class="icon-btn" data-act="call-video-start" data-tip="Start video call">${icon('video')}</button>`}
       <button class="icon-btn ${S.panel?.type === 'pins' ? 'active' : ''}" data-act="pins" data-tip="Pinned messages">${icon('pin', 'sm')}</button>
       ${dm.type === 'group' ? `<button class="icon-btn" data-act="add-to-group" data-tip="Add friends">${icon('userPlus', 'sm')}</button><button class="icon-btn ${S.showMembers ? 'active' : ''}" data-act="toggle-members" data-tip="Members">${icon('users', 'sm')}</button>` : ''}
       <input class="search" id="msg-search" placeholder="Search">`;
@@ -511,6 +511,15 @@ function groupHtml(g) {
     <div class="stack">${showAuthor ? `<div class="author" data-user="${author.id}"><b ${nameAttrs(author, mi.color ? `color:${mi.color}` : '')}>${esc(mi.name)}</b>${roleBadge(author)}${sd ? lvlChip(memberXp(sd, author.id)) : ''}${mi.owner ? `<span style="color:var(--yellow)">${icon('crown', 'xs')}</span>` : ''}${topRole ? `<span class="role-tag" style="background:${esc(topRole.color)}">${esc(topRole.name)}</span>` : ''}<span>${fmtTime(g.msgs[0].createdAt)}</span></div>` : ''}
     ${g.msgs.map((m, i) => msgHtml(m, i === 0, i === g.msgs.length - 1)).join('')}</div></div>`;
 }
+// a message from lumi's official account (updates, bans, removed posts…)
+function officialCard(c) {
+  const ic = { warn: 'shield', good: 'sparkle', update: 'download' }[c.tone] || 'info';
+  return `<div class="lcard tone-${esc(c.tone || 'info')}"><div class="lc-title">${icon(ic, 'sm')}<span>${esc(c.title || '')}</span></div>
+    ${c.body ? `<div class="lc-body">${md(c.body)}</div>` : ''}
+    ${(c.items || []).length ? `<ul class="lc-items">${c.items.map((i) => `<li>${md(i)}</li>`).join('')}</ul>` : ''}
+    ${c.reason ? `<div class="lc-reason"><div class="lbl">Reason</div>${esc(c.reason)}</div>` : ''}
+    ${c.foot ? `<div class="lc-foot">${esc(c.foot)}</div>` : ''}</div>`;
+}
 function msgHtml(m, first, last) {
   const mentioned = m.author.id !== S.me.id && new RegExp(`(^|\\s)@(${S.me.username.replace('.', '\\.')}|everyone|here)\\b`, 'i').test(m.content);
   let att = '';
@@ -525,7 +534,7 @@ function msgHtml(m, first, last) {
   const reacts = m.reactions.length ? `<div class="reacts">${m.reactions.map((r) => `<button class="react ${r.users.includes(S.me.id) ? 'mine' : ''}" data-react="${esc(r.emoji)}" data-tip="${esc(r.users.map((u) => (S.userCache[u] ? nameOf(S.userCache[u]) : 'someone')).slice(0, 5).join(', '))}">${r.emoji}${r.users.length > 1 ? `<b>${r.users.length}</b>` : ''}</button>`).join('')}</div>` : '';
   return `<div class="msg ${first ? 'first' : ''} ${last ? 'last' : ''} ${mentioned ? 'mentioned' : ''}" data-mid="${m.id}">
     ${reply}${m.pinned ? `<div class="pinned-tag">${icon('pin', 'xs')} Pinned</div>` : ''}${att}
-    ${m.content ? (isGifMsg(m.content) ? gifMessageHtml(m.content.trim()) : `<div class="bubble ${isJumbo(m.content) ? 'jumbo' : ''}">${md(m.content)}</div>`) : ''}
+    ${m.card ? officialCard(m.card) : m.content ? (isGifMsg(m.content) ? gifMessageHtml(m.content.trim()) : `<div class="bubble ${isJumbo(m.content) ? 'jumbo' : ''}">${md(m.content)}</div>`) : ''}
     ${m.editedAt ? '<div class="edited">Edited</div>' : ''}${reacts}
     <div class="actions"><button data-act="react" data-tip="React">${icon('smile', 'sm')}</button><button data-act="reply" data-tip="Reply">${icon('reply', 'sm')}</button><button data-act="msg-more" data-tip="More">${icon('more', 'sm')}</button></div>
     <span class="time">${fmtTime(m.createdAt)}</span></div>`;
@@ -609,7 +618,14 @@ function renderComposer() {
   const allowed = sd ? canPost(sd, room) : true;
   let ph = 'Message…';
   if (sd) ph = allowed ? `Message ${room?.name}` : room?.ownerPost && can(sd, P.SEND_MESSAGES) ? 'Only the owner can post in this room' : room?.locked && can(sd, P.SEND_MESSAGES) ? 'Only admins can post in this room' : 'You can’t send messages in this room';
-  else { const dm = S.dms.find((d) => d.id === v.dmId); ph = `Message ${dmName(dm)}…`; }
+  else {
+    const dm = S.dms.find((d) => d.id === v.dmId || d.id === v.channelId);
+    if (officialDm(dm)) {
+      wrap.innerHTML = `<div class="official-note">${icon('shield')}<div><b>This chat is only for official lumi notifications.</b><div class="small muted">lumi will never ask for your password or account details.</div></div></div>`;
+      return;
+    }
+    ph = `Message ${dmName(dm)}…`;
+  }
   wrap.innerHTML = `<div id="composer-extras"></div><div class="composer ${allowed ? '' : 'disabled'}">
     <button class="icon-btn" data-act="emoji" data-tip="Emoji">${icon('smile')}</button>
     <button class="gif-btn" data-act="gif" data-tip="GIFs" ${allowed ? '' : 'disabled'}>GIF</button>
@@ -872,6 +888,7 @@ function userMenu(anchor, uid) {
   const sid = S.view.type === 'server' ? S.view.serverId : null;
   if (sid && S.serverData[sid]?.members?.some((m) => m.user.id === uid)) return memberModMenu(anchor, sid, uid, () => renderRight());
   const me = uid === S.me.id, friend = (S.friends || []).some((f) => f.user?.id === uid && f.type === 'friend');
+  if (isOfficialUser(u)) return openMenu(anchor, [{ label: 'View profile', icon: 'user', onClick: () => openProfile(uid) }, { label: 'Open messages', icon: 'chat', onClick: () => openDM(uid) }]);
   openMenu(anchor, [
     { label: 'View profile', icon: 'user', onClick: () => openProfile(uid) },
     !me && { label: 'Message', icon: 'chat', onClick: () => openDM(uid) },
@@ -885,6 +902,10 @@ function dmMenu(anchor, dmId) {
   const dm = S.dms.find((d) => d.id === dmId); if (!dm) return;
   if (dm.type === 'group') return groupMenu(anchor, dmId);
   const other = (dm.recipients || []).find((r) => r.id !== S.me.id);
+  if (officialDm(dm)) return openMenu(anchor, [
+    { label: 'Mark as read', icon: 'check', onClick: () => { dm.unread = 0; markRead(dm.id); renderSideBody(); } },
+    { label: 'View profile', icon: 'user', onClick: () => openProfile(other.id) },
+  ]);
   openMenu(anchor, [
     { label: 'Mark as read', icon: 'check', onClick: () => { dm.unread = 0; markRead(dm.id); renderSideBody(); } },
     other && { label: 'View profile', icon: 'user', onClick: () => openProfile(other.id) },

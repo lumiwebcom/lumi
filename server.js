@@ -230,9 +230,49 @@ function publicUser(u) {
   return { id: u.id, username: u.username, displayName: u.display_name || u.username, avatar: u.avatar,
     banner: u.banner, bio: u.bio, customStatus: u.custom_status, accent: u.accent, online: isOnline(u.id),
     siteRole: u.site_role || null, banned: !!u.banned_at && (!u.ban_until || u.ban_until > now()),
-    sparks: sp, nameFont: sp && NAME_FONTS.includes(u.name_font) ? u.name_font : null };
+    sparks: sp, nameFont: sp && NAME_FONTS.includes(u.name_font) ? u.name_font : null, official: u.id === 'lumi-official' || undefined };
 }
 const getUser = (uid) => db.prepare('SELECT * FROM users WHERE id=?').get(uid);
+
+// ---------------------------------------------------------------- the official lumi account
+// It DMs people about updates and about their account or communities. Nobody can sign in as it,
+// friend it, block it, call it, reply to it or close its DM.
+const OFFICIAL_ID = 'lumi-official';
+if (!colsOf('messages').includes('card')) db.exec('ALTER TABLE messages ADD COLUMN card TEXT');
+if (!getUser(OFFICIAL_ID)) {
+  const uname = db.prepare('SELECT 1 FROM users WHERE username=?').get('lumi') ? 'lumi.official' : 'lumi';
+  db.prepare('INSERT INTO users (id,email,username,display_name,avatar,bio,accent,created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(OFFICIAL_ID, null, uname, 'lumi', '/favicon.svg?v=2', 'Official lumi notifications: new updates, and news about your account and communities. lumi will never ask for your password.', '#7C5CFF', Date.now());
+}
+const isOfficialDM = (cid) => !!db.prepare('SELECT 1 FROM channel_members WHERE channel_id=? AND user_id=?').get(cid, OFFICIAL_ID);
+// card: { title, body (markdown), items: [..], reason, foot, tone: 'info' | 'warn' | 'good' | 'update' }
+function officialDM(uid, card) {
+  if (!uid || uid === OFFICIAL_ID || !getUser(uid)) return;
+  let c = db.prepare(`SELECT c.id FROM channels c JOIN channel_members a ON a.channel_id=c.id AND a.user_id=?
+    JOIN channel_members b ON b.channel_id=c.id AND b.user_id=? WHERE c.type='dm'`).get(uid, OFFICIAL_ID);
+  if (!c) {
+    c = { id: crypto.randomBytes(9).toString('base64url') };
+    db.prepare('INSERT INTO channels (id,type,created_at) VALUES (?,?,?)').run(c.id, 'dm', Date.now());
+    db.prepare('INSERT INTO channel_members VALUES (?,?)').run(c.id, uid);
+    db.prepare('INSERT INTO channel_members VALUES (?,?)').run(c.id, OFFICIAL_ID);
+  }
+  const mid = crypto.randomBytes(9).toString('base64url');
+  db.prepare('INSERT INTO messages (id,channel_id,author_id,content,card,created_at) VALUES (?,?,?,?,?,?)').run(mid, c.id, OFFICIAL_ID, String(card.title || ''), JSON.stringify(card), Date.now());
+  try { io.to(`user:${uid}`).emit('message:new', { message: serializeMessage(db.prepare('SELECT * FROM messages WHERE id=?').get(mid)), serverId: null }); } catch {}
+}
+// when a new version goes live, DM everyone what's new (listed at the top of updates.json)
+function sendUpdateNotes() {
+  let list; try { list = JSON.parse(fs.readFileSync(path.join(__dirname, 'updates.json'), 'utf8')); } catch { return; }
+  const u = Array.isArray(list) ? list[0] : null; if (!u?.id) return;
+  if (db.prepare("SELECT v FROM meta WHERE k='update_dm'").get()?.v === u.id) return;
+  db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('update_dm', u.id);
+  const users = db.prepare('SELECT id FROM users WHERE id<>? AND banned_at IS NULL').all(OFFICIAL_ID);
+  db.exec('BEGIN');
+  try { for (const r of users) officialDM(r.id, { tone: 'update', title: u.title || 'lumi just got an update', body: u.body || '', items: u.items || [], foot: 'Refresh lumi if you don’t see the new stuff yet.' }); db.exec('COMMIT'); }
+  catch (e) { db.exec('ROLLBACK'); console.error('  Update DMs failed:', e.message); return; }
+  console.log(`  Sent the "${u.id}" update notes to ${users.length} people`);
+}
+const fmtDay = (t) => new Date(t).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
 
 function canAccessChannel(userId, channel) {
   if (!channel) return false;
@@ -266,7 +306,7 @@ function serializeMessage(m) {
   return { id: m.id, channelId: m.channel_id, author: publicUser(author), content: m.content, title: m.title || null, threadId: m.thread_id || null,
     replyCount: thread ? thread.n : 0, lastReplyAt: thread ? thread.last : null,
     attachment: m.attachment_url ? { url: m.attachment_url, type: m.attachment_type, name: m.attachment_name } : null,
-    reply, pinned: !!m.pinned, editedAt: m.edited_at, createdAt: m.created_at,
+    reply, pinned: !!m.pinned, editedAt: m.edited_at, createdAt: m.created_at, card: m.card ? JSON.parse(m.card) : null,
     reactions: Object.entries(grouped).map(([emoji, users]) => ({ emoji, users })) };
 }
 function areFriends(a, b) {
@@ -636,6 +676,7 @@ app.post('/api/friends/request', auth, wrap(req => {
   const target = db.prepare('SELECT * FROM users WHERE username=?').get(un);
   if (!target) throw fail(404, `No one goes by @${un}. Double-check the username.`);
   if (target.id === req.user.id) throw fail(400, "You can't add yourself.");
+  if (target.id === OFFICIAL_ID) throw fail(400, 'lumi’s official account can’t be added as a friend.');
   if (isBlocked(req.user.id, target.id)) throw fail(403, "You can't send a request to this user.");
   const existing = db.prepare(`SELECT * FROM friendships WHERE (requester_id=? AND addressee_id=?) OR (requester_id=? AND addressee_id=?)`)
     .get(req.user.id, target.id, target.id, req.user.id);
@@ -665,6 +706,7 @@ app.delete('/api/friends/:id', auth, wrap(req => {
 }));
 app.post('/api/friends/:id/block', auth, wrap(req => {
   if (req.params.id === req.user.id) throw fail(400, "You can't block yourself.");
+  if (req.params.id === OFFICIAL_ID) throw fail(400, 'lumi’s official account can’t be blocked.');
   db.prepare(`DELETE FROM friendships WHERE (requester_id=? AND addressee_id=?) OR (requester_id=? AND addressee_id=?)`)
     .run(req.user.id, req.params.id, req.params.id, req.user.id);
   db.prepare('INSERT OR IGNORE INTO blocks VALUES (?,?)').run(req.user.id, req.params.id);
@@ -703,6 +745,7 @@ app.get('/api/dms', auth, wrap(req => {
 app.post('/api/dms/:id/close', auth, wrap(req => {
   const c = db.prepare(`SELECT c.* FROM channels c JOIN channel_members m ON m.channel_id=c.id WHERE c.id=? AND m.user_id=? AND c.type IN ('dm','group')`).get(req.params.id, req.user.id);
   if (!c) throw fail(404, 'Not found');
+  if (isOfficialDM(c.id)) throw fail(403, 'lumi’s official DM can’t be closed.');
   db.prepare('INSERT OR REPLACE INTO dm_closed VALUES (?,?,?)').run(req.user.id, c.id, now());
   return { ok: true };
 }));
@@ -832,6 +875,7 @@ app.post('/api/channels/:id/messages', auth, gifGuard, wrap(req => {
   if (c.server_id && c.locked && !has(memberPerms(c.server_id, req.user.id), P.ADMINISTRATOR)) throw fail(403, 'Only admins can post in this room.');
   if (c.server_id && c.owner_post && db.prepare('SELECT owner_id FROM servers WHERE id=?').get(c.server_id)?.owner_id !== req.user.id) throw fail(403, 'Only the owner can post in this room.');
   if (c.type === 'dm') {
+    if (isOfficialDM(c.id)) throw fail(403, 'This chat is only for official lumi notifications.');
     const other = db.prepare('SELECT user_id FROM channel_members WHERE channel_id=? AND user_id<>?').get(c.id, req.user.id);
     if (other && isBlocked(req.user.id, other.user_id)) throw fail(403, 'You cannot message this user.');
   }
@@ -1125,19 +1169,21 @@ app.delete('/api/categories/:id', auth, wrap(req => {
 
 // ---------------------------------------------------------------- site admin panel
 function adminOnly(req, res, next) { if (!isSiteAdmin(req.user)) return res.status(403).json({ error: 'Admins only' }); next(); }
+app.use('/api/admin/users/:id', (req, res, next) => (req.params.id === OFFICIAL_ID ? res.status(403).json({ error: 'That’s lumi’s official account.' }) : next()));
 app.get('/api/admin/users', auth, adminOnly, wrap(req => {
   const owner = req.user.site_role === 'owner';
   const q = `%${String(req.query.q || '').trim().toLowerCase()}%`;
   let where = owner ? '(username LIKE ? OR lower(display_name) LIKE ? OR lower(email) LIKE ?)' : '(username LIKE ? OR lower(display_name) LIKE ?)';
   const params = owner ? [q, q, q] : [q, q];
   const t0 = now(); db.prepare('UPDATE users SET banned_at=NULL, ban_reason=NULL, ban_until=NULL WHERE ban_until IS NOT NULL AND ban_until<=?').run(t0);
+  where += ` AND id<>'${OFFICIAL_ID}'`;
   if (req.query.filter === 'banned') where += ' AND banned_at IS NOT NULL';
   if (req.query.filter === 'admins') where += " AND site_role IN ('owner','admin')";
   if (req.query.filter === 'owners') where += " AND site_role='owner'";
   const rows = db.prepare(`SELECT * FROM users WHERE ${where} ORDER BY (site_role='owner') DESC, (site_role='admin') DESC, created_at DESC LIMIT 100`).all(...params);
   return {
     users: rows.map((u) => ({ ...publicUser(u), sparksUntil: u.sparks_until && u.sparks_until > now() ? u.sparks_until : null, createdAt: u.created_at, bannedAt: u.banned_at, banReason: u.ban_reason, bannedUntil: u.ban_until || null, primary: isPrimaryOwner(u) })),
-    total: db.prepare('SELECT COUNT(*) n FROM users').get().n,
+    total: db.prepare('SELECT COUNT(*) n FROM users WHERE id<>?').get(OFFICIAL_ID).n,
     bannedCount: db.prepare('SELECT COUNT(*) n FROM users WHERE banned_at IS NOT NULL').get().n,
     viewerPrimary: isPrimaryOwner(req.user), primaryOwner: PRIMARY_OWNER,
   };
@@ -1165,6 +1211,7 @@ app.post('/api/admin/servers/:id/ban', auth, adminOnly, wrap(req => {
   if (o && o.site_role === 'owner' && req.user.site_role !== 'owner') throw fail(403, 'Only lumi owners can ban a community run by an owner.');
   const reason = String(req.body.reason || '').trim().slice(0, 200) || null;
   db.prepare('INSERT OR REPLACE INTO banned_servers VALUES (?,?,?,?,?,?)').run(s.id, s.name, s.owner_id, req.user.id, reason, now());
+  officialDM(s.owner_id, { tone: 'warn', title: 'Your community was banned', body: `**${s.name}** was removed by the lumi team. Its rooms, messages and members are gone, and it can’t be brought back.`, reason: reason || 'It broke lumi’s rules.', foot: 'Think this was a mistake? DM cook or type.' });
   if (req.body.banOwner && o && o.id !== req.user.id && !o.site_role) siteBan(o.id, reason ? `Ran a banned community: ${reason}` : 'Ran a community that was banned');
   io.to(`server:${s.id}`).emit('server:removed', { serverId: s.id, reason: 'removed' });
   db.prepare('DELETE FROM servers WHERE id=?').run(s.id);
@@ -1330,6 +1377,7 @@ function takeDownServer(sid, why) {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(sid); if (!s) return;
   io.to(`server:${sid}`).emit('server:removed', { serverId: sid, reason: 'removed' });
   db.prepare('DELETE FROM servers WHERE id=?').run(sid);
+  officialDM(s.owner_id, { tone: 'warn', title: 'Your community was taken down', body: `**${s.name}** was removed automatically.`, reason: 'NSFW content. Communities with nudity or sexual content aren’t allowed on lumi.', foot: 'Think this was a mistake? DM cook or type.' });
   console.log(`  Moderation: took down a community (${why})`);
 }
 // returns true if the person was banned
@@ -1339,6 +1387,7 @@ function nsfwStrike(user, sid, kind, scores, ban) {
   const doBan = ban && !staff;
   db.prepare('INSERT INTO mod_events VALUES (?,?,?,?,?,?,?)').run(id(), user.id, s?.id || null, kind, scores ? moderation.nsfwScore(scores) : null, doBan ? 'banned' : 'blocked', now());
   if (doBan) { siteBan(user.id, 'Posting nudity or sexual content (automatic)'); console.log(`  Moderation: banned a user for NSFW ${kind}`); }
+  else officialDM(user.id, { tone: 'warn', title: 'We removed something you posted', body: `A ${kind === 'image' ? 'picture' : kind} you posted looked like nudity or sexual content, so it was removed.`, foot: 'Posting things like this again can get your account permanently banned.' });
   if (s && !staff) {
     // the owner putting NSFW in their own community, or several people doing it, means it's an NSFW community
     const flagged = db.prepare('SELECT COUNT(DISTINCT user_id) n FROM mod_events WHERE server_id=?').get(s.id).n;
@@ -2141,6 +2190,7 @@ function grantSparks(uid, days) {
   const until = days > 0 ? Math.max(Date.now(), u.sparks_until || 0) + days * 86400_000 : Date.now();
   db.prepare('UPDATE users SET sparks_until=? WHERE id=?').run(until, uid);
   sparksChanged(uid);
+  if (days > 0) officialDM(uid, { tone: 'good', title: 'Sparks is on ✨', body: `Thanks for supporting lumi! Your Sparks perks are active until **${fmtDay(until)}**: custom name fonts, themes, a golden nameplate and more.` });
   return until;
 }
 const tellOwners = (quiet) => { for (const o of db.prepare("SELECT id FROM users WHERE site_role='owner'").all()) io.to(`user:${o.id}`).emit('sparks:requests', { quiet: !!quiet }); };
@@ -2375,6 +2425,7 @@ io.on('connection', (socket) => {
   socket.on('voice:join', ({ channelId, rejoin } = {}, ack) => {
     const c = db.prepare('SELECT * FROM channels WHERE id=?').get(channelId);
     if (!c || !canAccessChannel(uid, c)) return ack?.({ error: 'No access' });
+    if (c.type === 'dm' && isOfficialDM(c.id)) return ack?.({ error: 'You can’t call lumi’s official account.' });
     if (c.server_id && !has(memberPerms(c.server_id, uid), P.CONNECT)) return ack?.({ error: 'You can’t join this lounge.' });
     if ((c.server_id === null && c.type === 'text') || (c.server_id && c.type !== 'voice')) return ack?.({ error: 'Not a call channel' });
     if (socket.data.voiceChannel) leaveVoice(socket);
@@ -2457,6 +2508,7 @@ if (SELF_URL) {
 }
 server.listen(PORT, () => {
   console.log(`\n  ✨ Lumi is running at http://localhost:${PORT}`);
+  setTimeout(sendUpdateNotes, Number(process.env.UPDATE_DM_DELAY || 30_000)).unref?.();
   if (process.env.LUMI_OPEN === '1') {
     const url = `http://localhost:${PORT}`;
     const cmd = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
