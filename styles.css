@@ -1446,5 +1446,7 @@ img.mark { border-radius: 24%; object-fit: cover; }
 .ga-thumb:hover { border-color:#743afb; color:var(--text); }
 .ga-thumb.has { border-style:solid; border-color:#743afb; }
 .ga-thumb span { display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; padding:6px; text-align:center; }
+.ga-or { display:flex; align-items:center; gap:10px; color:var(--text3); font-size:12px; text-transform:uppercase; letter-spacing:.5px; }
+.ga-or::before, .ga-or::after { content:''; flex:1; height:1px; background:var(--border); }
 .ga-foot { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
 .ga-foot .hint { flex:1; min-width:180px; }

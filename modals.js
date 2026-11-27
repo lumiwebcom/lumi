@@ -775,12 +775,14 @@ async function adminGamesPane(pane, reload) {
           <span id="gm-thumbhint">${icon('image', 'sm')} Add thumbnail</span>
         </label>
       </div>
-      <div class="ga-foot"><span class="hint">Free when the price is 0. People with Sparks play every game free.</span>
+      <div class="ga-or"><span>or paste a game link</span></div>
+      <input class="input" id="gm-url" type="url" placeholder="https://example.com/mygame" autocomplete="off">
+      <div class="ga-foot"><span class="hint">Upload a file or paste a link. Free when the price is 0; Sparks plays every game free. Poki links aren’t allowed.</span>
         <button class="btn primary" type="submit" id="gm-post" disabled>${icon('gamepad', 'sm')} Post game</button></div>
     </form>
     <div class="hint" style="margin:16px 0 8px">${r.games.length} ${r.games.length === 1 ? 'game' : 'games'} on Activities</div>
     <div id="gm-list">${r.games.map((g) => `<div class="row-line">${rowThumb(g)}
-      <div class="meta"><div class="bold">${esc(g.title)}</div><div class="small muted">${g.price ? '$' + (g.price / 100).toFixed(g.price % 100 ? 2 : 0) : 'Free'} · ${kb(g.size)}${g.by ? ' · by @' + esc(g.by) : ''} · ${new Date(g.createdAt).toLocaleDateString()}</div></div>
+      <div class="meta"><div class="bold">${esc(g.title)}</div><div class="small muted">${g.price ? '$' + (g.price / 100).toFixed(g.price % 100 ? 2 : 0) : 'Free'} · ${g.url ? 'link' : kb(g.size)}${g.by ? ' · by @' + esc(g.by) : ''} · ${new Date(g.createdAt).toLocaleDateString()}</div></div>
       <div style="display:flex;gap:6px"><button class="btn" data-thumb-game="${g.id}">${icon('image', 'sm')} ${g.thumb ? 'Change' : 'Thumbnail'}</button><button class="btn danger" data-del-game="${g.id}">${icon('trash', 'sm')} Remove</button></div></div>`).join('') || '<div class="empty" style="padding:24px"><p>No games yet. Post the first one above.</p></div>'}</div>`;
   let fileText = '', thumbData = '';
   const input = pane.querySelector('#gm-input'), fname = pane.querySelector('#gm-fname'), post = pane.querySelector('#gm-post'), drop = pane.querySelector('#gm-drop');
@@ -792,7 +794,10 @@ async function adminGamesPane(pane, reload) {
     rd.onerror = () => toast('Couldn’t read that file.', true);
     rd.readAsText(f);
   };
+  const urlInput = pane.querySelector('#gm-url');
+  const refresh = () => { post.disabled = !(fileText || urlInput.value.trim()); };
   input.onchange = () => take(input.files[0]);
+  urlInput.oninput = refresh;
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
   drop.ondragleave = () => drop.classList.remove('over');
   drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); take(e.dataTransfer.files[0]); };
@@ -806,10 +811,12 @@ async function adminGamesPane(pane, reload) {
     e.preventDefault();
     const title = pane.querySelector('#gm-title').value.trim();
     const price = Number(pane.querySelector('#gm-price').value) || 0;
+    const url = urlInput.value.trim();
     if (!title) return toast('Give the game a title.', true);
-    if (!fileText) return toast('Choose an HTML game file first.', true);
+    if (!fileText && !url) return toast('Upload a game file or paste a game link.', true);
     post.disabled = true; post.textContent = 'Posting…';
-    try { await api('POST', '/api/admin/games', { title, price, html: fileText, thumb: thumbData || undefined }); toast(`“${title}” is live on Activities`); reload(); }
+    const body = url ? { title, price, url, thumb: thumbData || undefined } : { title, price, html: fileText, thumb: thumbData || undefined };
+    try { await api('POST', '/api/admin/games', body); toast(`“${title}” is live on Activities`); reload(); }
     catch (err) { toast(err.message, true); post.disabled = false; post.innerHTML = `${icon('gamepad', 'sm')} Post game`; }
   };
   pane.querySelectorAll('[data-thumb-game]').forEach((b) => (b.onclick = () => {

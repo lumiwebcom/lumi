@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS post_comments (id TEXT PRIMARY KEY, post_id TEXT NOT 
 db.exec(`CREATE TABLE IF NOT EXISTS games (id TEXT PRIMARY KEY, title TEXT NOT NULL, price_cents INTEGER NOT NULL DEFAULT 0,
   html TEXT NOT NULL, created_by TEXT, created_at INTEGER NOT NULL, position INTEGER NOT NULL DEFAULT 0);`);
 // thumb: a small image data URL shown on the game card. html_gz: the game pre-gzipped, so /play serves fast.
-for (const [c, t] of [['thumb', 'TEXT'], ['html_gz', 'BLOB']]) if (!colsOf('games').includes(c)) db.exec(`ALTER TABLE games ADD COLUMN ${c} ${t}`);
+for (const [c, t] of [['thumb', 'TEXT'], ['html_gz', 'BLOB'], ['url', 'TEXT']]) if (!colsOf('games').includes(c)) db.exec(`ALTER TABLE games ADD COLUMN ${c} ${t}`);
 // Games run in a locked-down sandbox with no storage, so touching localStorage throws and many games
 // hang on their loading screen. This shim gives them a safe in-memory storage and reports errors to the parent.
 const GAME_SHIM = '<!--lumi-shim-v1--><script>(function(){function mk(){var m=Object.create(null);return{getItem:function(k){k=\'\'+k;return k in m?m[k]:null;},setItem:function(k,v){m[\'\'+k]=\'\'+v;},removeItem:function(k){delete m[\'\'+k];},clear:function(){for(var k in m)delete m[k];},key:function(i){return Object.keys(m)[i]||null;},get length(){return Object.keys(m).length;}};}[\'localStorage\',\'sessionStorage\'].forEach(function(n){try{window[n].getItem(\'__t\');}catch(e){try{Object.defineProperty(window,n,{value:mk(),configurable:true,writable:true});}catch(_){try{window[n]=mk();}catch(__){}}}});function rep(m){try{parent.postMessage({__lumiGame:1,error:String(m)},\'*\');}catch(e){}}window.addEventListener(\'error\',function(e){rep((e&&e.message)||\'Script error\');});window.addEventListener(\'unhandledrejection\',function(e){rep(\'Unhandled rejection: \'+((e&&e.reason&&e.reason.message)||(e&&e.reason)||\'\'));});})();</script>';
@@ -358,14 +358,21 @@ app.post('/api/admin/games', auth, adminOnly, express.json({ limit: '12mb' }), (
   try {
     const title = String(req.body.title || '').trim();
     const html = String(req.body.html || '');
+    const url = cleanGameUrl(req.body.url);
     const price = Math.max(0, Math.min(100000, Math.round((Number(req.body.price) || 0) * 100)));
     const thumb = cleanThumb(req.body.thumb);
     if (!title) throw fail(400, 'Give the game a title.');
     if (title.length > 80) throw fail(400, 'That title is too long.');
     if (moderation.isOffensiveText(title)) throw fail(400, 'Please pick a different title.');
-    if (!/<\s*(html|!doctype|body|canvas|script|div|svg)/i.test(html)) throw fail(400, 'That doesn’t look like an HTML game file.');
-    if (html.length > 11 * 1024 * 1024) throw fail(400, 'That file is too big (max about 11 MB).');
     const gid = id();
+    if (url) {
+      // URL game: embedded from its own site, no HTML stored.
+      db.prepare('INSERT INTO games (id,title,price_cents,html,html_gz,thumb,url,created_by,created_at,position) VALUES (?,?,?,?,?,?,?,?,?,?)')
+        .run(gid, title, price, '', null, thumb, url, req.user.id, now(), now());
+      return res.json({ ok: true, id: gid });
+    }
+    if (!/<\s*(html|!doctype|body|canvas|script|div|svg)/i.test(html)) throw fail(400, 'Upload an HTML game file or paste a game link.');
+    if (html.length > 11 * 1024 * 1024) throw fail(400, 'That file is too big (max about 11 MB).');
     const prepared = prepareGameHtml(html);
     const gz = zlib.gzipSync(Buffer.from(prepared, 'utf8'));
     db.prepare('INSERT INTO games (id,title,price_cents,html,html_gz,thumb,created_by,created_at,position) VALUES (?,?,?,?,?,?,?,?,?)')
@@ -479,10 +486,22 @@ function cleanThumb(v) {
   if (s.length > 700 * 1024) throw fail(400, 'That thumbnail is too big — use a smaller image.');
   return s;
 }
+// A game can instead be embedded from a URL. Poki is blocked by request.
+function cleanGameUrl(v) {
+  const s = String(v || '').trim();
+  if (!s) return null;
+  let u;
+  try { u = new URL(s); } catch { throw fail(400, 'That doesn’t look like a valid link.'); }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') throw fail(400, 'Use a link that starts with https://');
+  const host = u.hostname.toLowerCase();
+  if (/(^|\.)poki\.com$/.test(host) || /(^|\.)poki-gdn\.com$/.test(host) || /(^|\.)poki-user-content\.com$/.test(host) || host.startsWith('poki.')) throw fail(400, 'Poki games can’t be posted here.');
+  if (u.href.length > 2000) throw fail(400, 'That link is too long.');
+  return u.href;
+}
 // ---- Activities (games) read routes (the big upload route is registered earlier, before the 1 MB parser) ----
 app.get('/api/admin/games', auth, adminOnly, wrap(() =>
-  ({ games: db.prepare('SELECT id,title,price_cents,thumb,created_by,created_at,LENGTH(html) AS size FROM games ORDER BY position DESC, created_at DESC').all()
-    .map((g) => ({ id: g.id, title: g.title, price: g.price_cents || 0, size: g.size, thumb: g.thumb || null, createdAt: g.created_at, by: getUser(g.created_by)?.username || null })) })));
+  ({ games: db.prepare('SELECT id,title,price_cents,thumb,url,created_by,created_at,LENGTH(html) AS size FROM games ORDER BY position DESC, created_at DESC').all()
+    .map((g) => ({ id: g.id, title: g.title, price: g.price_cents || 0, size: g.size, thumb: g.thumb || null, url: g.url || null, createdAt: g.created_at, by: getUser(g.created_by)?.username || null })) })));
 app.delete('/api/admin/games/:id', auth, adminOnly, wrap((req) => {
   const g = db.prepare('SELECT id FROM games WHERE id=?').get(req.params.id);
   if (!g) throw fail(404, 'No such game.');
@@ -498,8 +517,8 @@ app.patch('/api/admin/games/:id', auth, adminOnly, wrap((req) => {
 }));
 // Everyone can see the list; free games (or anyone with Sparks) can play.
 app.get('/api/games', auth, wrap((req) => ({
-  games: db.prepare('SELECT id,title,price_cents,thumb FROM games ORDER BY position DESC, created_at DESC').all()
-    .map((g) => ({ id: g.id, title: g.title, price: g.price_cents || 0, thumb: g.thumb || null, playable: !g.price_cents || hasSparks(req.user) })),
+  games: db.prepare('SELECT id,title,price_cents,thumb,url FROM games ORDER BY position DESC, created_at DESC').all()
+    .map((g) => ({ id: g.id, title: g.title, price: g.price_cents || 0, thumb: g.thumb || null, url: g.url || null, playable: !g.price_cents || hasSparks(req.user) })),
   sparks: hasSparks(req.user), venmo: venmoHandle() })));
 // The game itself, served sandboxed: the CSP keeps it from touching lumi accounts, cookies or APIs.
 // Served gzipped with a cache tag (the content never changes for an id) so repeat plays load instantly.
@@ -509,9 +528,10 @@ app.get('/play/:id', (req, res) => {
   const page = (msg) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;height:100vh;display:grid;place-items:center;background:#0c0920;color:#cfc6ff;font-family:system-ui,sans-serif;text-align:center"><div style="opacity:.8">${msg}</div></body>`;
   res.set('X-Content-Type-Options', 'nosniff');
   if (!u) { res.set('Cache-Control', 'no-store'); return res.status(401).type('html').send(page('Sign in to lumi to play.')); }
-  const g = db.prepare('SELECT id, price_cents, html, html_gz FROM games WHERE id=?').get(req.params.id);
+  const g = db.prepare('SELECT id, price_cents, html, html_gz, url FROM games WHERE id=?').get(req.params.id);
   if (!g) { res.set('Cache-Control', 'no-store'); return res.status(404).type('html').send(page('This game isn’t here anymore.')); }
   if (g.price_cents && !hasSparks(u)) { res.set('Cache-Control', 'no-store'); return res.status(403).type('html').send(page('This game is locked. Get Sparks to play it.')); }
+  if (g.url) { res.set('Cache-Control', 'no-store'); return res.redirect(g.url); } // URL games are embedded from their own site
   res.set('Content-Security-Policy', "sandbox allow-scripts allow-pointer-lock allow-forms allow-modals allow-popups");
   res.type('html');
   // immutable per id; private so a shared cache never serves a paid game to the wrong person

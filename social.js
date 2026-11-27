@@ -368,9 +368,14 @@ function openGame(g, r) {
     lm.el.querySelector('[data-sparks]').onclick = () => { lm.close(); navigate('/sparks'); };
     return;
   }
+  // Uploaded games are served same-origin and strictly sandboxed; URL games are embedded from their own
+  // site (a different origin), so allow-same-origin is safe there and lets the game use its own storage.
+  const src = g.url ? esc(g.url) : `/play/${g.id}`;
+  const sandbox = g.url ? 'allow-scripts allow-same-origin allow-pointer-lock allow-forms allow-modals allow-popups'
+    : 'allow-scripts allow-pointer-lock allow-forms allow-modals allow-popups';
   const m = openModal({ title: g.title, cls: 'game-modal wide', body: `<div class="game-stage">
     <div class="game-loading" id="game-loading"><div class="gl-spin"></div><div class="gl-txt">Loading ${esc(g.title)}…</div></div>
-    <iframe class="game-frame" id="game-frame" src="/play/${g.id}" title="${esc(g.title)}" allow="fullscreen; autoplay; gamepad" sandbox="allow-scripts allow-pointer-lock allow-forms allow-modals allow-popups"></iframe></div>` });
+    <iframe class="game-frame" id="game-frame" src="${src}" title="${esc(g.title)}" allow="fullscreen; autoplay; gamepad" sandbox="${sandbox}"></iframe></div>` });
   m.el.classList.add('game-playing');
   const fr = m.el.querySelector('#game-frame'), ld = m.el.querySelector('#game-loading');
   const done = () => { if (ld) ld.remove(); fr.classList.add('ready'); };
