@@ -494,6 +494,16 @@ function uniqueUsername(base) {
 // reuses the Gmail the Venmo bot already signs in with (VENMO_EMAIL + VENMO_EMAIL_PASSWORD).
 const EMAIL_FROM = process.env.EMAIL_FROM || process.env.RESEND_FROM || (process.env.VENMO_EMAIL ? `lumi <${process.env.VENMO_EMAIL}>` : 'lumi <onboarding@resend.dev>');
 const emailReady = () => !!(process.env.RESEND_API_KEY || (process.env.VENMO_EMAIL && process.env.VENMO_EMAIL_PASSWORD));
+// pick the SMTP server from the sender's email domain (the Venmo inbox), so resets send from iCloud/Gmail/Outlook/etc.
+function smtpConfig() {
+  if (process.env.SMTP_HOST) return { host: process.env.SMTP_HOST, port: +(process.env.SMTP_PORT || 587), secure: process.env.SMTP_SECURE === '1' || +process.env.SMTP_PORT === 465 };
+  const domain = (String(process.env.VENMO_EMAIL || '').split('@')[1] || '').toLowerCase();
+  if (/gmail\.com|googlemail\.com/.test(domain)) return { host: 'smtp.gmail.com', port: 465, secure: true };
+  if (/icloud\.com|me\.com|mac\.com/.test(domain)) return { host: 'smtp.mail.me.com', port: 587, secure: false, requireTLS: true };
+  if (/outlook\.com|hotmail\.com|live\.com|msn\.com/.test(domain)) return { host: 'smtp-mail.outlook.com', port: 587, secure: false, requireTLS: true };
+  if (/yahoo\.com/.test(domain)) return { host: 'smtp.mail.yahoo.com', port: 465, secure: true };
+  return { host: 'smtp.' + domain, port: 587, secure: false, requireTLS: true };
+}
 let _mailer = null;
 async function sendEmail(to, subject, html, text) {
   if (process.env.RESEND_API_KEY) {
@@ -504,7 +514,7 @@ async function sendEmail(to, subject, html, text) {
     return;
   }
   if (process.env.VENMO_EMAIL && process.env.VENMO_EMAIL_PASSWORD) {
-    _mailer ||= require('nodemailer').createTransport({ host: 'smtp.gmail.com', port: 465, secure: true,
+    _mailer ||= require('nodemailer').createTransport({ ...smtpConfig(),
       auth: { user: process.env.VENMO_EMAIL, pass: process.env.VENMO_EMAIL_PASSWORD } });
     await _mailer.sendMail({ from: EMAIL_FROM, to, subject, html, text });
     return;
