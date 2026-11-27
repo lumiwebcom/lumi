@@ -349,7 +349,7 @@ async function renderArcade(main) {
   const body = main.querySelector('#arcade-body'); if (!body) return;
   body.classList.add('arcade-grid-wrap');
   const chessCard = `<button class="game-card builtin" data-builtin="chess" style="--gc:#2bb3a3">
-      <div class="gc-art chess-art"><span class="ca-pieces">♜♞♝♛♚</span></div>
+      <div class="gc-art chess-art"><span class="ca-pieces">${['r', 'n', 'q', 'k', 'b'].map((t) => pieceSVG(t, 'wp')).join('')}</span></div>
       <div class="gc-name">Chess</div><div class="gc-tag">Online · Free</div></button>`;
   body.innerHTML = `<div class="arcade-grid">${chessCard}${r.games.map((g, i) => `
     <button class="game-card ${g.playable ? '' : 'locked'}" data-game="${g.id}" style="--gc:${['#6d4aff', '#e0558e', '#2bb3a3', '#f2a23c', '#4a9dff', '#b06dff'][i % 6]}">

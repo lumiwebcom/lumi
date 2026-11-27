@@ -2,8 +2,16 @@
 // Original implementation: standard rules engine + board UI + real-time play over the app's socket.
 const Chess = { view: 'menu', game: null, waiting: null, bound: false, sel: null, legalFor: null, lastMove: null, flip: false };
 
-// ---- engine ----------------------------------------------------------------
-const CH_GLYPH = { p: '♟', n: '♞', b: '♝', r: '♜', q: '♛', k: '♚' };
+// ---- pieces (original drawn SVG so they render identically everywhere and never vanish) ------------------
+const CH_SVG = {
+  p: '<path d="M22.5 8.5a5 5 0 0 0-2.3 9.4c-2.6 1.5-4.4 4.3-4.4 7.6 0 2.6 1.1 4.9 2.9 6.5-3.2 1.6-5.4 4.6-5.4 8.2h18.4c0-3.6-2.2-6.6-5.4-8.2 1.8-1.6 2.9-3.9 2.9-6.5 0-3.3-1.8-6.1-4.4-7.6A5 5 0 0 0 22.5 8.5z"/>',
+  r: '<path d="M12 40v-3l2.5-2.5V22H12v-9h5v3h3.5v-3H25v3h3.5v-3h5v9H31v12.5L33 37v3z"/>',
+  n: '<path d="M18 11c1.8-2 5.2-2.2 7.2-.4 1 .9 3.5 2.2 5.7 4.6 3 3.3 4.6 7.9 4.6 14.3V40H13.5v-3.5c0-6 1.5-9.8 4.8-13.2 1.4-1.4 2-2.2 2-3.3 0-.8-.6-1.4-1.6-1.4-1.3 0-2.3 1.2-3.2 2.6-1 1.5-2.4 2.3-3.9 2-1.6-.3-2.3-1.9-1.8-3.4.8-2.3 3.4-4.8 6.2-6.4-.6-1-.5-2.2.2-3zM20 18.5a1.3 1.3 0 1 0 0-2.6 1.3 1.3 0 0 0 0 2.6z"/>',
+  b: '<path d="M22.5 7.5a2.4 2.4 0 0 0-1 4.6c-3.6 1.8-6.2 5.6-6.2 10 0 3 1.3 5.6 3.3 7.3-2.9 1.5-4.9 4.5-4.9 7.9h16.6c0-3.4-2-6.4-4.9-7.9 2-1.7 3.3-4.3 3.3-7.3 0-4.4-2.6-8.2-6.2-10a2.4 2.4 0 0 0-1-4.6zM19.5 20h6M22.5 17v6"/>',
+  q: '<path d="M9 16.5a2.3 2.3 0 1 0 0-.1zM18 13.5a2.3 2.3 0 1 0 0-.1zM22.5 11a2.4 2.4 0 1 0 0-.1zM27 13.5a2.3 2.3 0 1 0 0-.1zM36 16.5a2.3 2.3 0 1 0 0-.1z"/><path d="M11 20l-1.5-4 4.5 4.5 3.5-7.5 4.5 9 4.5-9 3.5 7.5 4.5-4.5-1.5 4 2 13.5c-3 1.3-6.6 2-10.5 2s-7.5-.7-10.5-2z"/><path d="M13 40c0-3.5 4-5.5 9.5-5.5S32 36.5 32 40z"/>',
+  k: '<path d="M21.1 5h2.8v3.1h3.1v2.8h-3.1V14h-2.8v-3.1H18V8.1h3.1z"/><path d="M22.5 15a3 3 0 0 0-2.5 4.7c-3.5 1.4-5.8 4.7-5.8 9 0 .6 0 1.2.1 1.8h16.4c.1-.6.1-1.2.1-1.8 0-4.3-2.3-7.6-5.8-9A3 3 0 0 0 22.5 15z"/><path d="M13 40c0-3.5 4-5.5 9.5-5.5S32 36.5 32 40z"/>',
+};
+const pieceSVG = (t, cls) => `<svg viewBox="0 0 45 45" class="pc-svg ${cls || ''}">${CH_SVG[t]}</svg>`;
 const chInside = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8;
 const chOpp = (c) => (c === 'w' ? 'b' : 'w');
 function chStart() {
@@ -123,14 +131,17 @@ function renderChess(main) {
   return renderChessMenu(main, head);
 }
 function renderChessMenu(main, head) {
+  const row = (ch, pc, h, d) => `<button class="cm-card" data-ch="${ch}"><span class="cm-ic">${pieceSVG(pc, 'wp')}</span><span class="cm-txt"><span class="cm-h">${h}</span><span class="cm-d">${d}</span></span><span class="cm-go">${icon('chevron', 'sm')}</span></button>`;
   main.innerHTML = `${head}<div class="content chess-wrap"><div class="chess-menu">
-    <div class="cm-title">${icon('gamepad')} Chess</div>
-    <p class="cm-sub">Play a quick match, challenge a friend with a code, or pass-and-play on one device.</p>
+    <div class="cm-hero">
+      <div class="cm-hero-board">${[0, 1, 2, 3].map((r) => [0, 1, 2, 3].map((c) => `<i class="${(r + c) % 2 ? 'd' : 'l'}"></i>`).join('')).join('')}</div>
+      <div class="cm-hero-txt"><div class="cm-title">Chess</div><p class="cm-sub">Play a quick match, challenge a friend with a code, or pass-and-play on one device.</p></div>
+    </div>
     <div class="cm-cards">
-      <button class="cm-card" data-ch="online"><div class="cm-ic">${icon('compass')}</div><div class="cm-h">Play online</div><div class="cm-d">Get matched with someone else on lumi</div></button>
-      <button class="cm-card" data-ch="friend"><div class="cm-ic">${icon('users')}</div><div class="cm-h">Play a friend</div><div class="cm-d">Create a table and share the code</div></button>
-      <button class="cm-card" data-ch="join"><div class="cm-ic">${icon('hash')}</div><div class="cm-h">Join with a code</div><div class="cm-d">Enter a friend’s table code</div></button>
-      <button class="cm-card" data-ch="local"><div class="cm-ic">${icon('gamepad')}</div><div class="cm-h">Pass &amp; play</div><div class="cm-d">Two players on this device</div></button>
+      ${row('online', 'n', 'Play online', 'Get matched with someone else on lumi')}
+      ${row('friend', 'q', 'Play a friend', 'Create a table and share the code')}
+      ${row('join', 'r', 'Join with a code', 'Enter a friend’s table code')}
+      ${row('local', 'k', 'Pass &amp; play', 'Two players on this device')}
     </div>
     <button class="btn ghost cm-back" data-go-arcade>${icon('back', 'sm')} Back to Activities</button>
   </div></div>`;
@@ -193,7 +204,7 @@ function drawBoard(el) {
     const isLast = Chess.lastMove && ((Chess.lastMove.from[0] === r && Chess.lastMove.from[1] === c) || (Chess.lastMove.to[0] === r && Chess.lastMove.to[1] === c));
     const inChk = p && p.t === 'k' && chInCheck(s, p.c) && p.c === s.turn;
     h += `<div class="cg-sq ${dark ? 'dark' : 'light'}${isSel ? ' sel' : ''}${isLast ? ' last' : ''}${inChk ? ' chk' : ''}" data-r="${r}" data-c="${c}">
-      ${p ? `<span class="cg-pc ${p.c === 'w' ? 'wp' : 'bp'}">${CH_GLYPH[p.t]}</span>` : ''}
+      ${p ? pieceSVG(p.t, p.c === 'w' ? 'wp' : 'bp') : ''}
       ${isTarget ? `<span class="cg-dot ${p ? 'cap' : ''}"></span>` : ''}</div>`;
   }
   el.innerHTML = h;
@@ -227,7 +238,7 @@ function doMove(move) {
 }
 function choosePromo(opts) {
   const color = Chess.game.state.turn;
-  const m = openModal({ title: 'Promote to', cls: 'promo-modal', body: `<div class="promo-row">${['q', 'r', 'b', 'n'].map((t) => `<button class="promo-pc ${color === 'w' ? 'wp' : 'bp'}" data-p="${t}">${CH_GLYPH[t]}</button>`).join('')}</div>` });
+  const m = openModal({ title: 'Promote to', cls: 'promo-modal', body: `<div class="promo-row">${['q', 'r', 'b', 'n'].map((t) => `<button class="promo-pc" data-p="${t}">${pieceSVG(t, color === 'w' ? 'wp' : 'bp')}</button>`).join('')}</div>` });
   m.el.querySelectorAll('[data-p]').forEach((b) => (b.onclick = () => { m.close(); doMove(opts.find((o) => o.promo === b.dataset.p)); }));
 }
 function chessAction(kind) {
